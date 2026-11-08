@@ -143,21 +143,26 @@ struct NativeReaderTests {
         #expect(!alternating.strings[0].contains("Not translated yet"))
         #expect(!alternating.strings[0].contains("Original\n"))
     }
-    @Test func layoutKeepsLogicalParagraphAndCopiedTabStartsAtTop() throws {
+    @Test(arguments:[NSScroller.Style.legacy,.overlay])
+    func layoutKeepsLogicalParagraphAndCopiedTabStartsAtTop(scrollerStyle:NSScroller.Style) throws {
         let w=WorkspaceStore()
         try w.newTab(source:(1...220).map{"Paragraph \($0). " + String(repeating:"A useful example sentence. ",count:20)}.joined(separator:"\n\n"),direction:.enToZh)
         let document=w.tabs[0].document,session=UUID(),reader=ParallelReader(),window=window(reader)
         defer{window.close()}
+        reader.subviews.compactMap{$0 as? NSScrollView}.forEach{$0.scrollerStyle=scrollerStyle}
         var presentation=ReadingPresentation()
         let paragraph=document.paragraphs[150].id
         presentation.anchors[.sideBySide] = .init(paragraphID:paragraph,side:.source,fraction:0.35)
         reader.update(surface(document,session:session,layout:.sideBySide,presentation:presentation))
         func visibleParagraph(_ layout:LayoutMode) throws -> UUID {
             let text=texts(reader)[0],clip=try #require(text.enclosingScrollView?.contentView)
+            let container=try #require(text.textContainer)
+            let expectedWidth=ReadingMetrics.textWidth(pane:clip.bounds.width,layout:layout,preference:.wide,window:reader.bounds.width)
+            #expect(abs(container.containerSize.width-expectedWidth) < 0.5)
             let index=RenderedTextIndex(document:document,layout:layout)
             let offset=text.characterIndexForInsertion(at:NSPoint(x:text.textContainerInset.width+4,y:clip.bounds.minY+8))
             let visible=index.selection(column:0,range:NSRange(location:offset,length:0))
-            return try #require(visible?.paragraphID,"clip \(clip.bounds), text \(text.frame), native hit offset \(offset)")
+            return try #require(visible?.paragraphID,"layout \(layout), clip \(clip.bounds), text \(text.frame), native hit offset \(offset)")
         }
         let before=try visibleParagraph(.sideBySide)
         #expect(document.paragraphs.firstIndex(where:{$0.id == before}) == 150)
