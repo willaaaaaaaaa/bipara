@@ -43,7 +43,7 @@ jobs:
       UV_PYTHON: '3.13.3'
       UV_PYTHON_PREFERENCE: only-managed
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -106,7 +106,7 @@ jobs:
           UPGRADE: ${{ inputs.upgrade }}
           MINIMUM_OS: ${{ inputs.minimum_os }}
         run: test "$CLEAN_INSTALL" = true && test "$UPGRADE" = true && test "$MINIMUM_OS" = true
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
