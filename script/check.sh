@@ -11,6 +11,9 @@ cd "$ROOT"
 # shellcheck disable=SC1091
 if [ "${BIPARA_RELEASE_BUILD:-0}" != 1 ]; then
   [ -f "script/env.local.sh" ] && . "script/env.local.sh" || true
+else
+  UV_PYTHON="$(python3 script/prepare_release_runtime.py)" || exit 1
+  export UV_PYTHON UV_PYTHON_DOWNLOADS=never UV_PYTHON_PREFERENCE=only-system
 fi
 
 FAILURES=0

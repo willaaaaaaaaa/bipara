@@ -4,7 +4,8 @@
   "upstream_build": "20250529",
   "upstream_revision": "cddb9c19fcbb656b5cda420dcd6c3bf196e53beb",
   "runtime_url": "https://releases.astral.sh/github/python-build-standalone/releases/download/20250529/cpython-3.13.3%2B20250529-aarch64-apple-darwin-install_only_stripped.tar.gz",
-  "python_library_sha256": "587364ee2310964cd213e619f32d802ef939d52fbb32c11eacba58f10f793bd3",
+  "archive_sha256": "ad2afb2c030665b3a9617a30b1fe60024ddcaf97042ba37f8d14e9e1c0bd4aa9",
+  "python_library_sha256": "b1bdfa8dccba62174155d3983bca27d4cdf78637f0d436f00facf7c25b3b6e0d",
   "license_sha256": {
     "LICENSE": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
     "LICENSE.bdb.txt": "3bdff06e69991c94664f2ef5c5f8096f60b7dbec071756ea6cc26b445e06ec5b",

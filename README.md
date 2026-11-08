@@ -12,7 +12,7 @@ Status: experimental source preview. This README does not announce a public rele
 
 For source builds, follow the development instructions below. Source-readiness requires public-content, history and identity review, plus offline regression checks; their current results and blockers are in [validation status](docs/validation.md).
 
-Every formal version must have a protected version tag and an installable arm64 DMG that is Developer ID signed, notarized and qualified for clean installation, upgrade and minimum-OS use against its exact checksum. Those distribution gates are separate from source readiness. No publication date or download is promised.
+Every public installer must have a protected version tag and an arm64 DMG qualified for clean installation, upgrade and minimum-OS use against its exact checksum. The initial distribution uses ad-hoc signing without Apple notarization or a verified Developer ID. macOS may require a per-app Open Anyway exception; see [installation and trust](docs/releasing.md#install-and-publish). No qualified download is available yet.
 
 Open Settings, add a model configuration with its exact model, API Base URL and key, and choose an Active Model. Paste text or open a UTF-8 .txt file, then translate. Switch reading layouts without retranslating. Save editable work as .bipara or explicitly export/copy text. Read [Privacy](PRIVACY.md) before sending documents.
 
@@ -20,7 +20,7 @@ Platform target: Apple Silicon and macOS 14+. Tested environments and minimum-OS
 
 ## Develop
 
-Requirements: full Xcode, Python 3.11+ for tooling and uv. The worker uses the frozen CPython 3.13 environment. Native package/UI tests require a macOS window session. No provider key is needed for default checks.
+Requirements: full Xcode, Python 3.12+ for tooling and uv. The worker uses the frozen CPython 3.13 environment. Native package/UI tests require a macOS window session. No provider key is needed for default checks.
 
 ```sh
 script/setup.sh

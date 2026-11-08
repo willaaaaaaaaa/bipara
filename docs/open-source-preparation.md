@@ -27,7 +27,7 @@ Issue templates and [support guidance](../SUPPORT.md) provide contributor entry 
 | Product | Document integrity, retained-job configuration safety, native reading/settings/tabs and accessibility acceptance |
 | Providers | Bounded real-provider checks for semantic quality, compatibility, latency and cost |
 | Runtime and licenses | Qualified bundled Python build, verified dependency provenance and complete required notices |
-| Packaging | Version/tag consistency, nested Developer ID signing, DMG notarization and stapling |
+| Packaging | Version/tag consistency, valid nested code signatures and an explicit tagged distribution policy; initial ad-hoc packages disclose missing Developer ID/notarization |
 | Installation | Clean installation, upgrade and minimum-OS acceptance against the exact final DMG checksum |
 | Delivery | Protected tag build produces a draft; publication verifies the exact assets and installation declarations |
 
@@ -35,6 +35,6 @@ Follow [the release procedure](releasing.md) for commands and package acceptance
 
 ## External prerequisites and authorization
 
-Developer ID and notarization credentials, repository rulesets, protected release environments, private vulnerability reporting and immutable releases require account/repository configuration. Source changes do not establish those settings. Real-provider checks require eligible accounts, synthetic inputs and an explicit request/cost cap.
+The initial ad-hoc distribution requires no Apple membership or signing secrets. A future Developer ID/notarization policy requires an eligible account and credentials. Repository rulesets, protected release environments, private vulnerability reporting and immutable releases require actual repository configuration. Source changes do not establish those settings. Real-provider checks require eligible accounts, synthetic inputs and an explicit request/cost cap.
 
 Repository creation, remote pushes, visibility changes, history rewriting and publication require an instruction covering those actions. This checklist does not perform or authorize them.

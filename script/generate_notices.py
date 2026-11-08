@@ -11,11 +11,11 @@ import os
 from pathlib import Path
 import shutil
 import sys
-import sysconfig
 import tomllib
 
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
+from prepare_release_runtime import download_verified
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -47,6 +47,8 @@ def runtime_names() -> set[str]:
 
 def collect(destination: Path) -> list[dict]:
     runtime = runtime_names()
+    locked = {(canonicalize_name(package["name"]), package["version"]): package
+              for package in tomllib.loads((ROOT / "Worker/uv.lock").read_text())["package"]}
     records = []
     for dist in sorted(metadata.distributions(), key=lambda value: value.metadata["Name"].lower()):
         name = dist.metadata["Name"]
@@ -69,9 +71,21 @@ def collect(destination: Path) -> list[dict]:
         role = "runtime" if canonicalize_name(name) in runtime else "development/build"
         if role == "runtime" and not files:
             raise ValueError(f"license text missing for runtime dependency: {name}")
-        records.append({"name": name, "version": dist.version, "role": role,
-                        "license": dist.metadata.get("License-Expression") or dist.metadata.get("License") or "See supplied license files",
-                        "files": files})
+        license_text = dist.metadata.get("License-Expression") or dist.metadata.get("License") or "See supplied license files"
+        record = {"name": name, "version": dist.version, "role": role, "license": license_text, "files": files}
+        if role == "runtime":
+            source = locked[(canonicalize_name(name), dist.version)]["sdist"]
+            source_hash = source["hash"].removeprefix("sha256:")
+            record["source"] = {"url": source["url"], "sha256": source_hash}
+            if "MPL-2.0" in license_text and os.environ.get("BIPARA_RELEASE_BUILD") == "1":
+                filename = source["url"].rsplit("/", 1)[1]
+                archive = ROOT / "build/release-sources" / filename
+                download_verified(source["url"], source_hash, archive)
+                relative = Path("sources") / filename
+                (destination / relative).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(archive, destination / relative)
+                files.append(relative.as_posix())
+        records.append(record)
     python_license = Path(sys.base_prefix) / f"lib/python{sys.version_info.major}.{sys.version_info.minor}/LICENSE.txt"
     if not python_license.is_file():
         python_license = Path(sys.base_prefix) / "LICENSE.txt"
@@ -103,18 +117,26 @@ def collect_native(binaries: list, destination: Path) -> None:
     """Attach notices for external dylibs actually collected by PyInstaller."""
     records = json.loads((destination / "inventory.json").read_text())
     managed = (destination / "PythonRuntime/manifest.json").is_file()
-    purelib = Path(sysconfig.get_paths()["purelib"]).resolve()
+    by_name = {canonicalize_name(row["name"]): row for row in records}
+    owners = {Path(dist.locate_file(entry)).resolve(): canonicalize_name(dist.metadata["Name"])
+              for dist in metadata.distributions() for entry in dist.files or []}
     seen = set()
     for name, original, kind in binaries:
-        if kind != "BINARY" or not name.endswith(".dylib") or Path(name).name.startswith("libpython"):
+        if kind not in {"BINARY", "EXTENSION"}:
             continue
         source = Path(original).resolve()
-        if source.is_relative_to(purelib):
-            continue  # Wheel-supplied attribution was collected from dist-info.
+        owner = owners.get(source)
+        if owner in by_name:
+            record = by_name[owner]
+        elif source.is_relative_to(Path(sys.base_prefix).resolve()):
+            record = by_name[canonicalize_name("Python runtime component notices")] if managed else by_name["cpython"]
+        else:
+            record = None
+        if record is not None:
+            record.setdefault("native_files", []).append({"path": name, "sha256": hashlib.sha256(source.read_bytes()).hexdigest()})
+            continue
         package = next((parent for parent in source.parents if parent.parent.parent.name == "Cellar"), None)
         if package is None:
-            if managed and source.is_relative_to(Path(sys.base_prefix).resolve()):
-                continue  # Covered by the exact upstream runtime's component notices.
             raise ValueError("native dependency has no qualified license source: " + Path(name).name)
         if package in seen:
             continue
@@ -140,10 +162,13 @@ def write_inventory(destination: Path, records: list[dict]) -> None:
     lines = ["# Third-party licenses", "",
              "Runtime dependencies and build-environment packages are identified separately.",
              "Additional package/upstream notices are supplied conservatively; their presence does not claim that every component ships in the application.",
+             "MPL-covered dependencies retain their original terms. Formal packages include their unchanged source archives under sources/; source URLs and hashes are recorded below.",
              "License collection supports distribution review; it does not establish legal compatibility.", ""]
     for record in records:
         lines.append(f"- **{record['name']}** {record['version']} ({record['role']}): {record['license']}")
         lines.extend(f"  - [{Path(name).name}]({name})" for name in record["files"])
+        if "source" in record:
+            lines.append(f"  - [Upstream source]({record['source']['url']}); SHA-256: {record['source']['sha256']}")
     (destination / "README.md").write_text("\n".join(lines) + "\n")
     (destination / "inventory.json").write_text(json.dumps(records, indent=2) + "\n")
 

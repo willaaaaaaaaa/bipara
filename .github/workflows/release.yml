@@ -40,8 +40,6 @@ jobs:
     env:
       BIPARA_RELEASE_BUILD: '1'
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
-      UV_PYTHON: '3.13.3'
-      UV_PYTHON_PREFERENCE: only-managed
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -56,9 +54,11 @@ jobs:
       - name: Select temporary tool storage
         run: |
           echo "BIPARA_CHECK_TOOLS_DIR=$RUNNER_TEMP/bipara-check-tools" >> "$GITHUB_ENV"
-          echo "UV_PYTHON_INSTALL_DIR=$RUNNER_TEMP/bipara-python" >> "$GITHUB_ENV"
       - run: python3 script/install_check_tools.py
-      - run: uv python install 3.13.3 --no-bin
+      - name: Read tagged distribution policy
+        id: distribution
+        run: |
+          echo "mode=$(python3 -c 'import json; print(json.load(open("Config/Distribution.json"))["mode"])')" >> "$GITHUB_OUTPUT"
       - name: Check tagged source and history
         env:
           TAG: ${{ github.ref_name }}
@@ -67,6 +67,7 @@ jobs:
           python3 script/check_public_content.py --history --gitleaks
           script/check.sh
       - name: Import release credentials
+        if: steps.distribution.outputs.mode == 'developer-id'
         env:
           BIPARA_CERTIFICATE_P12_BASE64: ${{ secrets.BIPARA_CERTIFICATE_P12_BASE64 }}
           BIPARA_CERTIFICATE_PASSWORD: ${{ secrets.BIPARA_CERTIFICATE_PASSWORD }}
@@ -76,7 +77,7 @@ jobs:
           BIPARA_NOTARY_ISSUER_ID: ${{ secrets.BIPARA_NOTARY_ISSUER_ID }}
           BIPARA_NOTARY_PROFILE: bipara-release
         run: script/ci_signing.sh install
-      - name: Build and notarize tagged DMG
+      - name: Build tagged DMG
         env:
           TAG: ${{ github.ref_name }}
           BIPARA_CODESIGN_IDENTITY: ${{ secrets.BIPARA_CODESIGN_IDENTITY }}
@@ -89,7 +90,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 script/release.py draft --tag "$TAG"
       - name: Remove temporary credentials
-        if: always()
+        if: always() && steps.distribution.outputs.mode == 'developer-id'
         run: script/ci_signing.sh cleanup
   publish:
     if: github.event_name == 'workflow_dispatch'
