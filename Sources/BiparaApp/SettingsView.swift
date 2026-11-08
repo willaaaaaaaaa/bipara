@@ -596,7 +596,7 @@ struct ConfigurationSheet: View, Identifiable {
             Text(t(existing == nil ? "Add model configuration" : "Edit model configuration")).font(.headline)
             Form {
                 Section {
-                    Picker(t("Vendor"), selection: Binding(get: { provider }, set: selectVendor)) {
+                    Picker(t("Vendor"), selection: Binding(get: { provider }, set: { selectVendor($0) })) {
                         ForEach(ModelVendor.allCases, id: \.rawValue) { vendor in
                             Text(vendor.name).tag(vendor.rawValue)
                         }

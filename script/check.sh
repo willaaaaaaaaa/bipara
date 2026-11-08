@@ -44,17 +44,16 @@ step "Worker bundles (needed by packaged tests)"
 record $? "script/build_worker.sh"
 
 step "Swift package tests (offline: Core, real-process worker adapter, app state)"
-SWIFT_TEST_FLAGS=()
+# Keep linking consistent and isolate main-actor fixtures; see Tests/README.md.
+SWIFT_TEST_FLAGS=(--build-system swiftbuild --no-parallel)
 TESTING_PLUGIN_DIR="/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing"
 if [ "$(xcode-select -p)" = "/Library/Developer/CommandLineTools" ] && [ -d "$TESTING_PLUGIN_DIR" ]; then
   # Command Line Tools-only setups intermittently fail to discover the
   # swift-testing macro plugin ("plugin for module 'TestingMacros' not
   # found"); pin its search directory explicitly. Full Xcode is unaffected.
-  SWIFT_TEST_FLAGS=(-Xswiftc -plugin-path -Xswiftc "$TESTING_PLUGIN_DIR")
+  SWIFT_TEST_FLAGS+=(-Xswiftc -plugin-path -Xswiftc "$TESTING_PLUGIN_DIR")
 fi
-# The ${VAR[@]+...} guard keeps bash 3.2 (macOS default) from aborting on
-# an empty array under `set -u`.
-swift test ${SWIFT_TEST_FLAGS[@]+"${SWIFT_TEST_FLAGS[@]}"}
+swift test "${SWIFT_TEST_FLAGS[@]}"
 record $? "swift test (Core + Worker adapter + AppKit)"
 
 step "Python offline tests incl. packaged worker IPC"

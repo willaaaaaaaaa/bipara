@@ -45,7 +45,7 @@ public struct WorkspaceView: View {
             ToolbarItem(placement:.navigation) { Button(action:runtime.newTab){Label(t("New Translation"),systemImage:"plus")}.accessibilityIdentifier("new.tab") }
             ToolbarItemGroup(placement:.primaryAction) {
                 if let tab = workspace.activeTab {
-                    Picker(t("Reading layout"),selection:Binding(get:{tab.layout},set:runtime.setLayout)) {
+                    Picker(t("Reading layout"),selection:Binding(get:{tab.layout},set:{runtime.setLayout($0)})) {
                         Image(systemName:"rectangle.split.2x1").accessibilityLabel(t("Side by side")).tag(LayoutMode.sideBySide)
                         Image(systemName:"rectangle.split.1x2").accessibilityLabel(t("Paragraphs")).tag(LayoutMode.paragraphs)
                     }.pickerStyle(.segmented).frame(width:86).help(t("Side by side / Paragraphs")).accessibilityIdentifier("reading.layout").disabled(runtime.editing.contains(tab.sessionID))

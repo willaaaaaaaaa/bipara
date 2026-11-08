@@ -195,7 +195,7 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
         }
     }
 
-    private func layoutText(anchor: ReadingAnchor?) {
+    private func layoutText(anchor: ReadingAnchor?, stabilizeScrollers: Bool = true) {
         guard let parent, let index, scrolls[0].contentSize.width > 0 else { return }
         let count = parent.layout == .sideBySide ? 2 : 1
         let font: NSFont
@@ -205,7 +205,8 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
         let style = NSMutableParagraphStyle(); style.lineHeightMultiple = Double(parent.typography.lineHeight.rawValue) ?? 1.7; style.paragraphSpacing = 20
         let base: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ThemeColors.source, .paragraphStyle: style]
         let attributed = [NSMutableAttributedString(string: index.strings[0], attributes: base), NSMutableAttributedString(string: index.strings[1], attributes: base)]
-        let widths = (0..<count).map { ReadingMetrics.textWidth(pane: scrolls[$0].contentSize.width, layout: parent.layout, preference: parent.readingWidth, window: bounds.width) }
+        let paneWidths = (0..<count).map { scrolls[$0].contentSize.width }
+        let widths = paneWidths.map { ReadingMetrics.textWidth(pane: $0, layout: parent.layout, preference: parent.readingWidth, window: bounds.width) }
         for col in 0..<count {
             for span in index.paragraphs[col] where span.range.length > 0 {
                 let paragraphStyle = style.mutableCopy() as! NSMutableParagraphStyle
@@ -255,11 +256,17 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
             }
             attributed[col].enumerateAttributes(in: NSRange(location: 0, length: attributed[col].length)) { attrs, range, _ in storage.setAttributes(attrs, range: range) }
             storage.endEditing()
+            // Legacy scrollers can replace the document frame while tiling.
+            scrolls[col].layoutSubtreeIfNeeded()
             if let manager = texts[col].textLayoutManager {
                 manager.ensureLayout(for: manager.documentRange)
                 texts[col].setFrameSize(NSSize(width: scrolls[col].contentSize.width,
                     height: max(scrolls[col].contentSize.height, manager.usageBoundsForTextContainer.maxY + 48)))
             }
+        }
+        if stabilizeScrollers, (0..<count).contains(where: { abs(paneWidths[$0] - scrolls[$0].contentSize.width) > 0.5 }) {
+            layoutText(anchor: anchor, stabilizeScrollers: false)
+            return
         }
         for col in 0...1 {
             var range = NSRange(location:0,length:0)
