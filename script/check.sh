@@ -44,8 +44,8 @@ step "Worker bundles (needed by packaged tests)"
 record $? "script/build_worker.sh"
 
 step "Swift package tests (offline: Core, real-process worker adapter, app state)"
-# Keep package linking consistent across toolchains; see Tests/README.md.
-SWIFT_TEST_FLAGS=(--build-system swiftbuild)
+# Keep linking consistent and isolate main-actor fixtures; see Tests/README.md.
+SWIFT_TEST_FLAGS=(--build-system swiftbuild --no-parallel)
 TESTING_PLUGIN_DIR="/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing"
 if [ "$(xcode-select -p)" = "/Library/Developer/CommandLineTools" ] && [ -d "$TESTING_PLUGIN_DIR" ]; then
   # Command Line Tools-only setups intermittently fail to discover the

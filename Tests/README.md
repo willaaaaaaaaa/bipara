@@ -1,8 +1,10 @@
 # Validation Area
 
-The Swift package uses Swift Testing for Core, real child-process gateway, application-state, and native TextKit regressions. `swift test --build-system swiftbuild` runs all package tests; build the worker bundles first because the gateway and coordinator integration tests launch packaged executables. Use full Xcode 26.6 or newer for the documented check workflow. `script/check.sh` orders the frozen worker environment/build, Swift tests, Python tests, and native Debug build.
+The Swift package uses Swift Testing for Core, real child-process gateway, application-state, and native TextKit regressions. `swift test --build-system swiftbuild --no-parallel` runs all package tests; build the worker bundles first because the gateway and coordinator integration tests launch packaged executables. Use full Xcode 26.6 or newer for the documented check workflow. `script/check.sh` orders the frozen worker environment/build, Swift tests, Python tests, and native Debug build.
 
 Select [Swift Build](https://github.com/swiftlang/swift-build#with-swiftpm) explicitly so Swift 6.3 and newer toolchains use the same package build system. Swift 6.3 otherwise defaults to the legacy native build system, which has a reported [cross-module async allocation crash](https://github.com/swiftlang/swift/issues/86204) matching the hosted test failure. This selection preserves every suite and assertion; native UI and installer acceptance remain separate.
+
+Run package test cases serially to isolate shared AppKit state and prevent unrelated CPU-heavy main-actor fixtures from consuming another test's deadline. Concurrency tests still create and coordinate concurrent tasks within each case; their assertions and timeouts remain unchanged.
 
 Python tests live in `Worker/tests`. The default `pytest -m "not live"` path needs no credentials or model requests. It distinguishes packaged helper execution, development-interpreter subprocesses, and deterministic in-process lifecycle tests.
 
