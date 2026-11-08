@@ -4,7 +4,7 @@ This document defines current Settings, reading and document-tab behavior. See [
 
 Model management follows the [configuration contract](model-settings.md): translation direction is a Settings preference, while the active model is shared with the toolbar.
 
-The [reading refinement contract](#2026-11-07-reading-refinement-proposal) supersedes earlier width, paragraph-label and highlight defaults.
+The [reading details](#reading-details) specify progress presentation, width, titles, timing and highlight colors.
 
 ## Reading surface
 
@@ -76,13 +76,13 @@ The [model configuration design](model-settings.md) owns vendor-scoped choices, 
 
 Default to the system UI font and appropriate Chinese system fallback. Use the native design's 17-point initial reading size and adjustable line spacing; evaluate the supported size range in both layouts. Offer reading-size adjustments in Settings, readable column widths, light/dark appearances, and reduced-motion support. Offer the approved system and serif reading typefaces.
 
-The icon direction is [C — Parallel text](icons/README.md), selected by the owner. Use the icon's correspondence motif sparingly; the reading window should remain visually quiet. Final icon sizing and platform masking need separate validation.
+The [app icon](icons/README.md) represents parallel text. Use the icon's correspondence motif sparingly; the reading window should remain visually quiet. Final icon sizing and platform masking need separate validation.
 
 Use native window controls, menus, focus behavior, and text selection. Shortcuts are New tab (Command-T), Close tab (Command-W), Translate (Command-Return), layouts (Command-1/2), Settings (Command-comma), and Clear/Dismiss (Escape).
 
 ## About Bipara
 
-Keep the native About panel. The screenshot's `Version 0.1.0 (1)` is conventional on macOS. The app's Xcode target sets `MARKETING_VERSION = 0.1.0` and `CURRENT_PROJECT_VERSION = 1`, generating `CFBundleShortVersionString` and `CFBundleVersion` respectively. The parentheses are presentation. Increment the build number for each distributed build and change the release version when issuing a new version. [Apple distribution guidance](https://developer.apple.com/documentation/xcode/preparing-your-app-for-distribution).
+Keep the native About panel. Display the release version and build number, for example `Version 0.1.0 (1)`. `Config/Version.xcconfig` supplies `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION`, generating `CFBundleShortVersionString` and `CFBundleVersion` respectively. Increment the build number for each distributed build and change the release version when issuing a new version. [Apple distribution guidance](https://developer.apple.com/documentation/xcode/preparing-your-app-for-distribution).
 
 ## Implementation references
 
@@ -90,13 +90,11 @@ Use the [development plan](../development-plan.md), [model workflow](model-workf
 
 ## Validation boundary
 
-The Settings/tab concept was approved by the owner before native implementation. Concept review establishes interaction intent; native selection, scrolling, focus, accessibility, appearance, revision changes, and cancellation require actual macOS evidence. The [native integration report](../validation.md) records the exercised cases and incomplete gates. Real-provider behavior, account access, latency and translation quality remain separate checks.
+Native selection, scrolling, focus, accessibility, appearance, revision changes and cancellation require actual macOS evidence. The [native integration report](../validation.md) records the exercised cases and incomplete gates. Real-provider behavior, account access, latency and translation quality remain separate checks.
 
-## 2026-11-07 reading refinement proposal
+## Reading details
 
-This section replaces repeated paragraph labels, earlier width caps and warm-only highlights. Prompt, document-identity and global Active Model contracts remain unchanged. The anchor is retained for link compatibility.
-
-Implemented behavior, actual checks and remaining gates are recorded in the [reading refinement validation report](../validation.md).
+Actual checks and remaining gates are recorded in [validation status](../validation.md).
 
 ### Clean reading and unfinished translation
 
@@ -127,7 +125,7 @@ Add `Reading Width` under Settings → Reading: `Standard`, `Wide` (default), `W
 | Wide | 960pt | 1080pt |
 | Window | Available pane width minus insets | Available pane width minus insets |
 
-Use 32-point horizontal insets per pane, reduced to 24 below 1100-point window width. Center capped text within its pane and align each column heading to its actual text edge. Keep font size and line spacing unchanged; reduce excess margins rather than shrinking text. At a sufficiently wide window the Wide caps allow 50% more line width than the current 640/720-point caps. At narrow sizes available space remains the limit. Preserve the chosen layout, equal column division, paragraph start alignment, selection, pin and anchor when width/font/appearance changes. Do not measure paragraphs on hover or on elapsed-time ticks.
+Use 32-point horizontal insets per pane, reduced to 24 below 1100-point window width. Center capped text within its pane and align each column heading to its actual text edge. Keep font size and line spacing unchanged; reduce excess margins rather than shrinking text. At narrow sizes available space remains the limit. Preserve the chosen layout, equal column division, paragraph start alignment, selection, pin and anchor when width/font/appearance changes. Do not measure paragraphs on hover or on elapsed-time ticks.
 
 ### Default titles and elapsed time
 
@@ -139,15 +137,15 @@ Timing is session-local. Do not infer old durations from unit completion timesta
 
 ### Model scope and concurrent tabs
 
-Current source confirms one committed, app-wide Active Model ID. It is the default for fresh Translate and confirmed Retranslate in any tab. Each job independently freezes provider, model, effort, profile and endpoint binding when it starts. Switching the picker from A to B does not migrate a running A job; another tab can start with B. Returning to the A tab still shows the global B picker and A in job attribution. Resume, Retry and selection analysis retain A. Replacing a completed translation with B still requires Retranslate confirmation. A portable reopened document requires an explicit local binding before further model calls.
+There is one committed, app-wide Active Model ID. It is the default for fresh Translate and confirmed Retranslate in any tab. Each job independently freezes provider, model, effort, profile and endpoint binding when it starts. Switching the picker from A to B does not migrate a running A job; another tab can start with B. Returning to the A tab still shows the global B picker and A in job attribution. Resume, Retry and selection analysis retain A. Replacing a completed translation with B still requires Retranslate confirmation. A portable reopened document requires an explicit local binding before further model calls.
 
-Clarify the picker help text: `Default for new translations. Existing jobs keep their model.` Keep actual job attribution visible. Editing an A record's model/effort does not rewrite its existing snapshot. Deleting that record, changing its provider/Base URL or removing its credential can block later A dispatches; an already dispatched call keeps its captured configuration. Replacing a credential affects later dispatches through the retained binding. Recommend separate named A/B configurations for simultaneous work. Per-tab active pickers would be a separate product choice and are not part of this handoff. Offline concurrent-model fixtures and live provider tests establish separate evidence layers.
+Clarify the picker help text: `Default for new translations. Existing jobs keep their model.` Keep actual job attribution visible. Editing an A record's model/effort does not rewrite its existing snapshot. Deleting that record, changing its provider/Base URL or removing its credential can block later A dispatches; an already dispatched call keeps its captured configuration. Replacing a credential affects later dispatches through the retained binding. Recommend separate named A/B configurations for simultaneous work. Per-tab active pickers are outside the current product scope. Offline concurrent-model fixtures and live provider tests establish separate evidence layers.
 
 ### Correspondence colors
 
-Settings → Reading adds `Correspondence Color`: Blue, Teal, Amber (default), Purple. Show a live local bilingual preview and an appearance-aware swatch for each preset; no arbitrary RGB editor is needed for this request. Save/Cancel uses the existing Settings draft. This preference applies across tabs and is not exported in documents.
+Settings → Reading adds `Correspondence Color`: Blue, Teal, Amber (default), Purple. Show a live local bilingual preview and an appearance-aware swatch for each preset; arbitrary RGB editing is outside the current scope. Save/Cancel uses the existing Settings draft. This preference applies across tabs and is not exported in documents.
 
-The owner's 2026-11-07 color follow-up adopts Amber as the shared default for both appearances: a pale amber fill in Light and a muted dark amber fill in Dark. Its warm hue separates correspondence from the cool translation text and native text selection while retaining the restrained reading layout. Fresh preferences and older records without an explicit color use this default; an explicitly saved preset remains respected. Runtime helpers and the compiled default color asset use the same paired tokens.
+Amber is the shared default for both appearances: a pale amber fill in Light and a muted dark amber fill in Dark. Its warm hue separates correspondence from the cool translation text and native text selection while retaining the restrained reading layout. Fresh preferences and older records without an explicit color use this default; an explicitly saved preset remains respected. Runtime helpers and the compiled default color asset use the same paired tokens.
 
 | Preset | Light background | Dark background |
 | --- | --- | --- |
@@ -162,10 +160,10 @@ These are the adopted paired tokens. Keep source/translation foreground colors l
 
 Settings → General adds `Don't ask to save on close`, initially unchecked, with helper text: `Unsaved changes will be discarded when you close a tab or quit. Saved files are not changed.` Enabling it is an explicit opt-in to discard, not autosave or session recovery. Save applies the preference; Cancel discards the draft. Apply it consistently to tab close, Command-W, main-window close and Command-Q. When enabled, skip only the dirty-document Save/Discard/Cancel stage and follow Discard. Keep `Stop translation and close?` for queued/running work, and retain the Settings-draft close review. Normal Save failures, source-replacement confirmation, provider consent and existing-file overwrite handling keep their own behavior. Turning the preference off restores ordinary prompts. Closing a tab cannot cancel another job or delete/overwrite a saved file.
 
-The screenshot's Chinese custom Settings/Translation commands alongside English system commands are consistent with app chrome following its saved Simplified Chinese preference while system-supplied menus follow macOS localization. The current code defaults fresh preferences to English, but does not reset an existing saved language. For the requested English interface, select Settings → General → Interface Language → English and Save. Verify that `Settings…`, `Translation`, their window titles, toolbar labels and app-owned dialogs are English, with one Settings item and Command-comma shortcut. Retain Chinese as an explicit supported choice under R13/R18; do not hardcode only two menu labels to English while leaving the rest of app chrome Chinese. Do not reset an existing saved language as part of a reading-preference upgrade.
+App-owned menus, window titles, toolbar labels and dialogs follow the saved interface language; system-supplied menus follow macOS localization. Fresh preferences default to English. Settings → General → Interface Language supports English and Simplified Chinese under R13/R18. Keep one localized Settings item and Command-comma shortcut. Preserve the saved language when upgrading preferences.
 
-### Implementation scope and handoff
+### Implementation and acceptance
 
-Read [native design](technical-design.md), [model settings](model-settings.md), [document format](document-format.md) and [acceptance cases](../testing.md#2026-11-07-reading-refinement-acceptance). Preferences remain optional on read with explicit defaults; preserve model configurations, credentials, language, typography and corrupt/newer-record protection. No portable duration field is added.
+Read [native design](technical-design.md), [model settings](model-settings.md), [document format](document-format.md) and [acceptance cases](../testing.md#reading-acceptance). Preferences remain optional on read with explicit defaults; preserve model configurations, credentials, language, typography and corrupt/newer-record protection. No portable duration field is added.
 
-Changes stay within reading presentation, session timing/titles, Settings, close policy and their fixtures. Use existing state/bridge boundaries. Exercise deterministic offline fixtures and actual native rendering in both appearances and layouts; a design preview is not native UI acceptance. Record actual application build, UI and packaged-runtime results separately from real-provider evidence.
+Reading presentation, session timing/titles, Settings and close policy use the existing state/bridge boundaries. Exercise deterministic offline fixtures and actual native rendering in both appearances and layouts; a design preview is not native UI acceptance. Record actual application build, UI and packaged-runtime results separately from real-provider evidence.

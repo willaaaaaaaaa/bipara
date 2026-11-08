@@ -2,7 +2,7 @@
 
 ## Product purpose
 
-Bipara should provide a simple, refined, and trustworthy bilingual reading experience. Prioritize translation fidelity, understandable correspondence, and reading comfort. Evaluate features by the user problem they solve.
+Bipara uses large language models for translation and correspondence within a native bilingual reading experience. Prioritize translation fidelity, understandable correspondence, and reading comfort. Evaluate features by the user problem they solve.
 
 ## Simplicity
 

@@ -4,13 +4,13 @@
 
 | Topic | Current decision |
 | --- | --- |
-| Product | Native macOS app first; keep future iPhone/iPad adaptation possible |
+| Product | LLM-powered translation and bilingual reading; native macOS first, with future iPhone/iPad adaptation possible |
 | Local execution | App-owned logic; no separately deployed server, HTTP listener, or daemon |
 | Languages/runtime | Swift + app-bundled Python child process over pipes |
-| Providers | OpenAI and GLM baseline. The 2026-11-06 revision adds Kimi and DeepSeek through the same worker boundary, with editable Base URLs, model-specific effort and explicit request profiles. |
+| Providers | OpenAI, Kimi, GLM and DeepSeek through one worker boundary, with editable Base URLs, model-specific effort and explicit request profiles. |
 | Framework | LangChain first; explicitly authored LangGraph orchestration deferred |
-| UI | Approved reading/Settings/multiple-tab direction; English-default interface; System-default appearance with Light/Dark overrides |
-| Implementation baseline | macOS 14+, Swift 6, arm64 private acceptance, CPython 3.13; detailed contracts linked below |
+| UI | Native reading, Settings and multiple document tabs; English-default interface; System-default appearance with Light/Dark overrides |
+| Implementation baseline | macOS 14+, Swift 6, arm64, CPython 3.13; detailed contracts linked below |
 | Validation | Native app and packaged worker run on the development machine; M0 feasibility passed, M1 native acceptance partial; see [current evidence](validation.md) |
 | Distribution | MIT; tagged formal DMGs; Intel/mobile and App Store qualification remain separate |
 
@@ -35,7 +35,7 @@ Swift owns source identity, segmentation, whole-document scheduling, task state,
 
 Global preferences are independent of document state. Jobs retain provider/model/prompt snapshots. Every async result is tied to its tab session, document revision, job/attempt and request. Both layouts read the same canonical text and correspondence data. Hover is local; only eligible committed selections may request additional analysis.
 
-The approved [model configuration revision](design/model-settings.md) adds frozen endpoint/effort and private credential bindings to runtime job snapshots. It uses the existing worker and LangChain boundary, preferences schema 2, pipe protocol 2 and portable document schema 2 with v1 reading compatibility. The 2026-11-06 revision extends the same boundary with two profiles and keeps the existing prompt assets. Validate the revised behavior independently of earlier runtime results.
+The [model configuration contract](design/model-settings.md) freezes endpoint/effort and local credential bindings in runtime job snapshots. It uses the worker and LangChain boundary, preferences schema 2, pipe protocol 2 and portable document schema 2 with v1 reading compatibility. Supported profiles and prompt versions are explicit runtime contracts; see the linked specifications below.
 
 ## Detailed contracts
 
@@ -52,9 +52,9 @@ The approved [model configuration revision](design/model-settings.md) adds froze
 
 Design and prompt changes update their owning contracts and acceptance checks before implementation.
 
-## First framework feasibility task
+## Packaged runtime and validation
 
-M0 in the development plan proves the approved pipe worker as a **packaged app component** early, including dependency assets, lifecycle, cancellation, and a copied bundle without developer Python. Use PyInstaller onedir as the selected first packaging mechanism. Record actual versions, notices, size, cold/warm start, memory and process behavior in the [native integration report](validation.md).
+M0 in the development plan checks the pipe worker as a **packaged app component**, including dependency assets, lifecycle, cancellation, and a copied bundle without developer Python. Use PyInstaller onedir as the selected first packaging mechanism. Record actual versions, notices, size, cold/warm start, memory and process behavior in the [native integration report](validation.md).
 
 A test-only direct-call baseline compares equivalent model requests with LangChain in M4. Do not ship both paths. If measured complexity is high **and** benefit is limited, apply the owner's [complexity rule](design-principles.md#complexity-decisions) before continuing beyond the already approved scope; do not infer that every hard implementation detail needs new permission.
 
@@ -66,4 +66,4 @@ Keep reusable text/domain logic free of AppKit and LangChain objects. A future m
 
 Add a provider only through a small profile/factory plus contract tests. Add LangGraph only for a demonstrated branching/resumption requirement the existing workflow cannot reasonably handle. "LangGraph later" means explicitly authored graph orchestration; record actual transitive packages rather than pretending an indirect dependency is an authored application graph.
 
-Public dependency facts, model protocol contracts, asset provenance, and portable build instructions stay in this repository. Private remote addresses, internal middleware and operator-specific setup belong in the owner's KB. Secrets remain in Keychain or a dedicated secret store. Follow [repository boundaries](repository-boundaries.md).
+Public dependency facts, model protocol contracts, asset provenance, and portable build instructions stay in this repository. Machine-specific configuration and private account details stay outside tracked files. Secrets remain in Keychain or a dedicated secret store. Follow [repository boundaries](repository-boundaries.md).

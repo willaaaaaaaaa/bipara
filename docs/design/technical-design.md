@@ -2,13 +2,13 @@
 
 This document defines the native implementation contract. Design requirements and measured runtime behavior are separate; see [validation status](../validation.md).
 
-Revision 2026-11-01: the approved [model configuration design](model-settings.md) supersedes fixed provider settings and adds runtime endpoint/effort bindings, preferences migration and a single localized Settings entry. These changes await implementation and new acceptance evidence.
+The [model configuration design](model-settings.md) defines runtime endpoint/effort bindings, preferences migration and a single localized Settings entry.
 
 Read [architecture](../architecture.md) for decision ownership, [model workflow](model-workflow.md) for text processing, [worker protocol](worker-protocol.md) for IPC, and [development plan](../development-plan.md) for delivery order.
 
 ## Build and module boundaries
 
-Target macOS 14 or later, Swift 6 language mode, and Apple Silicon for the first private acceptance build. Use system frameworks only on the Swift side. Intel/universal distribution and mobile execution are separate future qualification tasks. Do not imply that building on a newer OS proves the minimum OS works.
+Target macOS 14 or later, Swift 6 language mode, and Apple Silicon for the first release. Use system frameworks only on the Swift side. Intel/universal distribution and mobile execution are separate future qualification tasks. Do not imply that building on a newer OS proves the minimum OS works.
 
 Create one checked-in Xcode project, `Bipara.xcodeproj`, with shared scheme `Bipara`; use a root Swift package for `BiparaCore` and its tests. No project generator, dependency injection framework, database, server, or graph scheduler is needed.
 
@@ -20,9 +20,9 @@ Create one checked-in Xcode project, `Bipara.xcodeproj`, with shared scheme `Bip
 | `Worker/bipara_worker` | Async pipe worker, LangChain invocations, provider adapters, model output validation | Tabs, files, document editing, scheduling whole documents |
 | `prompts` | Versioned, complete system prompts, output schemas, synthetic cases | Runtime secrets or user-editable prompts |
 | `Tests` / `Worker/tests` | Swift, native UI, cross-language and Python tests | Paid calls in the default suite |
-| `docs/validation` | Sanitized feasibility/acceptance evidence; M4 direct-call comparison results | Raw logs, credentials, or a second production translation engine |
+| `docs/validation.md` | Concise current evidence and acceptance limits | Raw logs, credentials, or a second production translation engine |
 
-The Xcode app target compiles `Sources/BiparaApp/BiparaApp.swift` and product assets and links the local package products. SwiftPM builds the same app directory as `BiparaAppKit`, excluding the entry point and product assets, so application state and native TextKit tests exercise the shipped code. `BiparaAppKit` depends on `BiparaCore` and `BiparaWorker`; the process adapter stays behind the typed `ModelGateway` seam. Start with bundle identifier `dev.bipara.Bipara` for private development; do not claim public ownership or App Store registration. Keep signing-team values out of Git. Add the app icon asset catalog from the selected C master during implementation, with actual size/masking review.
+The Xcode app target compiles `Sources/BiparaApp/BiparaApp.swift` and product assets and links the local package products. SwiftPM builds the same app directory as `BiparaAppKit`, excluding the entry point and product assets, so application state and native TextKit tests exercise the shipped code. `BiparaAppKit` depends on `BiparaCore` and `BiparaWorker`; the process adapter stays behind the typed `ModelGateway` seam. The bundle identifier is `dev.bipara.Bipara`; it does not establish App Store registration. Keep signing-team values out of Git. The app icon asset catalog uses the [current master](icons/README.md); actual size/masking review remains separate.
 
 ### Small interfaces
 
@@ -84,7 +84,7 @@ The AppKit bridge is a small `NSViewRepresentable` containing two `NSScrollView`
 
 Build a `RenderedTextIndex` from document ranges to displayed ranges. Pane-level idle guidance, pending layout lines, paragraph padding, and translation separators have no source span and must never be sent as selected user text. No untranslated message or per-pair label is inserted into reading text. Use paragraph layout spacing to align corresponding starts in Side by side: measure both intrinsic paragraph heights without alignment padding, then add their difference to the shorter side's trailing spacing. Never feed already padded heights into that calculation. Coalesce width/font/changed-paragraph invalidation; hover does not trigger measurement. Update changed paragraphs without rebuilding every text view or replacing the system selection on each progress event.
 
-Approved 2026-11-07 layout tokens: 32-point reading inset per pane (24 below 1100-point window width), with Standard caps 720/800 points and default Wide caps 960/1080 points for Side by side/Paragraphs. Window uses available pane width minus insets. Paragraphs uses an 8-point source-to-translation gap and a 24-point gap before the next pair, one header key and a translation-side rule. Side by side retains 20-point paragraph spacing and paragraph start alignment. Headings follow the reading text edge. Use native toolbar/control sizing and 12-point secondary chrome. At narrow widths keep the selected Mac layout and wrap text; do not automatically switch layouts. These values are design starting points for native visual acceptance, not a claim that the browser's pixel layout maps exactly to AppKit.
+Reading layout tokens: 32-point reading inset per pane (24 below 1100-point window width), with Standard caps 720/800 points and default Wide caps 960/1080 points for Side by side/Paragraphs. Window uses available pane width minus insets. Paragraphs uses an 8-point source-to-translation gap and a 24-point gap before the next pair, one header key and a translation-side rule. Side by side retains 20-point paragraph spacing and paragraph start alignment. Headings follow the reading text edge. Use native toolbar/control sizing and 12-point secondary chrome. At narrow widths keep the selected Mac layout and wrap text; do not automatically switch layouts. These values are design starting points for native visual acceptance, not a claim that the browser's pixel layout maps exactly to AppKit.
 
 Link scrolling using paragraph identity and intra-paragraph fraction, with a reentrancy guard. Save the active reading anchor before a tab/layout/font change; restore after layout. Use paragraph anchors, not whole-document percentages. Hover does not scroll; expose a keyboard-accessible Reveal counterpart action when its match is offscreen.
 

@@ -4,7 +4,7 @@ The tables below define current product behavior. See [validation status](valida
 
 ## Objective
 
-Make long Chinese and English texts comfortable to translate and read together, with useful correspondence between the original and translated passages.
+Provide a native macOS translation and bilingual reading app powered by large language models (LLMs). Make long Chinese and English texts comfortable to translate and read together, with useful correspondence between the original and translated passages.
 
 ## Confirmed requirements
 

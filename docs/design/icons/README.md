@@ -1,16 +1,9 @@
-# Icon Concepts
+# App icon
 
-**C — Parallel text** is the selected visual direction. Its deep navy background, paired text lines, and coral correspondence highlight are the adopted visual direction. Asset refinement and production packaging are separate from that choice.
+The current icon uses two columns of ivory text on a deep navy background, with a coral connection representing correspondence between the original and translated text.
 
-| Concept | Asset | Status |
-| --- | --- | --- |
-| A — Twin pages | [PNG](a-twin-pages.png) | Alternative |
-| B — Ribbon B | [PNG](b-ribbon-b.png) | Alternative |
-| C — Parallel text | [PNG](c-parallel-text.png) | Selected direction |
-| D — Folded bookmark | [PNG](d-folded-bookmark.png) | Alternative |
+The [source master](c-parallel-text-refined.png) supplies the seven pixel sizes in the [app icon catalog](../../../Sources/BiparaApp/Resources/Assets.xcassets/AppIcon.appiconset). Keep both the master and the catalog: the master is the source artwork, while the catalog contains the resources compiled into the native app.
 
-The [refined C master](c-parallel-text-refined.png) strengthens the center connection and adjusts optical spacing for small-size readability. It remains a refinement draft for review. Its only image reference was the generated C concept; the exact edit prompt is in [refinement-prompt.txt](refinement-prompt.txt). The refined master supplies the seven sizes in the [app icon catalog](../../../Sources/BiparaApp/Resources/Assets.xcassets/AppIcon.appiconset); the catalog compiles in the native build.
+The artwork was generated with OpenAI's image-generation tool on 2026-10-31 from original project descriptions, then refined using only its own generated artwork as the image reference. No external reference assets were used. This source record does not establish trademark clearance.
 
-All four concepts were generated with the built-in OpenAI image-generation tool on 2026-10-31 from original project prompts, without external reference assets. The exact generation prompts are in [prompts.json](prompts.json). This provenance record does not select the project's public license or establish trademark clearance.
-
-These square, opaque images are design masters. Keep source files intact; final Dock/Finder appearance, platform masking, and distribution validation remain distinct from compiling the catalog. The unused alternatives are design references and must not be treated as approved application icons.
+The master is square and opaque. Dock/Finder appearance, small-size readability and platform masking require native validation separately from catalog compilation; see [validation status](../../validation.md).

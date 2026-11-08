@@ -1,6 +1,6 @@
 # Swift–Python Worker Protocol v2
 
-This is the approved v2 transport contract (2026-11-01), with the 2026-11-07 translation prompt revision. App and bundled worker upgrade together; reject protocol v1 at handshake before transmitting a credential. New jobs use `translation.v2`; retained `translation.v1` remains supported. Alignment and output schemas remain v1. [Model workflow](model-workflow.md) owns model inputs/validation; [prompt assets](../../prompts/README.md) own model output schemas. This protocol is local process IPC, not a network service or public API.
+This document defines the current v2 transport contract. App and bundled worker upgrade together; reject protocol v1 at handshake before transmitting a credential. New jobs use `translation.v2`; retained `translation.v1` remains supported. Alignment and output schemas remain v1. [Model workflow](model-workflow.md) owns model inputs/validation; [prompt assets](../../prompts/README.md) own model output schemas. This protocol is local process IPC, not a network service or public API.
 
 ## Transport and lifecycle
 
@@ -32,12 +32,12 @@ After spawn, the app sends hello. No credential is sent until ready validates. S
 | `type` | `request` |
 | `id` | Fresh UUID string; never reuse within or across worker launches |
 | `op` | `translate` or `align` |
-| `config` | Required fields: `provider` (`openai`/`kimi`/`glm`/`deepseek` for the 2026-11-06 revision), nonempty `model` (at most 256 UTF-8 bytes), compatible `profile`, canonical HTTPS `base_url` (at most 2048 UTF-8 bytes), and `effort` from the configuration design. Reject unknown config fields and unsupported combinations before HTTP |
+| `config` | Required fields: `provider` (`openai`/`kimi`/`glm`/`deepseek`), nonempty `model` (at most 256 UTF-8 bytes), compatible `profile`, canonical HTTPS `base_url` (at most 2048 UTF-8 bytes), and `effort` from the configuration design. Reject unknown config fields and unsupported combinations before HTTP |
 | `credentials` | Object: nonempty `api_key` string, at most 4096 UTF-8 bytes; pipe-only and never echoed |
 | `prompt_version` | The job's recorded `translation.v1` or `translation.v2` for translate; `alignment.v1` for align. New jobs capture `translation.v2`; do not silently upgrade retained jobs. |
 | `input` | Exact operation object below; validate before HTTP |
 
-The baseline profiles are `openai-json-schema-v1/v2` and `glm-json-v1/v2` (the slash abbreviates two literal IDs). The 2026-11-06 revision adds `kimi-json-v2` and `deepseek-json-v2` within the same v2 envelope. Ship the app and worker as a pair. Legacy profiles accept only their original Standard API Base URL and effective effort; v2 profiles follow [model configuration](model-settings.md#effort-capabilities-and-wire-mapping). Base URLs and keys travel only in local request frames; neither is echoed in metadata, model messages, errors or diagnostics. The worker must never substitute a hardcoded/environment endpoint. A local missing/deleted/changed configuration is `configuration_unavailable` before worker dispatch, not a new Python wire error.
+Supported profiles are `openai-json-schema-v1/v2` and `glm-json-v1/v2` (the slash abbreviates two literal IDs), plus `kimi-json-v2` and `deepseek-json-v2`, all within the v2 envelope. Ship the app and worker as a pair. Legacy profiles accept only their original Standard API Base URL and effective effort; v2 profiles follow [model configuration](model-settings.md#effort-capabilities-and-wire-mapping). Base URLs and keys travel only in local request frames; neither is echoed in metadata, model messages, errors or diagnostics. The worker must never substitute a hardcoded/environment endpoint. A local missing/deleted/changed configuration is `configuration_unavailable` before worker dispatch, not a new Python wire error.
 
 The app keeps request ownership in its registry: tab session ID, document ID, source revision, job ID, attempt generation, operation, selection identity if applicable, expected units, and target generation. Do not send this entire state to Python or the model. The request ID is the transport correlation key; a result only updates the registry's current owner after all generation checks pass.
 
@@ -121,7 +121,7 @@ For rate-limit responses, convert the HTTP `Retry-After` delay in seconds or HTT
 {"v":2,"type":"error","id":"11111111-1111-4111-8111-111111111111","code":"rate_limited","retry_after_ms":2000,"http_status":429,"provider_code":"1302"}
 ```
 
-Malformed requests with a valid unique request ID receive `invalid_request`. An unidentifiable/malformed frame, duplicate active request ID, or invalid handshake is fatal because correlation cannot be trusted. A fifth concurrent request receives `busy` with no HTTP call (four physical slots per the 2026-11-05 revision); this is an app scheduling defect to test, not a normal hidden queue.
+Malformed requests with a valid unique request ID receive `invalid_request`. An unidentifiable/malformed frame, duplicate active request ID, or invalid handshake is fatal because correlation cannot be trusted. A fifth concurrent request receives `busy` with no HTTP call (four physical slots); this is an app scheduling defect to test, not a normal hidden queue.
 
 ## Cancellation, deadlines, and exit
 
@@ -135,7 +135,7 @@ Malformed requests with a valid unique request ID receive `invalid_request`. An 
 
 Cancel uses the target request ID and has no separate acknowledgement/request ID. For active requests, cancel the async task and its HTTP operation, then emit cancelled once unless another terminal event already won. For unknown/already terminal IDs, do nothing. Do not close a shared HTTP client in a way that cancels another request.
 
-Swift cancellation invalidates the result generation immediately, resumes its caller with cancellation, and keeps a small draining registry entry until the terminal event or worker failure. A physical concurrency slot is released only then. Resume waits for the prior translation requests of that tab session (up to two concurrent batches per the 2026-11-05 revision) to drain. A late result may release that slot but cannot commit text. Python enforces the 120-second total invocation deadline and normally returns a per-request `timeout` error. Use a separate 130-second transport watchdog from actual dispatch: only absence of any terminal frame by that later deadline poisons/stops the unresponsive worker and explicitly fails remaining active requests. The 10-second margin permits normal timeout/cancellation-frame delivery; a normal 120-second provider timeout must leave another live request intact. Cancellation responsiveness is a separate acceptance gate, not permission to block the UI during either deadline.
+Swift cancellation invalidates the result generation immediately, resumes its caller with cancellation, and keeps a small draining registry entry until the terminal event or worker failure. A physical concurrency slot is released only then. Resume waits for the prior translation requests of that tab session (up to two concurrent batches) to drain. A late result may release that slot but cannot commit text. Python enforces the 120-second total invocation deadline and normally returns a per-request `timeout` error. Use a separate 130-second transport watchdog from actual dispatch: only absence of any terminal frame by that later deadline poisons/stops the unresponsive worker and explicitly fails remaining active requests. The 10-second margin permits normal timeout/cancellation-frame delivery; a normal 120-second provider timeout must leave another live request intact. Cancellation responsiveness is a separate acceptance gate, not permission to block the UI during either deadline.
 
 On malformed output, unexpected EOF, or worker crash, invalidate every request owned by that worker instance, retain committed text, pause queued jobs, and show the failure. Never auto-replay a paid operation. The next explicit Retry/Translate may launch a new instance after the old one is fully reaped. Associate callbacks with a worker-instance UUID so old pipe callbacks cannot affect its replacement.
 

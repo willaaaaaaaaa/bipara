@@ -1,6 +1,6 @@
 # Self-Test and Acceptance Plan
 
-This plan specifies acceptance checks; actual existing evidence is recorded in the [native validation report](validation.md). The baseline model configuration gates and the [2026-11-06 revision gates](#2026-11-06-settings-and-provider-revision) are listed separately. [Development plan](development-plan.md) owns delivery order and commands. Never convert a missing prerequisite, historical result or skipped applicable suite into a pass for the new revision.
+This plan specifies acceptance checks; actual existing evidence is recorded in the [native validation report](validation.md). The acceptance matrix is supplemented by [Settings and provider checks](#settings-and-provider-acceptance) and [reading checks](#reading-acceptance). [Development plan](development-plan.md) owns delivery order and commands. Never convert a missing prerequisite, historical result or skipped applicable suite into a pass for the new revision.
 
 ## Test layers and fixtures
 
@@ -79,11 +79,11 @@ Use fake clocks/scheduled responses to make concurrency and deadlines determinis
 | THEME-03 | Selection vs correspondence remains distinguishable in both appearances; disabled controls, errors, placeholders and secondary labels remain readable |
 | A11Y-01 | VoiceOver names/actions/status, keyboard-only complete workflow, Increase Contrast, Reduce Motion, and no meaning dependent solely on color |
 
-Capture screenshots/XCTest attachments for the eight THEME-01 layout/appearance combinations and concise notes for stateful interactions. Include Chinese UI at least once in each effective appearance, plus the Settings window. Verify the C icon at 16, 32, 128 and 512-point contexts and in Dock/Finder. Source review, a browser prototype, and a DOM harness do not establish native visual acceptance.
+Capture screenshots/XCTest attachments for the eight THEME-01 layout/appearance combinations and concise notes for stateful interactions. Include Chinese UI at least once in each effective appearance, plus the Settings window. Verify the app icon at 16, 32, 128 and 512-point contexts and in Dock/Finder. Source review, a browser prototype, and a DOM harness do not establish native visual acceptance.
 
 Initial responsiveness targets on the recorded development machine: ordinary tab/layout/selection interaction p95 <=150 ms over 30 fixture interactions after initial loading; cancellation reflects locally within 200 ms; a cooperative fixture worker cancels within 1 second; no main-thread file/model/pipe blocking or beachball. Measure with the 100-KiB/five-tab fixture and report traces if a target fails. These are design targets to evaluate, not promised device-wide SLAs. Record cold/warm worker startup, RSS and bundle size; the hard startup timeout remains 10 seconds. Return material target changes for design review instead of weakening tests silently.
 
-## 2026-11-06 Settings and provider revision
+## Settings and provider acceptance
 
 Run the existing offline suite and native fixture workflow after implementation. Keep previous evidence attached to its tested revision.
 
@@ -97,9 +97,9 @@ Run the existing offline suite and native fixture workflow after implementation.
 
 Use endpoint-scoped eligible test accounts for opt-in real calls. Extend the live verifier to take explicit Kimi and DeepSeek test credentials before claiming real acceptance for them. Keep historical model profiles and the existing offline no-network rule covered.
 
-## 2026-11-07 reading refinement acceptance
+## Reading acceptance
 
-The [reading refinements](design/interaction.md#2026-11-07-reading-refinement-proposal) define the following acceptance requirements. Current outcomes belong in [validation status](validation.md).
+The [reading refinements](design/interaction.md#reading-details) define the following acceptance requirements. Current outcomes belong in [validation status](validation.md).
 
 | ID | Evidence |
 | --- | --- |

@@ -1,66 +1,40 @@
-# Open-source preparation plan
+# Open-source readiness
 
 ## Delivery contract
 
-Bipara uses the MIT license and initially targets Apple Silicon. Every formal
-version has a protected `vMAJOR.MINOR.PATCH` tag and an installable GitHub Release
-DMG built from that tag. Experimental maturity is disclosed independently of
-whether an installation package is provided. Initial public history starts from
-a reviewed source snapshot. Pre-publication history remains a private read-only
-archive, outside the ancestry of public commits. Ongoing development uses one
-canonical code history under the [repository boundaries](repository-boundaries.md).
+Bipara is an LLM-powered native macOS translation and bilingual reading app. It uses the MIT license and initially targets Apple Silicon. Source publication and formal installer qualification are separate gates. Every formal version requires a protected `vMAJOR.MINOR.PATCH` tag and an installable GitHub Release DMG built from that tag. Experimental maturity is disclosed independently of whether an installation package is provided.
 
-## Implementation and acceptance
+## Source publication gates
 
-| Area | Deliverable | Acceptance |
-| --- | --- | --- |
-| Content boundaries | Public engineering contracts; enduring non-secret personal context in private knowledge; temporary material in ignored `.local/`; raw evidence and archives outside the checkout | Public checkout needs no private resources; local setup and content checks exclude private material |
-| Upload prevention | Worktree, index, commit-range and author checks; local hooks; required CI | Synthetic repositories demonstrate blocked paths, secrets, private context and commit identities without printing matched data |
-| Public documentation | Portable agent and contribution rules, privacy/security notices, MIT license, concise validation status | Link, symlink and content checks; detailed execution records remain private |
-| Document integrity | Safe source revisions, bounded text import, preservation of copied fragment gaps and close/save generations | Focused Swift regressions and the offline suites |
-| Retained jobs | Local jobs retain their original endpoint; changing services requires explicit Retranslate; opened portable files require explicit binding | Configuration-loss and portable-file regressions |
-| Packaging | Version/tag consistency, bundled runtime licenses, nested Developer ID signing, DMG notarization and stapling | Offline orchestration tests plus actual signed-package qualification |
-| GitHub delivery | Unprivileged PR checks; protected tag build produces a draft; separate publication verifies exact assets and installation declarations | Workflow validation and a release-candidate rehearsal |
+| Area | Required result |
+| --- | --- |
+| Public content | Current engineering contracts, portable setup, concise validation status and required attribution; no credentials, personal workflows or unused selection assets |
+| History and identity | Every intended commit/tag and its author, committer or tagger identity reviewed before upload |
+| Upload prevention | Worktree, index and outgoing-commit checks; pinned secret detection; local hooks and required CI |
+| Reproducibility | Default checks and native build from documented public inputs without developer-specific configuration |
+| Contributor setup | Discoverable, repeatable setup that preserves existing hooks and security-rule selections, explains external writes and does not require a maintainer's personal storage layout |
+| Documentation | English primary README, Chinese companion, contribution instructions, privacy/security notices, MIT license and working links |
+| Hosted repository | Required checks, protected branches/tags, private vulnerability reporting and release environments configured and verified |
 
-## Order
+The [repository boundaries](repository-boundaries.md) define content handling and checks. The [validation status](validation.md) records tested scope and remaining gaps; the existence of a checker or workflow is not evidence that it passed.
 
-1. Review the existing boundaries, upload checks, integrity regressions and release
-   tooling. Preserve useful public contracts and third-party attribution.
-2. Preserve the old Git database, dirty source and required local configuration in
-   an external recovery archive. Verify an isolated restoration. A Git bundle alone
-   does not preserve uncommitted or ignored files.
-3. Export only the reviewed public file list to an isolated checkout, preserving
-   executable bits and relative symlinks. Select a public identity and create the
-   initial commit without old parents, refs or private remote configuration.
-4. Run default checks and a native build without private notes, local configuration
-   or knowledge-service access. Verify the snapshot against the selected source.
-   Switch the canonical checkout only after these checks and recovery pass; retire
-   preparation copies after confirming they contain no unique work.
-5. Under a publication instruction, configure GitHub protections and the public
-   remote, then push only reviewed refs. Verify actual hosted checks and settings.
-6. Qualify Developer ID signing, notarization, minimum-OS installation and upgrades
-   against the final package. Rehearse and publish a formal tag and DMG under a
-   release instruction, following [the release procedure](releasing.md).
+Issue templates and [support guidance](../SUPPORT.md) provide contributor entry points. Dependabot is configured to propose weekly GitHub Actions and worker dependency updates; proposals require review and CI, with no automatic merge. Before publication, verify the chosen vulnerability-reporting channel, dependency alerts, secret scanning and push protection on the actual repository, following [GitHub's repository guidance](https://docs.github.com/en/repositories/creating-and-managing-repositories/best-practices-for-repositories).
 
-Keep one active code history after migration. An optional backup remote stores the
-same publishable history; the old private archive is never merged into it. A failed
-migration is recovered from the verified archive before further writes. Current
-mechanisms and observed acceptance remain distinct in [validation status](validation.md).
+## Formal release gates
 
-## External prerequisites
+| Area | Required result |
+| --- | --- |
+| Product | Document integrity, retained-job configuration safety, native reading/settings/tabs and accessibility acceptance |
+| Providers | Bounded real-provider checks for semantic quality, compatibility, latency and cost |
+| Runtime and licenses | Qualified bundled Python build, verified dependency provenance and complete required notices |
+| Packaging | Version/tag consistency, nested Developer ID signing, DMG notarization and stapling |
+| Installation | Clean installation, upgrade and minimum-OS acceptance against the exact final DMG checksum |
+| Delivery | Protected tag build produces a draft; publication verifies the exact assets and installation declarations |
 
-Developer ID Application credentials and notarization access, repository rulesets,
-protected release environments, private vulnerability reporting and immutable
-releases require account/repository configuration. Source changes do not establish
-that these settings exist. Every commit and tag intended for publication needs
-content and identity review; the private historical archive is excluded. This plan
-does not authorize rewriting the archive or creating a public remote.
+Follow [the release procedure](releasing.md) for commands and package acceptance. Default offline tests do not establish real-provider, native UI or distribution qualification. Keep full execution logs and captures out of tracked documentation; record concise outcomes and limitations in the validation status.
 
-Real-provider checks use eligible endpoint-scoped accounts, synthetic text and an
-explicit request/cost cap. They are separate from default CI and package smoke
-tests. Installation declarations refer to the exact final DMG checksum, not a
-development build. No offline test substitutes for those qualifications.
+## External prerequisites and authorization
 
-Keep execution logs, screenshots, receipts and full review narratives in `.local/`
-or outside the repository. Record only concise current outcomes and limitations in
-[validation status](validation.md).
+Developer ID and notarization credentials, repository rulesets, protected release environments, private vulnerability reporting and immutable releases require account/repository configuration. Source changes do not establish those settings. Real-provider checks require eligible accounts, synthetic inputs and an explicit request/cost cap.
+
+Repository creation, remote pushes, visibility changes, history rewriting and publication require an instruction covering those actions. This checklist does not perform or authorize them.
