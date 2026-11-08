@@ -1,0 +1,9 @@
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.icns binary
+*.pdf binary
+
+# Preserve the upstream license bytes, including its terminal blank line.
+licenses/python-runtime/LICENSE.libX11.txt whitespace=-blank-at-eof

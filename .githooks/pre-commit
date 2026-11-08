@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+exec python3 "$ROOT/script/check_public_content.py" --root "$ROOT" --staged --gitleaks

@@ -1,0 +1,22 @@
+{
+  "title": "BiparaAlignmentV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "matches", "reason"],
+  "properties": {
+    "status": {"type": "string", "enum": ["matched", "no_match"]},
+    "matches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["quote", "occurrence"],
+        "properties": {
+          "quote": {"type": "string"},
+          "occurrence": {"type": "integer"}
+        }
+      }
+    },
+    "reason": {"type": "string", "enum": ["none", "not_expressed", "ambiguous", "selection_too_broad"]}
+  }
+}

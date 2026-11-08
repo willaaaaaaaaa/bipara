@@ -1,0 +1,53 @@
+name: Offline checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  public-content:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Select temporary tool storage
+        run: echo "BIPARA_CHECK_TOOLS_DIR=$RUNNER_TEMP/bipara-check-tools" >> "$GITHUB_ENV"
+      - run: python3 script/install_check_tools.py
+      - run: '"$BIPARA_CHECK_TOOLS_DIR/actionlint"'
+      - run: python3 script/check_public_content.py --gitleaks
+      - run: python3 -m unittest discover -s Tests/Tooling -v
+      - name: Check incoming commits
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 script/check_public_content.py --commits "$BASE_SHA..$HEAD_SHA" --gitleaks
+  native-offline:
+    runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      UV_PYTHON: '3.13.3'
+      UV_PYTHON_PREFERENCE: only-managed
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          enable-cache: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Select temporary tool storage
+        run: |
+          echo "BIPARA_CHECK_TOOLS_DIR=$RUNNER_TEMP/bipara-check-tools" >> "$GITHUB_ENV"
+          echo "UV_PYTHON_INSTALL_DIR=$RUNNER_TEMP/bipara-python" >> "$GITHUB_ENV"
+      - run: python3 script/install_check_tools.py
+      - run: uv python install 3.13.3 --no-bin
+      - run: script/check.sh

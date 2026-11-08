@@ -1,0 +1,122 @@
+name: Release DMG
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing formal tag to publish'
+        required: true
+      sha256:
+        description: 'SHA-256 of the exact DMG that was installed and tested'
+        required: true
+      clean_install:
+        description: 'Clean-machine install of this exact DMG passed'
+        type: boolean
+        required: true
+        default: false
+      upgrade:
+        description: 'Upgrade/settings/Keychain checks of this exact DMG passed'
+        type: boolean
+        required: true
+        default: false
+      minimum_os:
+        description: 'Minimum supported macOS checks of this exact DMG passed'
+        type: boolean
+        required: true
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  build-draft:
+    if: github.event_name == 'push'
+    runs-on: macos-26
+    environment: release
+    permissions:
+      contents: write
+    env:
+      BIPARA_RELEASE_BUILD: '1'
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      UV_PYTHON: '3.13.3'
+      UV_PYTHON_PREFERENCE: only-managed
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          enable-cache: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Select temporary tool storage
+        run: |
+          echo "BIPARA_CHECK_TOOLS_DIR=$RUNNER_TEMP/bipara-check-tools" >> "$GITHUB_ENV"
+          echo "UV_PYTHON_INSTALL_DIR=$RUNNER_TEMP/bipara-python" >> "$GITHUB_ENV"
+      - run: python3 script/install_check_tools.py
+      - run: uv python install 3.13.3 --no-bin
+      - name: Check tagged source and history
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 script/release.py preflight --tag "$TAG"
+          python3 script/check_public_content.py --history --gitleaks
+          script/check.sh
+      - name: Import release credentials
+        env:
+          BIPARA_CERTIFICATE_P12_BASE64: ${{ secrets.BIPARA_CERTIFICATE_P12_BASE64 }}
+          BIPARA_CERTIFICATE_PASSWORD: ${{ secrets.BIPARA_CERTIFICATE_PASSWORD }}
+          BIPARA_KEYCHAIN_PASSWORD: ${{ secrets.BIPARA_KEYCHAIN_PASSWORD }}
+          BIPARA_NOTARY_KEY_P8: ${{ secrets.BIPARA_NOTARY_KEY_P8 }}
+          BIPARA_NOTARY_KEY_ID: ${{ secrets.BIPARA_NOTARY_KEY_ID }}
+          BIPARA_NOTARY_ISSUER_ID: ${{ secrets.BIPARA_NOTARY_ISSUER_ID }}
+          BIPARA_NOTARY_PROFILE: bipara-release
+        run: script/ci_signing.sh install
+      - name: Build and notarize tagged DMG
+        env:
+          TAG: ${{ github.ref_name }}
+          BIPARA_CODESIGN_IDENTITY: ${{ secrets.BIPARA_CODESIGN_IDENTITY }}
+          BIPARA_NOTARY_PROFILE: bipara-release
+          BIPARA_NOTARY_KEYCHAIN: ${{ runner.temp }}/bipara-release.keychain-db
+        run: script/build_dmg.sh --tag "$TAG"
+      - name: Upload draft assets
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 script/release.py draft --tag "$TAG"
+      - name: Remove temporary credentials
+        if: always()
+        run: script/ci_signing.sh cleanup
+  publish:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    environment: release-publish
+    permissions:
+      contents: write
+    steps:
+      - name: Require installation declarations
+        env:
+          CLEAN_INSTALL: ${{ inputs.clean_install }}
+          UPGRADE: ${{ inputs.upgrade }}
+          MINIMUM_OS: ${{ inputs.minimum_os }}
+        run: test "$CLEAN_INSTALL" = true && test "$UPGRADE" = true && test "$MINIMUM_OS" = true
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Publish verified draft
+        env:
+          TAG: ${{ inputs.tag }}
+          DMG_SHA256: ${{ inputs.sha256 }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 script/release.py publish --tag "$TAG" --sha256 "$DMG_SHA256" --verified clean-install --verified upgrade --verified minimum-os
