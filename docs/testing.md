@@ -146,7 +146,7 @@ Semantic evidence requires independent human review; an LLM is not the unreviewe
 | --- | --- |
 | PKG-01 | Copied app runs from a path containing spaces without repo paths/system Python/uv/pip; helper resolves bundled assets, no startup downloads/listeners or helper Dock icon |
 | PKG-02 | Actual clean supported Mac/VM/user environment, minimum OS check, complete launch/read/save/model/quit smoke; stripped PATH alone is only partial isolation evidence |
-| PKG-03 | Nested binaries and main bundle signature verification; actual notarization/Gatekeeper evidence only when separately configured/authorized; unsigned development build labeled accurately |
+| PKG-03 | Nested binaries and main bundle signature verification under the tagged distribution policy. Initial ad-hoc packages disclose missing Developer ID/notarization and demonstrate the expected warning plus per-app exception on supported systems. The optional Developer ID policy additionally requires actual notarization/Gatekeeper acceptance |
 | PKG-04 | Repeated launches/quits and app crash leave no orphan worker; packaged cancellation and two requests behave like development tests |
 | OSS-01 | Dependency versions/licenses, asset provenance, portable setup, English docs and default UI, ignored artifacts and no private addresses/paths/secrets; no unapproved license or publication |
 

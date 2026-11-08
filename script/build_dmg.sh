@@ -12,7 +12,9 @@ shift
 
 # Optional local run environment (e.g. DEVELOPER_DIR); ignored if absent.
 # shellcheck disable=SC1091
-[ -f "script/env.local.sh" ] && . "script/env.local.sh" || true
+if [ "${BIPARA_RELEASE_BUILD:-0}" != 1 ]; then
+  [ -f "script/env.local.sh" ] && . "script/env.local.sh" || true
+fi
 
 fail() {
   echo "build_dmg.sh: $1" >&2

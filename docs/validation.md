@@ -23,7 +23,7 @@ xcodebuild -project Bipara.xcodeproj -scheme Bipara \
   -derivedDataPath build/native-check CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= build
 ```
 
-## Current evidence
+## Source-publication evidence
 
 | Layer | Observed result |
 | --- | --- |
@@ -35,9 +35,19 @@ xcodebuild -project Bipara.xcodeproj -scheme Bipara \
 | Python | 288 offline tests passed, including packaged-worker IPC |
 | Native Debug | Hosted ad-hoc Debug build and a local build with explicit ad-hoc signing overrides passed |
 | Hosted workflows | Both required jobs, `public-content` and `native-offline`, passed for the commit linked above; workflow syntax checks passed |
-| Formal runtime | The recorded CPython 3.13.3 fingerprint mismatch remains unresolved; formal-runtime qualification was not rerun |
+| Formal runtime | This historical development run did not qualify the formal runtime; the subsequent release-foundation result is recorded below |
 
 The default run made no provider calls, launched no interactive UI acceptance session and produced no qualified installer. Worker notices do not establish complete external-dylib license coverage, asset rights or legal compatibility. Those reviews remain separate.
+
+## Release-foundation evidence
+
+On 2026-11-08 (UTC+8), `BIPARA_RELEASE_BUILD=1 script/check.sh` passed locally on arm64 macOS 27.0.1 with Xcode 27.2: 41 tooling tests, 270 Swift tests, 289 Python tests, both worker bundles and the native Debug build. The 160 non-Markdown source inputs, excluding `.gitattributes`, use the manifest format above and have SHA-256 `b19fe41474e4292b0eeba65e7ef06e580fc974d212ad516741253461c489c616`. The local Debug build may still read the optional Debug signing configuration; it is not a clean-machine installation result.
+
+The Python archive checksum matched its upstream checksum asset. Runtime preparation verified the unchanged archive library and extracted source/native files; interpreter-regenerated `.pyc` caches are excluded. The former library mismatch came from uv rewriting the Mach-O install name to an installation-specific path. Twenty upstream component notices matched the pinned source revision. The packaged inventory contains 55 entries, including 40 runtime attribution entries and 14 native binary inputs; these counts include conservative component notices rather than claiming 40 independently loaded packages. Checksum-verified source archives for the MPL-covered certifi and orjson versions are bundled with their licenses. Source, native attribution, cached/downloaded tampering, unsafe extraction and distribution-mode regressions passed.
+
+An isolated clean Git fixture subsequently ran the actual tagged build entry point without Apple credentials and produced all three allowlisted assets. Its 160 source inputs have SHA-256 `5876fab4e62e5923e31f1b96513191454ba8cccbf05e009a3f377d0e82c5690e`. Release compilation, nested ad-hoc signature checks, mounted bundle checks, and helper handshake/shutdown passed. End-to-end checks also exposed and fixed a private-content boundary check that incorrectly included parent checkout paths, and an explicit ad-hoc PyInstaller identity that enabled incompatible library validation. The resulting local DMG checksum is `072caef6b735c6ab69ba9afb08e02974b5b4d054376a93c9a6ef103e1a3a2840`; it has not passed browser-quarantine, clean-installation, upgrade or minimum-OS qualification and is not a published release.
+
+The tagged distribution policy selects ad-hoc signing without Developer ID or Apple notarization. This removes the Apple membership/credential prerequisite for the initial download, while retaining product and exact-package installation gates. Repository immutability is enabled; a separate creation ruleset limits `v*` tag creation to the release maintainer, while the existing no-bypass update/deletion rules remain active. Main protection was read back unchanged. These configuration checks do not establish installation or hosted release-workflow acceptance.
 
 ## Remaining gates
 
@@ -47,4 +57,4 @@ Repository settings were read back after configuration: main requires PRs and bo
 
 Native UI and accessibility, including VoiceOver, keyboard-only use, physical IME, Increase Contrast and Reduce Motion, remain incomplete. Offline component tests do not establish complete native or live-model acceptance for this input. Real-provider semantic quality, latency, cost and live rate-limit recovery require separate scoped checks. See [the test plan](testing.md).
 
-Formal distribution additionally requires the qualified runtime, complete license review, Developer ID signing, notarization, Gatekeeper, clean installation, upgrade and minimum-OS acceptance against the exact final DMG checksum. Target macOS 14+ and arm64 do not establish actual minimum-OS compatibility. Every formal version still requires a protected tag and its qualified DMG under [the release procedure](releasing.md).
+Public distribution still requires native/product/provider qualification, valid ad-hoc package signatures, and clean installation, upgrade and minimum-OS acceptance against the exact final DMG checksum, including the actual macOS warning and per-app exception for the initial unnotarized package. Developer ID/notarization remain a future policy option rather than a prerequisite for this initial route. Target macOS 14+ and arm64 do not establish actual minimum-OS compatibility. Every formal version still requires a protected tag and its qualified DMG under [the release procedure](releasing.md).

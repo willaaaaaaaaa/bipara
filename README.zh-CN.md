@@ -12,7 +12,7 @@ Bipara 是一款由大语言模型（LLM）驱动的原生 macOS 翻译与双语
 
 源码构建请按下方开发说明操作。源码就绪需要公共内容、历史与身份审查，以及离线回归检查；当前结果和阻碍见[验证状态](docs/validation.md)。
 
-每个正式版本仍必须有受保护的版本 tag，以及经过 Developer ID 签名、公证的可安装 arm64 DMG，并针对该包的精确校验和完成干净安装、升级和最低系统验收。这些发行门禁独立于源码就绪检查；此处不承诺发布日期或下载地址。
+每个公开安装版本必须有受保护的版本 tag 和可安装 arm64 DMG，并针对该包的精确校验和完成干净安装、升级和最低系统验收。首版采用 ad-hoc 签名，未经 Apple 公证，也没有经过验证的 Developer ID 身份；macOS 可能要求针对本应用选择“仍要打开”。详见[安装与信任说明](docs/releasing.md#install-and-publish)。目前尚无通过验收的下载包。
 
 在 Settings 中添加模型配置，填写实际模型、API Base URL 和密钥，选择 Active Model。粘贴文本或打开 UTF-8 txt 文件后翻译；切换阅读布局无需重新翻译。可保存为 bipara 文档，或显式导出、复制文本。发送文档前请阅读 [隐私说明](PRIVACY.md)。
 
@@ -20,7 +20,7 @@ Bipara 是一款由大语言模型（LLM）驱动的原生 macOS 翻译与双语
 
 ## 开发
 
-需要完整 Xcode、用于工具脚本的 Python 3.11+ 和 uv。worker 使用锁定的 CPython 3.13 环境；原生测试需要 macOS 图形会话。默认检查无需模型密钥。
+需要完整 Xcode、用于工具脚本的 Python 3.12+ 和 uv。worker 使用锁定的 CPython 3.13 环境；原生测试需要 macOS 图形会话。默认检查无需模型密钥。
 
 ```sh
 script/setup.sh

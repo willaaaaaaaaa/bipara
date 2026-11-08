@@ -28,4 +28,4 @@ Use the issue templates for bug reports and feature requests; [Support](SUPPORT.
 
 ## Licensing and releases
 
-Contributions are made under the [MIT license](LICENSE). Preserve third-party attribution and compatible terms. Release work follows [releasing](docs/releasing.md); formal versions require a tagged, signed, notarized and installation-qualified DMG.
+Contributions are made under the [MIT license](LICENSE). Preserve third-party attribution and compatible terms. Release work follows [releasing](docs/releasing.md); public installers require a tagged, installation-qualified DMG under the tagged distribution policy. The initial policy uses ad-hoc signing without notarization.

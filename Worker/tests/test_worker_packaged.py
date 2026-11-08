@@ -66,6 +66,27 @@ def _handshake(client: WorkerClient) -> dict:
 
 
 class TestReleaseBundle:
+    def test_formal_bundle_keeps_source_and_native_attribution(self, release_executable):
+        import json
+        if os.environ.get("BIPARA_RELEASE_BUILD") != "1":
+            pytest.skip("formal-runtime attribution is checked by the formal CI baseline")
+        directory = release_executable.parent.parent / "Resources/ThirdPartyLicenses"
+        records = json.loads((directory / "inventory.json").read_text())
+        assert (directory / "PythonRuntime/manifest.json").is_file()
+        assert any(row.get("native_files") for row in records)
+        for row in records:
+            if row["role"] == "runtime" and row["name"] not in {"CPython", "Python runtime component notices"}:
+                assert row["source"]["url"].startswith("https://files.pythonhosted.org/")
+            if "MPL-2.0" in row["license"]:
+                archives = [name for name in row["files"] if name.startswith("sources/")]
+                assert archives, row["name"]
+                for name in archives:
+                    import hashlib
+                    assert hashlib.sha256((directory / name).read_bytes()).hexdigest() == row["source"]["sha256"]
+            for binary in row.get("native_files", []):
+                assert not Path(binary["path"]).is_absolute()
+                assert len(binary["sha256"]) == 64
+
     def test_component_licenses_are_present_and_complete(self, release_executable):
         import json
 
