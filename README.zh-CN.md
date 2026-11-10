@@ -16,7 +16,7 @@ Bipara 是一款由大语言模型（LLM）驱动的原生 macOS 翻译与双语
 
 在 Settings 中添加模型配置，填写实际模型、API Base URL 和密钥，选择 Active Model。粘贴文本或打开 UTF-8 txt 文件后翻译；切换阅读布局无需重新翻译。可保存为 bipara 文档，或显式导出、复制文本。发送文档前请阅读 [隐私说明](PRIVACY.md)。
 
-目标平台为 Apple Silicon、macOS 14+；部署目标和实际验证版本分别记录。VoiceOver、纯键盘流程、增强对比度和减少动态效果仍需完整原生验收，离线 fixture 不能替代这些证据。
+首个公开安装包面向 Apple Silicon，需要 macOS 27.0.1 或更高版本。已验证的环境和安装证据见验收状态。VoiceOver、纯键盘流程、增强对比度和减少动态效果仍需完整原生验收。
 
 ## 开发
 

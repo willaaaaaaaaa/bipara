@@ -16,7 +16,7 @@ Every public installer must have a protected version tag and an arm64 DMG qualif
 
 Open Settings, add a model configuration with its exact model, API Base URL and key, and choose an Active Model. Paste text or open a UTF-8 .txt file, then translate. Switch reading layouts without retranslating. Save editable work as .bipara or explicitly export/copy text. Read [Privacy](PRIVACY.md) before sending documents.
 
-Platform target: Apple Silicon and macOS 14+. Tested environments and minimum-OS qualification are listed separately; the deployment target alone is not acceptance. VoiceOver, keyboard-only workflows, Increase Contrast and Reduce Motion still require complete native acceptance; offline fixtures do not establish it.
+The first public installer targets Apple Silicon and requires macOS 27.0.1 or later. See the validation status for tested environments and installation evidence. VoiceOver, keyboard-only workflows, Increase Contrast and Reduce Motion still require complete native acceptance.
 
 ## Develop
 

@@ -8,7 +8,7 @@ Read [architecture](../architecture.md) for decision ownership, [model workflow]
 
 ## Build and module boundaries
 
-Target macOS 14 or later, Swift 6 language mode, and Apple Silicon for the first release. Use system frameworks only on the Swift side. Intel/universal distribution and mobile execution are separate future qualification tasks. Do not imply that building on a newer OS proves the minimum OS works.
+Require macOS 27.0.1 or later and Apple Silicon for the first public installer. The Release app takes its deployment target from `BIPARA_RELEASE_MINIMUM_MACOS` in `Config/Version.xcconfig`. Use Swift 6 language mode and system frameworks on the Swift side. Intel/universal distribution and mobile execution are separate future qualification tasks.
 
 Create one checked-in Xcode project, `Bipara.xcodeproj`, with shared scheme `Bipara`; use a root Swift package for `BiparaCore` and its tests. No project generator, dependency injection framework, database, server, or graph scheduler is needed.
 

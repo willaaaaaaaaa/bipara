@@ -33,13 +33,13 @@ concurrency:
 jobs:
   build-draft:
     if: github.event_name == 'push'
-    runs-on: macos-26
+    runs-on: xcode-27
     environment: release
     permissions:
       contents: write
     env:
       BIPARA_RELEASE_BUILD: '1'
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:

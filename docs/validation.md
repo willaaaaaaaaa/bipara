@@ -2,7 +2,11 @@
 
 Bipara is an experimental source preview. Default development checks do not qualify a public installer, real-provider behavior or the complete native UI.
 
-## First release candidate
+## Release candidate v0.1.1
+
+On 2026-11-10 (UTC+8), an isolated development DMG build on Apple Silicon macOS 27.0.1 with Xcode 27.2 verified Bipara 0.1.1 (build 2). The mounted bundle and its main Mach-O binary both declare macOS 27.0.1. Mounted signature verification and the bundled worker handshake and shutdown passed. The development DMG SHA-256 is `21d1a6a68ac0399dd0ca60ddb31751d452aafb051324cdf2f62bf88b128d62a0`. The exact final installer still needs clean installation and upgrade evidence on the supported minimum.
+
+## Release candidate v0.1.0
 
 On 2026-11-10 (UTC+8), the open-model and native-reading candidate passed the formal-runtime offline check in an isolated arm64 checkout on macOS 27.0.1 with Xcode 27.2. The run covered 41 tooling tests, 282 Swift tests, 343 Python tests, both worker bundles and the native Debug build. The source-input manifest was `d07d36647cc5dff4dc2d904f86658515564820d9ae2fc3e9716bdadeeab00238`. The maintainer reported testing the basic app workflows. The independent native suite passed the typed-key Save case before the run was stopped. It did not complete the full suite. No live-provider requests were made.
 
@@ -97,4 +101,4 @@ Repository settings were read back after configuration: main requires PRs and bo
 
 Complete the applicable [app functional checks](testing.md#app-functional-acceptance) on the release candidate. Existing evidence applies to the recorded source and workflows. Real-provider semantic quality, latency, cost and live rate-limit recovery require separate scoped checks. Installer qualification remains a separate release gate.
 
-Public distribution still requires native/product/provider qualification, valid ad-hoc package signatures, and clean installation, upgrade and minimum-OS acceptance against the exact final DMG checksum, including the actual macOS warning and per-app exception for the initial unnotarized package. Developer ID/notarization remain a future policy option rather than a prerequisite for this initial route. Target macOS 14+ and arm64 do not establish actual minimum-OS compatibility. Every formal version still requires a protected tag and its qualified DMG under [the release procedure](releasing.md).
+Public distribution still requires native, product and provider qualification, valid ad-hoc package signatures, and clean installation, upgrade and minimum-OS acceptance against the exact final DMG checksum. Record the actual macOS warning and per-app exception for the initial unnotarized package. The first public installer requires macOS 27.0.1 or later on Apple Silicon. Every formal version requires a protected tag and its qualified DMG under [the release procedure](releasing.md).

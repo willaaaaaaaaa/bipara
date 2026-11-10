@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import plistlib
 import re
 import shutil
 import subprocess
@@ -19,7 +20,6 @@ if sys.version_info < (3, 12):
     raise SystemExit("release: Python 3.12 or newer is required")
 TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 REQUIRED_CHECKS = ("clean-install", "upgrade", "minimum-os")
-MINIMUM_MACOS = (14, 0, 0)
 MACH_O_MAGIC = {b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf"}
 
 
@@ -110,24 +110,36 @@ def run_logged(args: list[str], env: dict, log: Path) -> None:
         raise ReleaseError(f"{Path(args[0]).name}: build failed; inspect ignored release logs")
 
 
-def verify_minimum_macos(path: Path) -> None:
+def release_minimum_macos() -> str:
+    text = (ROOT / "Config/Version.xcconfig").read_text()
+    minimum = re.search(r"^BIPARA_RELEASE_MINIMUM_MACOS\s*=\s*(\d+\.\d+\.\d+)$", text, re.M)
+    if not minimum:
+        raise ReleaseError("missing or invalid release macOS minimum")
+    return minimum[1]
+
+
+def verify_minimum_macos(path: Path, minimum: str) -> None:
     with path.open("rb") as stream:
         if stream.read(4) not in MACH_O_MAGIC:
             return
     build = command("xcrun", "vtool", "-arch", "arm64", "-show-build", str(path))
     targets = re.findall(r"^\s+minos\s+(\d+(?:\.\d+){1,2})$", build, re.M)
     targets += re.findall(r"cmd LC_VERSION_MIN_MACOSX\s+cmdsize \d+\s+version (\d+(?:\.\d+){1,2})", build)
-    if not targets or any(tuple(map(int, target.split("."))) > MINIMUM_MACOS for target in targets):
-        raise ReleaseError(f"binary deployment target exceeds macOS 14.0 or is missing: {path.name}")
+    maximum = tuple(map(int, minimum.split(".")))
+    if not targets or any(tuple(map(int, target.split("."))) > maximum for target in targets):
+        raise ReleaseError(f"binary deployment target exceeds macOS {minimum} or is missing: {path.name}")
 
 
-def verify_bundle(app: Path) -> None:
+def verify_bundle(app: Path, minimum: str) -> None:
     helper = app / "Contents/Helpers/BiparaWorker.app"
     if not (helper / "Contents/MacOS/BiparaWorker").is_file():
         raise ReleaseError("bundled worker is missing")
     command("codesign", "--verify", "--deep", "--strict", str(app))
     if command("lipo", "-archs", str(app / "Contents/MacOS/Bipara")) != "arm64":
         raise ReleaseError("unexpected application architecture")
+    info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+    if info.get("LSMinimumSystemVersion") != minimum:
+        raise ReleaseError("built application minimum macOS differs from release configuration")
     for prompt in (ROOT / "prompts").glob("*.txt"):
         if digest(prompt) != digest(helper / "Contents/Frameworks/prompts" / prompt.name):
             raise ReleaseError("bundled prompt differs from the tagged source")
@@ -141,7 +153,7 @@ def verify_bundle(app: Path) -> None:
         if any(part in {".local", ".scratch", ".git", "secrets"} for part in path.relative_to(app).parts) or path.suffix in {".p12", ".p8", ".key", ".log"} or (path.suffix == ".pem" and not public_ca):
             raise ReleaseError("private material found in the application bundle")
         if not path.is_symlink() and path.is_file():
-            verify_minimum_macos(path)
+            verify_minimum_macos(path, minimum)
     with tempfile.TemporaryDirectory(prefix="bipara-helper-smoke-") as home:
         result = subprocess.run([str(helper / "Contents/MacOS/BiparaWorker")],
                                 input='{"v":2,"type":"hello"}\n{"v":2,"type":"shutdown"}\n',
@@ -154,6 +166,7 @@ def verify_bundle(app: Path) -> None:
 
 def build_release(tag: str) -> None:
     app_version, build_number, commit = source(tag)
+    minimum = release_minimum_macos()
     mode = distribution()
     command(sys.executable, "script/check_public_content.py", "--history", "--gitleaks")
     identity = os.environ.get("BIPARA_CODESIGN_IDENTITY", "") if mode == "developer-id" else "-"
@@ -188,8 +201,7 @@ def build_release(tag: str) -> None:
     shutil.copy2(ROOT / "LICENSE", resources / "LICENSE")
     signing_options = ["--timestamp", "--options", "runtime"] if mode == "developer-id" else ["--timestamp=none"]
     command("codesign", "--force", "--sign", identity, *signing_options, str(app))
-    verify_bundle(app)
-    import plistlib
+    verify_bundle(app, minimum)
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
     if info["CFBundleShortVersionString"] != app_version or info["CFBundleVersion"] != build_number:
         raise ReleaseError("built application version differs from the tag")
@@ -219,7 +231,7 @@ def build_release(tag: str) -> None:
         mount.mkdir()
         command("hdiutil", "attach", "-readonly", "-nobrowse", "-mountpoint", str(mount), str(dmg))
         try:
-            verify_bundle(mount / "Bipara.app")
+            verify_bundle(mount / "Bipara.app", minimum)
             if mode == "developer-id":
                 command("spctl", "--assess", "--type", "execute", str(mount / "Bipara.app"))
         finally:
