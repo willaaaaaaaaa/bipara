@@ -164,7 +164,7 @@ struct ReadingRefinementTests {
         let configurations=app.settings.record.modelConfigurations
         for config in configurations { keys.keys[config.id]="SYNTHETIC_READING_TEST" }
         defs.set(true,forKey:"dev.bipara.disclosure.openai|https://api.openai.com")
-        defs.set(true,forKey:"dev.bipara.disclosure.glm|https://open.bigmodel.cn")
+        defs.set(true,forKey:"dev.bipara.disclosure.openai|https://open.bigmodel.cn")
         try app.workspace.newTab(source:"First document.",direction:.enToZh)
         let a=app.workspace.tabs[0].sessionID
         let taskA=Task { await app.translate(a) }

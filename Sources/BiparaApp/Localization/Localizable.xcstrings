@@ -1,6 +1,26 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Some settings are invalid. Check the model and reading settings, then save again.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分设置无效。请检查模型配置和阅读设置后重新保存。"
+          }
+        }
+      }
+    },
+    "The saved request options are incompatible with this protocol. Choose the original protocol or add a new configuration.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已保存的请求参数与此接口协议不兼容。请选择原接口协议，或添加新配置。"
+          }
+        }
+      }
+    },
     "The original model configuration is unavailable.": {
       "localizations": {
         "zh-Hans": {
@@ -257,12 +277,12 @@
         }
       }
     },
-    "Cancel key": {
+    "Cancel changes": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "取消密钥"
+            "value": "取消修改"
           }
         }
       }
@@ -1091,6 +1111,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "打开…"
+          }
+        }
+      }
+    },
+    "Each original paragraph is followed by its translation.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每段原文后紧接对应译文。"
+          }
+        }
+      }
+    },
+    "Original and translation": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原文与译文"
+          }
+        }
+      }
+    },
+    "Original text": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原文"
           }
         }
       }
@@ -2131,22 +2181,6 @@
         }
       }
     },
-    "Clear correspondence makes reading easier.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Clear correspondence makes reading easier."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "清晰的对应关系让阅读更轻松。"
-          }
-        }
-      }
-    },
     "Completed translation units / total units": {
       "localizations": {
         "en": {
@@ -2307,22 +2341,6 @@
         }
       }
     },
-    "Unsaved changes will be discarded when you close a tab or quit. Saved files are not changed.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Unsaved changes will be discarded when you close a tab or quit. Saved files are not changed."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "关闭标签页或退出时将丢弃未保存的修改，已有文件不会被改动。"
-          }
-        }
-      }
-    },
     "Wide": {
       "localizations": {
         "en": {
@@ -2351,6 +2369,316 @@
           "stringUnit": {
             "state": "translated",
             "value": "窗口宽度"
+          }
+        }
+      }
+    },
+    "Fill from preset": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从预设填入"
+          }
+        }
+      }
+    },
+    "Vendor suggestions": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "厂商建议"
+          }
+        }
+      }
+    },
+    "Model suggestions": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型建议"
+          }
+        }
+      }
+    },
+    "Protocol": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接口协议"
+          }
+        }
+      }
+    },
+    "Advanced": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "高级"
+          }
+        }
+      }
+    },
+    "Replace connection fields with this preset?": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用此预设替换连接配置？"
+          }
+        }
+      }
+    },
+    "Apply preset": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用预设"
+          }
+        }
+      }
+    },
+    "Choose an effort level": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请选择推理力度"
+          }
+        }
+      }
+    },
+    "Full request URL (optional)": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完整请求地址（可选）"
+          }
+        }
+      }
+    },
+    "Request URL": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请求地址"
+          }
+        }
+      }
+    },
+    "Authentication": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "认证方式"
+          }
+        }
+      }
+    },
+    "Custom header": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自定义请求头"
+          }
+        }
+      }
+    },
+    "None": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无"
+          }
+        }
+      }
+    },
+    "Header name": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请求头名称"
+          }
+        }
+      }
+    },
+    "API version": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API 版本"
+          }
+        }
+      }
+    },
+    "Output format": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "输出格式"
+          }
+        }
+      }
+    },
+    "Prompt JSON": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提示词约束 JSON"
+          }
+        }
+      }
+    },
+    "Translation token limit": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "翻译输出 Token 上限"
+          }
+        }
+      }
+    },
+    "Alignment token limit": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对应分析输出 Token 上限"
+          }
+        }
+      }
+    },
+    "Temperature (optional)": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "温度（可选）"
+          }
+        }
+      }
+    },
+    "Additional parameters (JSON)": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "附加参数（JSON）"
+          }
+        }
+      }
+    },
+    "Additional parameters override optional fields, including reasoning. Model compatibility is your responsibility.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "附加参数会覆盖可选字段（包括推理参数），请自行确认模型是否支持。"
+          }
+        }
+      }
+    },
+    "Secret headers (JSON, optional)": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "私密请求头（JSON，可选）"
+          }
+        }
+      }
+    },
+    "Enter a vendor name (at most 128 characters).": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请输入厂商名称（最多 128 个字符）。"
+          }
+        }
+      }
+    },
+    "Enter a valid HTTPS request URL.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请输入有效的 HTTPS 请求地址。"
+          }
+        }
+      }
+    },
+    "Check the advanced settings and JSON parameters.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请检查高级设置和 JSON 参数。"
+          }
+        }
+      }
+    },
+    "Credentials must be at most 4096 bytes.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "凭据最多为 4096 字节。"
+          }
+        }
+      }
+    },
+    "Enter valid token limits and temperature.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请输入有效的 Token 上限和温度。"
+          }
+        }
+      }
+    },
+    "Check the API key for invalid characters.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请检查 API 密钥中是否有无效字符。"
+          }
+        }
+      }
+    },
+    "Expanded": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已展开"
+          }
+        }
+      }
+    },
+    "Collapsed": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已折叠"
           }
         }
       }

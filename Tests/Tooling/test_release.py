@@ -118,6 +118,16 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(release.ReleaseError, "private material"):
                 release.verify_bundle(app)
 
+    def test_release_rejects_native_dependencies_above_the_deployment_target(self):
+        binary = self.root / "fixture.so"
+        binary.write_bytes(b"\xcf\xfa\xed\xfe")
+        with patch.object(release, "command", return_value="cmd LC_BUILD_VERSION\n    minos 15.0"):
+            with self.assertRaisesRegex(release.ReleaseError, "exceeds macOS 14.0"):
+                release.verify_minimum_macos(binary)
+        for build in ("cmd LC_BUILD_VERSION\n    minos 14.0", "cmd LC_VERSION_MIN_MACOSX\n  cmdsize 16\n  version 11.0"):
+            with patch.object(release, "command", return_value=build):
+                release.verify_minimum_macos(binary)
+
     def test_notarized_policy_still_requires_ticket_checks(self):
         folder = self.prepare_assets()
         path = folder / release.assets("v0.1.0")[2]

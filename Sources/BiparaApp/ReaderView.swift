@@ -154,7 +154,7 @@ public struct WorkspaceView: View {
                             .padding(.leading,8).overlay(alignment:.leading){Rectangle().fill(.secondary).frame(width:2)}
                     }.padding(.horizontal,inset)
                 }
-            }.font(.caption).foregroundStyle(.secondary).frame(height:34)
+            }.font(.caption).foregroundStyle(.primary).frame(height:34)
         }.frame(height:34)
     }
 
@@ -163,7 +163,7 @@ public struct WorkspaceView: View {
             Text(t(tab.document.source.isEmpty ? "New Translation" : "Edit Original")).font(.title2.weight(.semibold))
             Text(t("Paste Chinese or English text to get started.")).foregroundStyle(.secondary)
             SourceEditorView(text:Binding(get:{workspace.tabs.first(where:{$0.sessionID==tab.sessionID})?.draftText ?? ""},set:{value in mutate(tab.sessionID){$0.draftText=value}}),
-                isComposing:Binding(get:{runtime.composing.contains(tab.sessionID)},set:{value in if value != runtime.composing.contains(tab.sessionID) {if value{runtime.composing.insert(tab.sessionID)}else{runtime.composing.remove(tab.sessionID)}}}))
+                isComposing:Binding(get:{runtime.composing.contains(tab.sessionID)},set:{value in if value != runtime.composing.contains(tab.sessionID) {if value{runtime.composing.insert(tab.sessionID)}else{runtime.composing.remove(tab.sessionID)}}}), language:settings.record.interfaceLanguage)
             HStack {
                 Text(t("Your original is preserved exactly.")).font(.caption).foregroundStyle(.secondary)
                 Spacer()
@@ -185,7 +185,7 @@ public struct WorkspaceView: View {
                 Button(t("Pin"),action:runtime.pin).disabled(!state.canPin)
                 if state.pinned != nil {Button(t("Clear pin"),action:runtime.clearPin)}
                 Button(t("Reveal counterpart"),action:runtime.reveal)
-            } else {Text(t("Select text to explore correspondence.")).foregroundStyle(.secondary)}
+            } else {Text(t("Select text to explore correspondence."))}
             Spacer()
             TranslationJobStatus(tab:tab,configuration:tab.runtimeBinding.flatMap{settings.record.configuration(id:$0.configurationID)},language:settings.record.interfaceLanguage)
         }.font(.caption).controlSize(.small).padding(.horizontal,20).padding(.vertical,10).background(.bar)
@@ -219,10 +219,11 @@ private struct TranslationJobStatus: View {
             HStack(spacing:7) { if let name { Text(name).lineLimit(1); Text("·") }; progress; elapsed }
             HStack(spacing:7) { Image(systemName:"info.circle").help(detail); progress; elapsed }
         }
-        .foregroundStyle(.secondary).monospacedDigit()
+        .foregroundStyle(.primary).monospacedDigit()
         .help(detail + "\n" + t("Completed translation units / total units") + "\n" + timeHelp)
         .accessibilityElement(children:.ignore)
         .accessibilityLabel("\(detail), \(t(tab.job.state.rawValue.capitalized)), \(tab.document.translations.count) / \(tab.job.totalNonblankUnits)")
+        .accessibilityAddTraits(.isStaticText)
         .accessibilityIdentifier("translation.jobStatus")
     }
     private var progress: some View {

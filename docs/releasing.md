@@ -21,6 +21,8 @@ Formal builds use the exact arm64 CPython 3.13.3 archive in `licenses/python-run
 
 ## Create a release candidate
 
+Formal worker builds select arm64 wheels for macOS 14.0 using the frozen lockfile. The release build rejects Mach-O binaries whose arm64 deployment target is missing or exceeds macOS 14.0. This static check supplements installation testing on the minimum OS.
+
 1. Update Config/Version.xcconfig with the application version and a positive, increasing build number. Keep worker package/protocol versions independent; the helper bundle carries the application's packaging version.
 2. Run script/check.sh and relevant native/model qualification. Summarize current results in docs/validation.md, keeping detailed evidence in .local/validation/.
 3. Commit reviewed source to main using a selected public identity. Create and push a formal vMAJOR.MINOR.PATCH tag only under an actual release instruction.

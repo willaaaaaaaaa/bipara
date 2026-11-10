@@ -35,6 +35,8 @@ public struct ModelConfiguration: Sendable, Equatable {
     public var baseURL: String
     public var effort: ModelEffort
     public var apiKey: String
+    public var requestOptions: ModelRequestOptions?
+    public var secretHeaders: [String: String]
     /// In-memory admission identity. It is not part of the worker request.
     public var configurationID: UUID?
 
@@ -45,7 +47,9 @@ public struct ModelConfiguration: Sendable, Equatable {
         baseURL: String,
         effort: ModelEffort,
         apiKey: String,
-        configurationID: UUID? = nil
+        configurationID: UUID? = nil,
+        requestOptions: ModelRequestOptions? = nil,
+        secretHeaders: [String: String] = [:]
     ) {
         self.provider = provider
         self.model = model
@@ -54,6 +58,8 @@ public struct ModelConfiguration: Sendable, Equatable {
         self.effort = effort
         self.apiKey = apiKey
         self.configurationID = configurationID
+        self.requestOptions = requestOptions
+        self.secretHeaders = secretHeaders
     }
 }
 

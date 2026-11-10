@@ -17,7 +17,7 @@ Provide a native macOS translation and bilingual reading app powered by large la
 | R5 | Hovering over source text or selecting words/phrases should reveal corresponding translated content. Exact granularity and fallback behavior need validation. |
 | R6 | Deliver a native macOS app first and preserve the possibility of later iPad/iPhone versions. |
 | R7 | Run business logic locally with the app, without a separately deployed local or cloud server. |
-| R8 | Support OpenAI, Kimi, GLM and DeepSeek as vendor choices, with editable API Base URLs, versioned request profiles and model-specific effort controls. GLM uses one vendor entry. |
+| R8 | Use one custom model form with Name, Protocol, Model ID, Reasoning Effort, API Base URL and API key, in that order. New text fields start empty for manual entry; protocol offers OpenAI Responses and Anthropic Messages, and effort offers Off, Low, Medium and High. Remove presets, vendor/catalog controls and advanced settings; preserve existing configurations/jobs. |
 | R9 | Trial LangChain first; consider explicit LangGraph orchestration later if a concrete need appears. |
 | R10 | Use a dedicated repository with a documented contribution and independent review workflow. |
 | R11 | Use MIT licensing, public-safe contents and tagged formal releases with installable DMGs. |

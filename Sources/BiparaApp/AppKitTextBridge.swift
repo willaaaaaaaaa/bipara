@@ -104,7 +104,6 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
             text.autoresizingMask = [.width]; text.textContainer?.widthTracksTextView = false
             text.textContainer?.lineFragmentPadding = 0
             text.setAccessibilityIdentifier(i == 0 ? "reader.source" : "reader.translation")
-            text.setAccessibilityLabel(i == 0 ? "Original text" : "Translation")
             scroll.documentView = text; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true; scroll.drawsBackground = false
             scroll.contentView.postsBoundsChangedNotifications = true
             NotificationCenter.default.addObserver(self, selector: #selector(scrolled(_:)), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
@@ -334,6 +333,10 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
 
     private func decorate() {
         guard let parent, let index else { return }
+        let combined = parent.layout == .paragraphs
+        texts[0].setAccessibilityLabel(AppLocalization.text(combined ? "Original and translation" : "Original text", language: parent.language))
+        texts[0].setAccessibilityHelp(combined ? AppLocalization.text("Each original paragraph is followed by its translation.", language: parent.language) : nil)
+        texts[1].setAccessibilityLabel(AppLocalization.text("Translation", language: parent.language))
         emptyMessage.stringValue = AppLocalization.text("Translation will appear here", language: parent.language)
         emptyMessage.isHidden = parent.layout != .sideBySide || parent.jobState != .idle || !parent.document.translations.isEmpty
         for col in 0...1 {
@@ -401,7 +404,8 @@ final class SourceTextView:NSTextView {
 public struct SourceEditorView: NSViewRepresentable {
     @Binding var text: String
     @Binding var isComposing: Bool
-    public init(text: Binding<String>, isComposing: Binding<Bool>) { _text = text; _isComposing = isComposing }
+    var language: InterfaceLanguage
+    public init(text: Binding<String>, isComposing: Binding<Bool>, language: InterfaceLanguage = .english) { _text = text; _isComposing = isComposing; self.language = language }
     public final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: SourceEditorView
         init(_ parent: SourceEditorView) { self.parent = parent }
@@ -422,13 +426,14 @@ public struct SourceEditorView: NSViewRepresentable {
         text.font = .systemFont(ofSize:17); text.textContainerInset = NSSize(width:18,height:18)
         text.isVerticallyResizable = true; text.autoresizingMask = [.width]; text.textContainer?.widthTracksTextView = true
         text.delegate = context.coordinator; text.string = self.text
-        text.setAccessibilityIdentifier("source.editor"); text.setAccessibilityLabel("Original text")
+        text.setAccessibilityIdentifier("source.editor"); text.setAccessibilityLabel(AppLocalization.text("Original text", language: language))
         let scroll = NSScrollView(); scroll.documentView = text; scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
         return scroll
     }
     public func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let view = scroll.documentView as? NSTextView else { return }
+        view.setAccessibilityLabel(AppLocalization.text("Original text", language: language))
         if !view.hasMarkedText(), !TextIdentity.equal(view.string,text) { view.string = text }
     }
 }

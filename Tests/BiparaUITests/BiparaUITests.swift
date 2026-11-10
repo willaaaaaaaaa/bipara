@@ -1,6 +1,5 @@
 import XCTest
 import AppKit
-import CoreGraphics
 
 @MainActor
 final class BiparaUITests: XCTestCase {
@@ -17,30 +16,11 @@ final class BiparaUITests: XCTestCase {
         }
     }
     private func capture(_ name:String){
-        guard CGPreflightScreenCaptureAccess() else {
-            let unavailable=XCTAttachment(string:"Window capture unavailable: the UI-test runner has no Screen Recording capability. Functional assertions still run; visual acceptance requires separate native window captures.")
-            unavailable.name="\(name)-capture-unavailable";unavailable.lifetime = .keepAlways;add(unavailable);return
-        }
+        app.activate()
         let window = name.contains("settings") ? app.windows.containing(.button,identifier:"settings.save").firstMatch : app.windows.firstMatch
-        guard let application=NSRunningApplication.runningApplications(withBundleIdentifier:"dev.bipara.UITestHost").first,
-              let windows=CGWindowListCopyWindowInfo([.optionOnScreenOnly,.excludeDesktopElements],kCGNullWindowID) as? [[String:Any]],
-              let native=windows.first(where:{ info in
-                  guard (info[kCGWindowOwnerPID as String] as? pid_t) == application.processIdentifier,
-                        (info[kCGWindowLayer as String] as? Int) == 0,
-                        let bounds=info[kCGWindowBounds as String] as? [String:NSNumber] else { return false }
-                  return abs((bounds["Width"]?.doubleValue ?? 0) - window.frame.width) < 2
-                      && abs((bounds["Height"]?.doubleValue ?? 0) - window.frame.height) < 2
-              }),let id=native[kCGWindowNumber as String] as? Int else {
-            XCTFail("Native window capture requires screen recording access and the fixture's on-screen window.");return
-        }
-        let path=FileManager.default.temporaryDirectory.appendingPathComponent("bipara-ui-\(UUID()).png")
-        defer{try? FileManager.default.removeItem(at:path)}
-        do {
-            let process=Process();process.executableURL=URL(fileURLWithPath:"/usr/sbin/screencapture")
-            process.arguments=["-x","-o","-l",String(id),path.path];try process.run();process.waitUntilExit()
-            XCTAssertEqual(process.terminationStatus,0)
-            let shot=XCTAttachment(contentsOfFile:path);shot.name=name;shot.lifetime = .keepAlways;add(shot)
-        } catch { XCTFail("Native window capture failed: \(error)") }
+        XCTAssertTrue(window.exists)
+        let shot = XCTAttachment(screenshot: window.screenshot())
+        shot.name=name;shot.lifetime = .keepAlways;add(shot)
     }
     private func enterExample(){
         app.buttons["new.tab"].click()
@@ -97,6 +77,88 @@ final class BiparaUITests: XCTestCase {
         XCTAssertTrue(app.buttons["settings.save"].waitForExistence(timeout:5))
         capture("settings-light")
     }
+    func testLocalizedNativeTextAccessibility() {
+        launch(["--reading-refinements", "--reading-complete", "--language", "zh-Hans"])
+        let source = app.textViews["reader.source"]
+        XCTAssertTrue(source.waitForExistence(timeout: 5))
+        XCTAssertEqual(source.label, "原文")
+        XCTAssertEqual(app.textViews["reader.translation"].label, "译文")
+        app.typeKey("2", modifierFlags: .command)
+        XCTAssertEqual(source.label, "原文与译文")
+        XCTAssertFalse(app.textViews["reader.translation"].exists)
+        app.typeKey(",", modifierFlags: .command)
+        app.popUpButtons["settings.language"].click()
+        app.menuItems["English"].firstMatch.click()
+        app.buttons["settings.save"].click()
+        app.windows["Bipara.Settings"].buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertEqual(source.label, "Original and translation")
+        app.terminate()
+        launch(["--language", "zh-Hans"])
+        app.typeKey("t", modifierFlags: .command)
+        let editor = app.textViews["source.editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        XCTAssertEqual(editor.label, "原文")
+    }
+
+    func testReadingSizeAccessibilityTracksChanges() {
+        launch()
+        app.typeKey(",", modifierFlags: .command)
+        let size = app.sliders["settings.reading.size"]
+        let save = app.buttons["settings.save"]
+        XCTAssertTrue(size.waitForExistence(timeout: 5))
+        XCTAssertEqual(size.label, "Reading size")
+        focusWithTab(size)
+        for _ in 0..<14 { app.typeKey(.rightArrow, modifierFlags: []) }
+        XCTAssertEqual((size.value as? NSNumber)?.intValue, 28)
+        XCTAssertFalse(app.staticTexts["17 pt"].exists)
+        focusWithTab(save)
+        app.typeKey(.space, modifierFlags: [])
+        XCTAssertFalse(save.isEnabled)
+        XCTAssertEqual((size.value as? NSNumber)?.intValue, 28)
+        focusWithTab(size)
+        for _ in 0..<14 { app.typeKey(.leftArrow, modifierFlags: []) }
+        XCTAssertEqual((size.value as? NSNumber)?.intValue, 14)
+        app.windows["Bipara.Settings"].scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -600)
+        app.popUpButtons["settings.language"].click()
+        app.menuItems["简体中文"].firstMatch.click()
+        app.buttons["settings.save"].click()
+        XCTAssertEqual(size.label, "字号")
+        XCTAssertEqual((size.value as? NSNumber)?.intValue, 14)
+    }
+    private func focusWithTab(_ element: XCUIElement) {
+        // macOS XCTest exposes keyboard focus in the element snapshot.
+        func isFocused() -> Bool {
+            element.debugDescription.split(separator: "\n").first?.contains("Keyboard Focused") == true
+        }
+        for _ in 0..<24 {
+            if isFocused() { return }
+            app.typeKey(.tab, modifierFlags: [])
+        }
+        XCTAssertTrue(isFocused(), "Tab navigation did not reach \(element)")
+    }
+    func testAccessibilityAuditOfReadingAndSettings() throws {
+        continueAfterFailure = true
+        launch(["--reading-refinements", "--reading-complete"])
+        XCTAssertTrue(app.textViews["reader.source"].waitForExistence(timeout: 5))
+        try audit("Side by side")
+        app.typeKey("2", modifierFlags: .command)
+        try audit("Paragraphs")
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(app.buttons["settings.save"].waitForExistence(timeout: 5))
+        try audit("Settings")
+        app.buttons["settings.models.add"].click()
+        XCTAssertTrue(app.textFields["settings.model.name"].waitForExistence(timeout: 5))
+        try audit("Model editor")
+    }
+    private func audit(_ screen:String) throws {
+        try XCTContext.runActivity(named: "Accessibility audit: " + screen) { _ in
+            try app.performAccessibilityAudit { issue in
+                let detail = XCTAttachment(string: issue.element?.debugDescription ?? "No element supplied by the audit.")
+                detail.name = screen + " audit element"; detail.lifetime = .keepAlways; self.add(detail)
+                return false
+            }
+        }
+    }
     func testReadingRefinementPreferencesAndClose() {
         launch(["--appearance","light"])
         enterExample()
@@ -106,7 +168,7 @@ final class BiparaUITests: XCTestCase {
         let text=app.textViews["reader.source"].value as? String ?? ""
         XCTAssertTrue(text.contains("The window is open."));XCTAssertTrue(text.contains("窗户开着"))
         XCTAssertFalse(text.contains("Not translated yet"));XCTAssertFalse(text.contains("Original\n"));XCTAssertFalse(text.contains("Translation\n"))
-        let status=app.descendants(matching:.any).matching(identifier:"translation.jobStatus").firstMatch
+        let status=app.staticTexts["translation.jobStatus"]
         XCTAssertTrue(status.waitForExistence(timeout:5))
         capture("reading-refinement-light-paragraphs")
         app.typeKey(",",modifierFlags:.command)
@@ -312,7 +374,7 @@ final class BiparaUITests: XCTestCase {
         app.buttons["settings.cancel"].click()
     }
 
-    func testVendorCatalogDirectionAndSharedActiveSelection() {
+    func testCustomModelDirectionAndSharedActiveSelection() {
         launch()
         let newTab = app.buttons["new.tab"]
         XCTAssertTrue(newTab.waitForExistence(timeout: 5))
@@ -324,12 +386,11 @@ final class BiparaUITests: XCTestCase {
         direction.click()
         app.menuItems["Chinese → English"].firstMatch.click()
         app.buttons["settings.models.add"].click()
-        let vendor = app.popUpButtons["settings.model.vendor"]
-        XCTAssertTrue(vendor.waitForExistence(timeout: 5))
-        vendor.click()
-        app.menuItems["DeepSeek"].firstMatch.click()
-        let catalog = app.popUpButtons["settings.model.catalog"]
-        XCTAssertTrue((catalog.value as? String)?.contains("deepseek-flash") == true)
+        let model = app.textFields["settings.model.id"]
+        XCTAssertTrue(model.waitForExistence(timeout: 5))
+        model.click(); model.typeText("deepseek-flash")
+        let url = app.textFields["settings.model.url"]
+        url.click(); url.typeText("https://api.deepseek.com/")
         let name = app.textFields["settings.model.name"]
         name.click()
         name.typeText("Fast DeepSeek")
@@ -361,13 +422,13 @@ final class BiparaUITests: XCTestCase {
         XCTAssertTrue(defaultPicker.exists)
         XCTAssertTrue((defaultPicker.value as? String)?.contains("OpenAI") == true)
 
-        // Add: the vendor prefills the recommendation; adding to a
+        // Add: connection fields are entered manually; adding to a
         // nonempty draft preserves the selected default.
         app.buttons["settings.models.add"].click()
         let name=app.textFields["settings.model.name"]
         XCTAssertTrue(name.waitForExistence(timeout:5));name.click();name.typeText("Coding Plan trial")
-        app.popUpButtons["settings.model.vendor"].click()
-        app.menuItems["GLM"].firstMatch.click()
+        let model=app.textFields["settings.model.id"]
+        model.click();model.typeText("glm-5.3-flash")
         let url=app.textFields["settings.model.url"]
         url.click();url.typeKey("a",modifierFlags:.command)
         url.typeText("https://open.bigmodel.cn/api/coding/paas/v4/")
@@ -411,6 +472,8 @@ final class BiparaUITests: XCTestCase {
         app.buttons["settings.models.add"].click()
         let url=app.textFields["settings.model.url"]
         XCTAssertTrue(url.waitForExistence(timeout:5))
+        let model=app.textFields["settings.model.id"]
+        model.click();model.typeText("custom-model")
         // Operation-suffix URL is rejected locally; no call is made.
         url.click();url.typeKey("a",modifierFlags:.command);url.typeText("https://api.openai.com/v1/chat/completions")
         app.buttons["settings.model.confirm"].click()
@@ -418,9 +481,7 @@ final class BiparaUITests: XCTestCase {
         XCTAssertTrue(urlError.waitForExistence(timeout:5))
         XCTAssertTrue((urlError.value as? String ?? urlError.label).contains("HTTPS API Base URL"))
         url.click();url.typeKey("a",modifierFlags:.command);url.typeText("https://api.openai.com/v1/")
-        // Duplicate resolved name/effort requires an alias: a second entry
-        // with the same display name and the same recommended effort.
-        let model=app.popUpButtons["settings.model.catalog"]
+        // Duplicate resolved name/effort requires a distinct alias.
         XCTAssertTrue(model.waitForExistence(timeout:3))
         let name=app.textFields["settings.model.name"]
         name.click();name.typeText("Duplicate trial")
@@ -434,6 +495,8 @@ final class BiparaUITests: XCTestCase {
         app.buttons["settings.models.add"].click()
         let secondName=app.textFields["settings.model.name"]
         XCTAssertTrue(secondName.waitForExistence(timeout:5));secondName.click();secondName.typeText("duplicate TRIAL")
+        model.click();model.typeText("custom-model")
+        url.click();url.typeText("https://api.openai.com/v1/")
         app.buttons["settings.model.confirm"].click()
         let duplicateError=app.staticTexts["settings.model.sheet.error"]
         XCTAssertTrue(duplicateError.waitForExistence(timeout:5))
@@ -656,6 +719,10 @@ final class BiparaUITests: XCTestCase {
         app.buttons["settings.model.cancel"].click()
         XCTAssertTrue(app.buttons["settings.models.add"].waitForExistence(timeout:5))
         app.buttons["settings.models.add"].click()
+        let model=app.textFields["settings.model.id"]
+        XCTAssertTrue(model.waitForExistence(timeout:5));model.click();model.typeText("custom-model")
+        let url=app.textFields["settings.model.url"]
+        url.click();url.typeText("https://gateway.example.com/v1/")
         field=app.secureTextFields["settings.model.key.field"]
         XCTAssertTrue(field.waitForExistence(timeout:5));field.click();field.typeText("TYPED_UI_KEY")
         let name=app.textFields["settings.model.name"]
@@ -677,13 +744,11 @@ final class BiparaUITests: XCTestCase {
     }
 
     func testEffortSelectionInEditorSheet() {
-        // Rendered-UI evidence for capability-specific effort selection on
-        // a graded model; the picker offers the supported levels only.
+        // Every model has the same four explicit effort choices.
         launch();app.typeKey(",",modifierFlags:.command)
         XCTAssertTrue(app.buttons["settings.models.add"].waitForExistence(timeout:5))
         app.buttons["settings.models.add"].click()
-        // The Add sheet starts on the OpenAI preset with the recommended
-        // gpt-6-luna/Low; the effort picker is enabled and shows Low.
+        // The blank Add sheet defaults to Low; all four choices are enabled.
         let effort=app.popUpButtons["settings.model.effort"]
         XCTAssertTrue(effort.waitForExistence(timeout:5))
         XCTAssertTrue(effort.isEnabled)
@@ -694,4 +759,78 @@ final class BiparaUITests: XCTestCase {
         app.buttons["settings.model.cancel"].click()
         app.buttons["settings.cancel"].click()
     }
+    func testCustomModelEditorFieldsAndProtocols() {
+        launch(); app.typeKey(",", modifierFlags: .command)
+        app.buttons["settings.models.add"].click()
+        let name = app.textFields["settings.model.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        let model = app.textFields["settings.model.id"]
+        let url = app.textFields["settings.model.url"]
+        let api = app.popUpButtons["settings.model.protocol"]
+        let key = app.secureTextFields["settings.model.key.field"]
+        for field in [name, model, url, key] { XCTAssertEqual(field.value as? String, "") }
+        for id in ["preset", "vendor", "catalog", "advanced", "endpoint", "authentication", "output", "translationTokens", "alignmentTokens", "temperature", "parameters", "headers"] {
+            XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "settings.model.\(id)").firstMatch.exists)
+        }
+        let fields = [name, api, model, app.popUpButtons["settings.model.effort"], url, key]
+        for (first, second) in zip(fields, fields.dropFirst()) { XCTAssertLessThan(first.frame.midY, second.frame.midY) }
+        capture("settings-custom-blank")
+        api.click(); app.menuItems["Anthropic"].firstMatch.click()
+        for field in [name, model, url, key] { XCTAssertEqual(field.value as? String, "") }
+        api.click(); app.menuItems["OpenAI"].firstMatch.click()
+        model.click(); model.typeText("unknown-model-2027")
+        url.click(); url.typeText("https://gateway.example.com/api/")
+        let effort = app.popUpButtons["settings.model.effort"]
+        effort.click()
+        for name in ["Off", "Low", "Medium", "High"] { XCTAssertTrue(app.menuItems[name].firstMatch.exists) }
+        XCTAssertFalse(app.menuItems["Default"].exists)
+        app.menuItems["Medium"].firstMatch.click()
+        api.click(); app.menuItems["Anthropic"].firstMatch.click()
+        XCTAssertTrue((effort.value as? String)?.contains("Medium") == true)
+        XCTAssertFalse(app.staticTexts["API type"].exists)
+        XCTAssertFalse(app.textFields["settings.model.endpoint"].exists)
+        XCTAssertEqual(model.value as? String, "unknown-model-2027")
+        XCTAssertEqual(url.value as? String, "https://gateway.example.com/api/")
+        name.click(); name.typeText("Custom gateway")
+        app.buttons["settings.model.confirm"].click()
+        app.buttons["settings.save"].click()
+        let rows = app.buttons.matching(NSPredicate(format: "identifier == %@", "settings.model.row"))
+        XCTAssertEqual(rows.count, 3)
+        rows.element(boundBy: 2).click(); app.buttons["settings.models.edit"].click()
+        XCTAssertEqual(app.textFields["settings.model.name"].value as? String, "Custom gateway")
+        XCTAssertEqual(app.textFields["settings.model.url"].value as? String, "https://gateway.example.com/api/")
+        XCTAssertEqual(app.textFields["settings.model.id"].value as? String, "unknown-model-2027")
+        XCTAssertTrue((app.popUpButtons["settings.model.protocol"].value as? String)?.contains("Anthropic") == true)
+        XCTAssertTrue((app.popUpButtons["settings.model.effort"].value as? String)?.contains("Medium") == true)
+        let attachment = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        attachment.name = "Custom model configuration"; attachment.lifetime = .keepAlways; add(attachment)
+        app.buttons["settings.model.cancel"].click(); app.buttons["settings.cancel"].click()
+    }
+
+    func testLegacyEditorRequiresExplicitEffortAndCancelPreservesEntry() {
+        launch(["--legacy-models"]); app.typeKey(",", modifierFlags: .command)
+        selectFirstRowAndOpenEditor()
+        app.buttons["settings.model.confirm"].click()
+        XCTAssertTrue(app.staticTexts["settings.model.sheet.error"].waitForExistence(timeout: 3))
+        app.buttons["settings.model.cancel"].click()
+        XCTAssertFalse(app.buttons["settings.save"].isEnabled)
+        selectFirstRowAndOpenEditor()
+        let effort = app.popUpButtons["settings.model.effort"]
+        XCTAssertTrue((effort.value as? String)?.contains("Choose an effort") == true)
+        effort.click(); app.menuItems["Low"].firstMatch.click()
+        app.buttons["settings.model.confirm"].click()
+        XCTAssertTrue(app.buttons["settings.save"].isEnabled)
+        app.buttons["settings.cancel"].click()
+    }
+
+    func testChineseDarkModelEditorLayout() {
+        launch(["--language", "zh-Hans", "--appearance", "dark"])
+        app.typeKey(",", modifierFlags: .command)
+        app.buttons["settings.models.add"].click()
+        XCTAssertTrue(app.popUpButtons["settings.model.protocol"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["接口协议"].exists)
+        capture("settings-open-chinese-dark")
+        app.buttons["settings.model.cancel"].click()
+    }
+
 }

@@ -8,7 +8,7 @@ Start with [AGENTS.md](AGENTS.md), the [requirements](docs/requirements.md) and 
 2. Update the owning design when its contract changes. Keep changes focused; preserve document identity, credential isolation and native reading behavior.
 3. Implement and add regressions for meaningful behavioral risks.
 4. Open a focused pull request with behavior, relevant validation and unresolved limitations. Review against the design and tests; fix accepted findings.
-5. Repeat only checks affected by subsequent changes or unresolved failures.
+5. The maintainer initiates acceptance before merge and confirms the result for the candidate being merged. Routine implementation does not automatically start an acceptance round. Follow the [acceptance triggers](docs/testing.md#acceptance-triggers); after further changes, repeat only checks affected by those changes or unresolved failures within the requested round.
 
 Use separate worktrees for parallel implementation, with an integration owner. Public PRs, comments and commit messages contain technical outcomes rather than private coordination, account details or full execution narratives.
 
@@ -18,7 +18,7 @@ Run `script/setup.sh` to prepare ignored scratch directories, enable pre-commit/
 
 Select a public Git author identity before committing. New project commits use GitHub noreply identities; see [identity checks and exceptions](docs/repository-boundaries.md#enforcement).
 
-Run script/check.sh. See [Tests/README.md](Tests/README.md) for prerequisites and separate native UI checks. Default checks make no provider calls. Keep credentials, real documents and full logs out of PRs and CI artifacts.
+Use script/check.sh for the default offline suites and native build during a requested acceptance round. Routine edits use a diff self-check and narrowly scoped checks needed for the change. See [Tests/README.md](Tests/README.md) for prerequisites and separate native UI checks. Default checks make no provider calls. Keep credentials, real documents and full logs out of PRs and CI artifacts.
 
 The content checker inspects the actual index at commit time and every outgoing commit before push. Hooks are local and bypassable; required CI and release checks provide additional enforcement. CI cannot retract already uploaded material. Follow [repository boundaries](docs/repository-boundaries.md).
 

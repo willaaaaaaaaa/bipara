@@ -27,6 +27,7 @@ public struct JobSnapshot: Equatable, Sendable {
     public var model: String
     public var profile: String
     public var effort: ModelEffort
+    public var configurationRevision: UUID?
     public var translationPromptVersion: String
     public var alignmentPromptVersion: String
 
@@ -35,7 +36,8 @@ public struct JobSnapshot: Equatable, Sendable {
         sourceLanguage: Language, targetLanguage: Language,
         provider: String, model: String, profile: String,
         effort: ModelEffort,
-        translationPromptVersion: String, alignmentPromptVersion: String
+        translationPromptVersion: String, alignmentPromptVersion: String,
+        configurationRevision: UUID? = nil
     ) {
         self.jobID = jobID
         self.sourceRevision = sourceRevision
@@ -45,6 +47,7 @@ public struct JobSnapshot: Equatable, Sendable {
         self.model = model
         self.profile = profile
         self.effort = effort
+        self.configurationRevision = configurationRevision
         self.translationPromptVersion = translationPromptVersion
         self.alignmentPromptVersion = alignmentPromptVersion
     }
@@ -190,6 +193,13 @@ public enum DocumentCodec {
     /// for known models, the capability table. Derived v1 values are exempt
     /// (they preserve the original contract) and stay readable.
     private static func validateSnapshotCapabilities(_ snapshot: JobSnapshot) throws {
+        if ModelAPIProtocol.from(profile: snapshot.profile) != nil {
+            guard ModelEffort.editable.contains(snapshot.effort), snapshot.configurationRevision != nil,
+                  WorkerContract.accepts(provider: snapshot.provider, profile: snapshot.profile) else {
+                throw CoreError.invalidDocument("invalid open-profile attribution")
+            }
+            return
+        }
         if let legacy = WorkerContract.legacyEffort(profile: snapshot.profile) {
             guard snapshot.effort == legacy else {
                 throw CoreError.invalidDocument("legacy profile effort mismatch")
@@ -738,6 +748,7 @@ private class JobSnapshotDTO: Codable {
     var profile: String
     /// Required in v2 files; absent in v1 files (derived on read).
     var effort: ModelEffort?
+    var configurationRevision: UUID?
     var translationPromptVersion: String
     var alignmentPromptVersion: String
 
@@ -750,6 +761,7 @@ private class JobSnapshotDTO: Codable {
         case model
         case profile
         case effort
+        case configurationRevision = "configuration_revision"
         case translationPromptVersion = "translation_prompt_version"
         case alignmentPromptVersion = "alignment_prompt_version"
     }
@@ -763,6 +775,7 @@ private class JobSnapshotDTO: Codable {
         model = snapshot.model
         profile = snapshot.profile
         effort = snapshot.effort
+        configurationRevision = snapshot.configurationRevision
         translationPromptVersion = snapshot.translationPromptVersion
         alignmentPromptVersion = snapshot.alignmentPromptVersion
     }
@@ -778,7 +791,8 @@ private class JobSnapshotDTO: Codable {
             profile: profile,
             effort: effort ?? .auto,
             translationPromptVersion: translationPromptVersion,
-            alignmentPromptVersion: alignmentPromptVersion
+            alignmentPromptVersion: alignmentPromptVersion,
+            configurationRevision: configurationRevision
         )
     }
 }

@@ -121,16 +121,16 @@ struct SettingsStoreTests {
         #expect(keys.keys[first] == nil)
     }
 
-    @Test func sameURLVendorEditCannotReuseOldCredentialOrBinding() throws {
+    @Test func sameURLProtocolEditCannotReuseOldCredentialOrBinding() throws {
         let defaults = UserDefaults(suiteName: "dev.bipara.test.\(UUID())")!
         let keys = FaultCredentials()
         let store = SettingsStore(defaults: defaults, keychain: keys)
         let entry = try #require(store.record.defaultConfiguration)
         try keys.setKey("SYNTHETIC_OLD", configurationID: entry.id)
-        let frozen = RuntimeModelBinding(configurationID: entry.id, baseURL: entry.baseURL, provider: entry.provider)
+        let frozen = entry.runtimeBinding
         store.updateDraft {
-            $0.modelConfigurations[0].provider = "kimi"
-            $0.modelConfigurations[0].profile = "kimi-json-v2"
+            $0.modelConfigurations[0].provider = "anthropic"
+            $0.modelConfigurations[0].profile = ModelAPIProtocol.anthropic.profile
             $0.modelConfigurations[0].modelID = "kimi-k3.1-pro"
         }
         try store.saveDraft()
@@ -163,14 +163,14 @@ struct SettingsStoreTests {
     @Test func draftSaveCommitsAndPersists() throws {
         let defaults = freshDefaults()
         let store = SettingsStore(defaults: defaults)
-        let glmID = try #require(store.draft.modelConfigurations.first { $0.provider == "glm" }?.id)
+        let glmID = try #require(store.draft.modelConfigurations.first { $0.vendorLabel == "GLM" }?.id)
         store.updateDraft { draft in
             draft.appearance = .dark
             draft.interfaceLanguage = .simplifiedChinese
             draft.typography.size = 20
             if let index = draft.modelConfigurations.firstIndex(where: { $0.id == glmID }) {
                 draft.modelConfigurations[index].modelID = "glm-4.7"
-                draft.modelConfigurations[index].effort = .auto
+                draft.modelConfigurations[index].effort = .medium
             }
         }
         #expect(store.hasDraftChanges)
@@ -182,7 +182,7 @@ struct SettingsStoreTests {
         let reloaded = SettingsStore(defaults: defaults)
         #expect(reloaded.record == store.record)
         #expect(reloaded.record.typography.size == 20)
-        #expect(reloaded.record.defaultConfiguration?.modelID == "gpt-4.1-mini-2025-04-14")
+        #expect(reloaded.record.defaultConfiguration?.modelID == "gpt-6-luna")
 
         // Cancel discards uncommitted edits, including the default choice.
         let committedDefault = reloaded.record.defaultModelConfigurationID
@@ -217,15 +217,17 @@ struct SettingsStoreTests {
             $0.modelConfigurations[0].modelID = "glm-5.3"
             $0.modelConfigurations[0].provider = "glm"
             $0.modelConfigurations[0].profile = ModelProfileID.glmV2
+            $0.modelConfigurations[0].requestOptions = nil
+            $0.modelConfigurations[0].revision = nil
             $0.modelConfigurations[0].baseURL = WorkerContract.glmStandardBaseURL
             $0.modelConfigurations[0].effort = .off
         }
         #expect(throws: SettingsStore.SettingsError.self) { try store.saveDraft() }
         store.cancelDraft()
 
-        let duplicated = ModelConfigurationRecord(
-            displayName: "openai", provider: "openai", profile: ModelProfileID.openaiV2,
-            modelID: "gpt-4.1-mini-2025-04-14", effort: .auto, baseURL: WorkerContract.openAIStandardBaseURL)
+        var duplicated = try #require(store.record.defaultConfiguration)
+        duplicated.id = UUID()
+        duplicated.displayName = "openai"
         store.updateDraft { $0.modelConfigurations.append(duplicated) }
         #expect(throws: SettingsStore.SettingsError.duplicateNameEffort) { try store.saveDraft() }
         store.cancelDraft()
@@ -346,10 +348,11 @@ struct SettingsStoreTests {
         #expect(SettingsStore(defaults: corrupt).loadFailure != nil)
     }
 
-    @Test func freshInstallSeedsBaselineModelsAndPersistsStableIDs() throws {
+    @Test func freshInstallSeedsResponsesAndPersistsStableIDs() throws {
         let defaults = freshDefaults()
         let store = SettingsStore(defaults: defaults)
-        #expect(store.record.modelConfigurations.map(\.provider) == ["openai", "glm"])
+        #expect(store.record.modelConfigurations.map(\.vendorLabel) == ["OpenAI", "GLM"])
+        #expect(store.record.modelConfigurations.allSatisfy { $0.profile == ModelAPIProtocol.openai.profile && $0.effort == .low && $0.requestOptions != nil })
         #expect(store.record.modelConfigurations.allSatisfy { ModelProfileID.all.contains($0.profile) })
         let reloaded = SettingsStore(defaults: defaults)
         // IDs stay stable across launches from the first run.
@@ -363,7 +366,7 @@ struct SettingsStoreTests {
         let keychain = FaultCredentials()
         let store = SettingsStore(defaults: defaults, keychain: keychain)
         let openai = try #require(store.record.modelConfigurations.first { $0.provider == "openai" })
-        let binding = RuntimeModelBinding(configurationID: openai.id, baseURL: openai.baseURL, provider: openai.provider)
+        let binding = openai.runtimeBinding
         #expect(throws: SettingsStore.SettingsError.missingCredential) { try store.resolveCredential(binding) }
         try keychain.setKey("FIRST_SYNTHETIC", configurationID: openai.id)
         #expect(try store.resolveCredential(binding) == "FIRST_SYNTHETIC")
@@ -387,13 +390,14 @@ struct SettingsStoreTests {
 
     @Test func matchingConfigurationsFilterByProviderModelProfileEffort() throws {
         let store = SettingsStore(defaults: freshDefaults())
+        let current = try #require(store.record.defaultConfiguration)
         let snapshot = JobSnapshot(
             jobID: UUID(), sourceRevision: 1, sourceLanguage: .en, targetLanguage: .zh,
-            provider: "openai", model: "gpt-4.1-mini-2025-04-14", profile: ModelProfileID.openaiV2,
-            effort: .auto, translationPromptVersion: "translation.v1", alignmentPromptVersion: "alignment.v1")
+            provider: current.provider, model: current.modelID, profile: current.profile,
+            effort: current.effort, translationPromptVersion: "translation.v1", alignmentPromptVersion: "alignment.v1", configurationRevision: current.revision)
         #expect(store.matchingConfigurations(for: snapshot).count == 1)
         var otherEffort = snapshot
-        otherEffort.effort = .low
+        otherEffort.effort = .high
         #expect(store.matchingConfigurations(for: otherEffort).isEmpty)
     }
 }

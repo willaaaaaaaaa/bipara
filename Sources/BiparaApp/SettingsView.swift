@@ -123,8 +123,6 @@ public struct SettingsView: View {
                         get: { store.draft.dontAskToSaveOnClose },
                         set: { value in store.updateDraft { $0.skipDocumentSavePrompt = value } }
                     )).accessibilityIdentifier("settings.close.skipSave")
-                    Text(t("Unsaved changes will be discarded when you close a tab or quit. Saved files are not changed."))
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Section(t("Models")) {
                     modelsSection
@@ -147,13 +145,6 @@ public struct SettingsView: View {
                             }.tag(preset)
                         }
                     }.accessibilityIdentifier("settings.reading.highlight")
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(t("Clear correspondence makes reading easier.")).foregroundStyle(Color(nsColor: ThemeColors.source))
-                        Text("清晰的文字对应让阅读更轻松。")
-                            .foregroundStyle(Color(nsColor: ThemeColors.translation))
-                            .underline().padding(.horizontal, 4)
-                            .background(Color(nsColor: ThemeColors.correspondence(store.draft.correspondenceColor)))
-                    }.accessibilityIdentifier("settings.reading.preview")
                     Picker(t("Font family"), selection: typography(\.family)) {
                         Text(t("System")).tag(ReadingTypography.Family.system)
                         Text(t("Serif")).tag(ReadingTypography.Family.serif)
@@ -165,7 +156,10 @@ public struct SettingsView: View {
                     }
                     LabeledContent(t("Reading size")) {
                         Slider(value: typography(\.size), in: 14...28, step: 1)
+                            .accessibilityLabel(t("Reading size"))
+                            .accessibilityIdentifier("settings.reading.size")
                         Text("\(Int(store.draft.typography.size)) pt").monospacedDigit().frame(width: 44)
+                            .accessibilityHidden(true)
                     }
                 }
             }.formStyle(.grouped).padding(.vertical,8)
@@ -183,6 +177,7 @@ public struct SettingsView: View {
                     catch SettingsStore.SettingsError.duplicateNameEffort { self.error = "Two configurations share the same name and effort. Give one a different display name." }
                     catch SettingsStore.SettingsError.compensationFailed { self.error = "Some credential changes could not be rolled back. Check the model settings before trying again." }
                     catch SettingsStore.SettingsError.invalidField("default model") { self.error = "Choose a new active model before saving." }
+                    catch SettingsStore.SettingsError.invalidField { self.error = "Some settings are invalid. Check the model and reading settings, then save again." }
                     catch { self.error = "Settings could not be saved. Previous values were restored where possible." }
                 }.keyboardShortcut(.defaultAction).disabled(!store.hasDraftChanges || store.loadFailure != nil).accessibilityIdentifier("settings.save")
             }
@@ -237,7 +232,7 @@ public struct SettingsView: View {
                             Spacer(minLength: 0)
                             Text(summary)
                                 .font(.callout)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.primary)
                                 .truncationMode(.middle)
                         }
                         .lineLimit(1)
@@ -387,8 +382,8 @@ private struct DeletionSheet: View {
 // MARK: - Configuration editor sheet
 
 /// Add/Edit sheet. Confirming updates the Settings draft only; the API
-/// key edit is staged through `keyDrafts`. No Save, Add, or preset
-/// selection makes a network request. Existing key material is never
+/// key edit is staged through `keyDrafts`. Save and Add never make a
+/// network request. Existing key material is never
 /// displayed.
 struct ConfigurationSheet: View, Identifiable {
     enum Result {
@@ -422,8 +417,7 @@ struct ConfigurationSheet: View, Identifiable {
     @State private var modelID: String
     @State private var effort: ModelEffort
     @State private var baseURL: String
-    @State private var customModel: Bool
-    @State private var discardInheritedReplacement = false
+    @State private var options: ModelRequestOptions
     @State private var keyEdit: KeyEdit = .inherit
     @State private var keyField: String = ""
     /// Canonical URL the currently typed key was entered for. A key typed
@@ -437,14 +431,13 @@ struct ConfigurationSheet: View, Identifiable {
         self.store = store; self.keychain = keychain; self.existing = existing
         self.onConfirm = onConfirm; self.onCancel = onCancel
         _displayName = State(initialValue: existing?.displayName ?? "")
-        _provider = State(initialValue: existing?.provider ?? "openai")
-        _profile = State(initialValue: existing?.profile ?? ModelProfileID.openaiV2)
-        let vendor = ModelVendor(rawValue: existing?.provider ?? "") ?? .openai
-        let model = existing?.modelID ?? vendor.models[0]
-        _modelID = State(initialValue: model)
+        let api = existing.flatMap { ModelAPIProtocol.from(profile: $0.profile) } ?? .openai
+        _provider = State(initialValue: api.rawValue)
+        _profile = State(initialValue: api.profile)
+        _modelID = State(initialValue: existing?.modelID ?? "")
         _effort = State(initialValue: existing?.effort ?? .low)
-        _baseURL = State(initialValue: existing?.baseURL ?? vendor.baseURL)
-        _customModel = State(initialValue: !vendor.models.contains(model))
+        _baseURL = State(initialValue: existing?.baseURL ?? "")
+        _options = State(initialValue: existing?.requestOptions ?? ModelRequestOptions())
     }
 
     private func t(_ key: String) -> String { AppLocalization.text(key, language: store.record.interfaceLanguage) }
@@ -464,23 +457,29 @@ struct ConfigurationSheet: View, Identifiable {
         return store.record.configuration(id: existing.id) ?? existing
     }
 
-    private var vendor: ModelVendor { ModelVendor(rawValue: provider) ?? .openai }
+    private var api: ModelAPIProtocol { ModelAPIProtocol(rawValue: provider) ?? .openai }
+    private var credentialIdentity: String {
+        var canonical = options
+        if let endpoint = options.endpointURL,
+           case .success(let value) = CanonicalBaseURL.canonicalize(endpoint, operationURL: true) { canonical.endpointURL = value }
+        return canonical.credentialIdentity(baseURL: canonicalURL, profile: profile)
+    }
 
     /// True when the edited URL no longer equals the committed canonical
     /// URL: the draft credential is then cleared and requires re-entry.
     private var urlChanged: Bool {
         guard let committedConfiguration else { return false }
-        return committedConfiguration.baseURL != canonicalURL || committedConfiguration.provider != provider
+        return committedConfiguration.credentialIdentity != credentialIdentity
     }
 
     private var typedKeyApplies: Bool {
         ConfigurationSheet.typedKeyApplies(
-            keyEdit: keyEdit, keyEnteredForCanonicalURL: keyEnteredForCanonicalURL, canonicalURL: canonicalURL)
+            keyEdit: keyEdit, keyEnteredForCanonicalURL: keyEnteredForCanonicalURL, canonicalURL: credentialIdentity)
     }
 
     /// The effective staged credential change for this entry. A typed key
     /// only applies at the exact canonical endpoint it was entered for
-    /// (manual URL edits, preset switches, and path-only changes
+    /// (protocol switches and manual URL/path changes
     /// invalidate it; equivalent canonical spellings re-apply it);
     /// otherwise the committed-key URL rule governs (changed URL clears
     /// the key, restoring the exact committed URL restores the original
@@ -489,15 +488,10 @@ struct ConfigurationSheet: View, Identifiable {
         ConfigurationSheet.stagedKeyChange(
             existing: existing, keyEdit: keyEdit, keyField: keyField,
             keyEnteredForCanonicalURL: keyEnteredForCanonicalURL, currentCanonicalURL: canonicalURL,
-            settingsStagedChange: inheritedKeyChange,
+            settingsStagedChange: existing.flatMap { store.keyDrafts[$0.id] },
             committedBaseURL: committedConfiguration?.baseURL,
-            currentProvider: provider, committedProvider: committedConfiguration?.provider)
-    }
-
-    private var inheritedKeyChange: SettingsStore.KeyDraftChange? {
-        let change = existing.flatMap { store.keyDrafts[$0.id] }
-        if discardInheritedReplacement, case .set = change { return nil }
-        return change
+            currentProvider: provider, committedProvider: committedConfiguration?.provider,
+            currentCredentialIdentity: credentialIdentity, committedCredentialIdentity: committedConfiguration?.credentialIdentity)
     }
 
     private var hasStagedReplacement: Bool {
@@ -531,10 +525,11 @@ struct ConfigurationSheet: View, Identifiable {
         currentCanonicalURL: String,
         settingsStagedChange: SettingsStore.KeyDraftChange? = nil,
         committedBaseURL: String? = nil,
-        currentProvider: String? = nil, committedProvider: String? = nil
+        currentProvider: String? = nil, committedProvider: String? = nil,
+        currentCredentialIdentity: String? = nil, committedCredentialIdentity: String? = nil
     ) -> SettingsStore.KeyDraftChange? {
         let typedApplies = typedKeyApplies(
-            keyEdit: keyEdit, keyEnteredForCanonicalURL: keyEnteredForCanonicalURL, canonicalURL: currentCanonicalURL)
+            keyEdit: keyEdit, keyEnteredForCanonicalURL: keyEnteredForCanonicalURL, canonicalURL: currentCredentialIdentity ?? currentCanonicalURL)
         if existing == nil {
             return typedApplies && !keyField.isEmpty ? .set(keyField) : nil
         }
@@ -543,12 +538,12 @@ struct ConfigurationSheet: View, Identifiable {
         // committed URL in a later sheet session automatically cancels an
         // endpoint-driven clear while preserving explicit Delete.
         let reference = committedBaseURL ?? existing!.baseURL
-        let urlChanged = reference != currentCanonicalURL
-            || (committedProvider ?? existing!.provider) != (currentProvider ?? existing!.provider)
+        let urlChanged = currentCredentialIdentity.map { $0 != (committedCredentialIdentity ?? existing!.credentialIdentity) }
+            ?? (reference != currentCanonicalURL || (committedProvider ?? existing!.provider) != (currentProvider ?? existing!.provider))
         let base: SettingsStore.KeyDraftChange?
         switch settingsStagedChange {
-        case .set where existing!.baseURL == currentCanonicalURL
-            && existing!.provider == (currentProvider ?? existing!.provider):
+        case .set where currentCredentialIdentity.map({ $0 == existing!.credentialIdentity })
+            ?? (existing!.baseURL == currentCanonicalURL && existing!.provider == (currentProvider ?? existing!.provider)):
             // The previous sheet entered this replacement for the current
             // draft endpoint. A rename or reopen must preserve it.
             base = settingsStagedChange
@@ -567,74 +562,27 @@ struct ConfigurationSheet: View, Identifiable {
         }
     }
 
-    /// Minimal editor-state transitions when the actual model changes (D2):
-    /// keep the effort valid and selectable, and adopt the appropriate v2
-    /// profile when a migrated (v1-profile) entry's model is edited. A
-    /// transient edit that returns to the original model restores the
-    /// migrated entry's legacy profile and its effective effort. This is
-    /// presentation only — stored/wire values are still validated and
-    /// rejected, never clamped, by the store and worker.
-    static func modelTransition(
-        provider: String, profile: String, effort: ModelEffort,
-        existingModel: String?, existingProfile: String?, newModel: String
-    ) -> (effort: ModelEffort, profile: String) {
-        let efforts = ModelCapabilities.efforts(model: newModel, provider: provider)
-        let validEffort = efforts.contains(effort) ? effort : .auto
-        let originalLegacy = existingProfile.map { WorkerContract.legacyEffort(profile: $0) != nil } ?? false
-        if originalLegacy, let existingProfile, let existingModel, newModel == existingModel {
-            // Back at the original model: restore the legacy contract.
-            return (WorkerContract.legacyEffort(profile: existingProfile) ?? .auto, existingProfile)
-        }
-        if originalLegacy, existingModel != nil, newModel != existingModel {
-            return (validEffort, WorkerContract.currentProfiles[provider] ?? profile)
-        }
-        return (validEffort, profile)
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(t(existing == nil ? "Add model configuration" : "Edit model configuration")).font(.headline)
             Form {
                 Section {
-                    Picker(t("Vendor"), selection: Binding(get: { provider }, set: { selectVendor($0) })) {
-                        ForEach(ModelVendor.allCases, id: \.rawValue) { vendor in
-                            Text(vendor.name).tag(vendor.rawValue)
-                        }
-                    }.accessibilityIdentifier("settings.model.vendor")
-                    TextField(t("Name"), text: $displayName, prompt: Text(modelID))
+                    TextField(t("Name"), text: $displayName)
                         .accessibilityIdentifier("settings.model.name")
-                    Picker(t("Model"), selection: Binding<String?>(
-                        get: { customModel ? nil : modelID },
-                        set: { choice in
-                            customModel = choice == nil
-                            if let choice { modelID = choice }
-                        }
-                    )) {
-                        ForEach(vendor.models, id: \.self) { model in
-                            Text(model).tag(Optional(model))
-                        }
-                        Text(t("Custom Model ID…")).tag(String?.none)
-                    }.accessibilityIdentifier("settings.model.catalog")
-                    if customModel {
-                        TextField(t("Model ID"), text: $modelID).accessibilityIdentifier("settings.model.id")
-                    }
+                    Picker(t("Protocol"), selection: $provider) {
+                        Text("OpenAI").tag("openai")
+                        Text("Anthropic").tag("anthropic")
+                    }.accessibilityIdentifier("settings.model.protocol")
+                    TextField(t("Model ID"), text: $modelID).accessibilityIdentifier("settings.model.id")
                     effortPicker
                     TextField(t("API Base URL"), text: $baseURL).accessibilityIdentifier("settings.model.url")
-                    if urlChanged && !hasStagedReplacement {
-                        Text(t("Changing the vendor or API Base URL clears this configuration’s key. Re-enter the key before translating."))
-                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    }
                     keyRow
                 }
             }.formStyle(.grouped)
-            .onChange(of: modelID) { _, newModel in
-                let sameVendor = existing?.provider == provider
-                let transition = Self.modelTransition(
-                    provider: provider, profile: profile, effort: effort,
-                    existingModel: sameVendor ? existing?.modelID : nil,
-                    existingProfile: sameVendor ? existing?.profile : nil, newModel: newModel)
-                effort = transition.effort
-                profile = transition.profile
+            .onChange(of: provider) { old, _ in
+                profile = api.profile
+                if old == "openai" && options.authentication == .bearer { options.authentication = .apiKey }
+                else if old == "anthropic" && options.authentication == .apiKey { options.authentication = .bearer }
             }
             if let error {
                 Text(t(error)).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
@@ -651,40 +599,16 @@ struct ConfigurationSheet: View, Identifiable {
                     .keyboardShortcut(.defaultAction).accessibilityIdentifier("settings.model.confirm")
             }
         }
-        .padding(20).frame(width: 500, height: 620)
+        .padding(20).frame(width: 500, height: 440)
     }
 
-    private func selectVendor(_ id: String) {
-        guard id != provider, let vendor = ModelVendor(rawValue: id),
-              let newProfile = WorkerContract.currentProfiles[id] else { return }
-        provider = id
-        profile = newProfile
-        baseURL = vendor.baseURL
-        modelID = vendor.models[0]
-        customModel = false
-        effort = .low
-        keyField = ""
-        keyEnteredForCanonicalURL = nil
-        discardInheritedReplacement = true
-        if keyEdit == .replace { keyEdit = .inherit }
-    }
-
-    @ViewBuilder private var effortPicker: some View {
-        let capability = ModelCapabilities.entry(model: modelID, provider: provider)
-        let efforts = ModelCapabilities.efforts(model: modelID, provider: provider)
+    private var effortPicker: some View {
         Picker(t("Reasoning Effort"), selection: $effort) {
-            if capability?.nonreasoning == true {
-                // A known nonreasoning model: Auto displays Not applicable
-                // and selection is disabled.
-                Text(t("Not applicable")).tag(ModelEffort.auto)
-            } else {
-                ForEach(efforts, id: \.self) { value in
-                    Text(value.label(t)).tag(value)
-                }
+            if !ModelEffort.editable.contains(effort) {
+                Text(t("Choose an effort level")).tag(effort)
             }
-        }
-        .disabled(capability?.nonreasoning == true || efforts.count <= 1)
-        .accessibilityIdentifier("settings.model.effort")
+            ForEach(ModelEffort.editable, id: \.self) { value in Text(value.label(t)).tag(value) }
+        }.accessibilityIdentifier("settings.model.effort")
     }
 
     /// The typed-key binding: each keystroke (re)binds the key to the
@@ -694,9 +618,15 @@ struct ConfigurationSheet: View, Identifiable {
             get: { keyField },
             set: { value in
                 keyField = value
-                keyEnteredForCanonicalURL = canonicalURL
+                keyEnteredForCanonicalURL = credentialIdentity
                 keyEdit = ConfigurationSheet.transitionedKeyEdit(onTyping: keyEdit)
             })
+    }
+
+    private func resetCredentialEntry(_ edit: KeyEdit) {
+        keyEdit = edit
+        keyField = ""
+        keyEnteredForCanonicalURL = nil
     }
 
     @ViewBuilder private var keyRow: some View {
@@ -710,7 +640,7 @@ struct ConfigurationSheet: View, Identifiable {
                 // Mirrors the edit-mode note (D1) instead of silently
                 // dropping the field's visible text on confirm.
                 Text(t("Typed key ignored — it was entered for another endpoint.")).font(.callout).foregroundStyle(.secondary)
-                Button(t("Enter key")) { keyField = ""; keyEnteredForCanonicalURL = nil }
+                Button(t("Enter key")) { resetCredentialEntry(.replace) }
             } else {
                 SecureField(t("API key (optional)"), text: keyFieldBinding).accessibilityIdentifier("settings.model.key.field")
             }
@@ -724,16 +654,16 @@ struct ConfigurationSheet: View, Identifiable {
                     // A deletion the Settings draft already stages; cancel
                     // is local to this sheet and applies on confirmation.
                     Text(t("Key will be deleted")).foregroundStyle(.secondary)
-                    Button(t("Cancel key")) { keyEdit = .restore }.accessibilityIdentifier("settings.model.key.cancel")
+                    Button(t("Cancel changes")) { keyEdit = .restore }.accessibilityIdentifier("settings.model.key.cancel")
                 } else if keyEdit == .restore {
                     if urlChanged {
                         Text(t("Key cleared — enter the key for the new URL")).font(.callout).foregroundStyle(.secondary)
-                        Button(t("Enter key")) { keyEdit = .replace; keyField = ""; keyEnteredForCanonicalURL = nil }
+                        Button(t("Enter key")) { resetCredentialEntry(.replace) }
                     } else {
                         // The staged deletion is cancelled locally; the
                         // committed key remains until Save decides.
                         Text(t("API key set")).foregroundStyle(.secondary)
-                        Button(t("Replace")) { keyEdit = .replace; keyField = ""; keyEnteredForCanonicalURL = nil }.accessibilityIdentifier("settings.model.key.replace")
+                        Button(t("Replace")) { resetCredentialEntry(.replace) }.accessibilityIdentifier("settings.model.key.replace")
                         Button(t("Delete")) { keyEdit = .delete }.accessibilityIdentifier("settings.model.key.delete")
                     }
                 } else if keyEdit == .replace {
@@ -742,31 +672,31 @@ struct ConfigurationSheet: View, Identifiable {
                         // exactly this endpoint: the field is live, and the
                         // first keystroke binds the key to this canonical URL.
                         SecureField(t("API key"), text: keyFieldBinding).accessibilityIdentifier("settings.model.key.field")
-                        Button(t("Cancel key")) { keyEdit = .inherit; keyField = ""; keyEnteredForCanonicalURL = nil }
+                        Button(t("Cancel changes")) { resetCredentialEntry(.inherit) }
                     } else if !urlChanged {
                         // The URL is back at the committed endpoint: the
                         // committed key state applies and the typed key
                         // (entered for a different endpoint) is ignored.
                         Text(t("Typed key ignored — it was entered for another endpoint.")).font(.callout).foregroundStyle(.secondary)
-                        Button(t("Cancel key")) { keyEdit = .inherit; keyField = ""; keyEnteredForCanonicalURL = nil }
+                        Button(t("Cancel changes")) { resetCredentialEntry(.inherit) }
                     } else {
                         // The typed key belonged to a different endpoint.
                         Text(t("Key cleared — enter the key for the new URL")).font(.callout).foregroundStyle(.secondary)
-                        Button(t("Enter key")) { keyField = ""; keyEnteredForCanonicalURL = nil }
+                        Button(t("Enter key")) { resetCredentialEntry(.replace) }
                     }
                 } else if keyEdit == .delete {
                     Text(t("Key will be deleted")).foregroundStyle(.secondary)
-                    Button(t("Cancel key")) { keyEdit = .inherit }
+                    Button(t("Cancel changes")) { keyEdit = .inherit }
                 } else if urlChanged && !stagedSet {
                     Text(t("Key cleared — enter the key for the new URL")).font(.callout).foregroundStyle(.secondary)
-                    Button(t("Enter key")) { keyEdit = .replace; keyField = ""; keyEnteredForCanonicalURL = nil }
+                    Button(t("Enter key")) { resetCredentialEntry(.replace) }
                 } else if committed {
                     Text(t("API key set")).foregroundStyle(.secondary)
-                    Button(t("Replace")) { keyEdit = .replace; keyField = ""; keyEnteredForCanonicalURL = nil }.accessibilityIdentifier("settings.model.key.replace")
+                    Button(t("Replace")) { resetCredentialEntry(.replace) }.accessibilityIdentifier("settings.model.key.replace")
                     Button(t("Delete")) { keyEdit = .delete }.accessibilityIdentifier("settings.model.key.delete")
                 } else {
                     Text(t("No API key")).foregroundStyle(.secondary)
-                    Button(t("Enter key")) { keyEdit = .replace; keyField = ""; keyEnteredForCanonicalURL = nil }
+                    Button(t("Enter key")) { resetCredentialEntry(.replace) }
                 }
             }
         }
@@ -785,23 +715,35 @@ struct ConfigurationSheet: View, Identifiable {
         guard case .success(let canonical) = CanonicalBaseURL.canonicalize(baseURL) else {
             error = "Enter a complete HTTPS API Base URL (for example https://api.openai.com/v1/) without an operation path such as /chat/completions."; return
         }
-        if let legacyEffort = WorkerContract.legacyEffort(profile: profile) {
-            guard canonical == WorkerContract.legacyStandardBaseURL(provider: provider), effort == legacyEffort else {
-                error = "This legacy profile requires its original Standard API URL and effort."; return
+        guard ModelEffort.editable.contains(effort) else { error = "Choose an effort level"; return }
+        do {
+            if let endpoint = options.endpointURL {
+                guard case .success(let value) = CanonicalBaseURL.canonicalize(endpoint, operationURL: true) else {
+                    error = "Enter a valid HTTPS request URL."; return
+                }
+                options.endpointURL = value
             }
-        } else {
-            guard ModelCapabilities.efforts(model: modelID, provider: provider).contains(effort) else {
-                error = "This model does not support the selected effort."; return
+            try options.validate(protocol: api)
+            if keyEdit == .replace {
+                guard options.authentication == .none || keyField.utf8.allSatisfy({ (32...126).contains($0) }) else {
+                    error = "Check the API key for invalid characters."; return
+                }
+                guard keyField.utf8.count <= 4096 else {
+                    error = "Credentials must be at most 4096 bytes."; return
+                }
             }
+        } catch { self.error = "The saved request options are incompatible with this protocol. Choose the original protocol or add a new configuration."; return }
+        var record = ModelConfigurationRecord(
+            id: existing?.id ?? UUID(), displayName: trimmedName.isEmpty ? nil : trimmedName,
+            provider: provider, profile: api.profile, modelID: modelID, effort: effort,
+            baseURL: canonical,
+            vendorLabel: existing?.vendorLabel ?? (existing?.requestOptions == nil ? existing?.vendorName : nil),
+            requestOptions: options, revision: UUID())
+        if let committedConfiguration, record.hasSameRequest(as: committedConfiguration) {
+            record.revision = committedConfiguration.revision
+        } else if let existing, record.hasSameRequest(as: existing) {
+            record.revision = existing.revision
         }
-        let record = ModelConfigurationRecord(
-            id: existing?.id ?? UUID(),
-            displayName: trimmedName.isEmpty ? nil : trimmedName,
-            provider: provider,
-            profile: profile,
-            modelID: modelID,
-            effort: effort,
-            baseURL: canonical)
         // The resolved display-name/effort pair must be unique within the
         // draft, compared after trimming with case-insensitive names.
         let nameKey = record.resolvedName.lowercased() + "\u{1F}" + record.effort.rawValue

@@ -60,7 +60,7 @@ swift test "${SWIFT_TEST_FLAGS[@]}"
 record $? "swift test (Core + Worker adapter + AppKit)"
 
 step "Python offline tests incl. packaged worker IPC"
-uv run --project Worker --frozen pytest -m "not live"
+uv run --project Worker --no-sync pytest -m "not live"
 record $? "pytest -m 'not live'"
 
 step "Native app build (requires full Xcode)"

@@ -78,7 +78,7 @@ struct RepairTests {
     @Test func keyOnlyDraftCanSaveCancelAndCompensate()throws{
         let keys=FaultCredentials(),settings=SettingsStore(defaults:defaults(),keychain:FaultCredentials())
         let openai=try #require(settings.record.modelConfigurations.first{ $0.provider == "openai" })
-        let glm=try #require(settings.record.modelConfigurations.first{ $0.provider == "glm" })
+        let glm=try #require(settings.record.modelConfigurations.first{ $0.vendorLabel == "GLM" })
         keys.keys[openai.id]="OLD_OPENAI";keys.keys[glm.id]="OLD_GLM"
         settings.setKeyDraft(.set("NEW_KEY"),configurationID:openai.id);#expect(settings.hasDraftChanges)
         settings.cancelDraft();#expect(!settings.hasDraftChanges);#expect(settings.keyDrafts.isEmpty)

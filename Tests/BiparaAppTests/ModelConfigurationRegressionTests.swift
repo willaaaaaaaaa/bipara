@@ -64,7 +64,7 @@ struct ModelConfigurationRegressionTests {
     /// discarding sheet-local state without touching the store.
     @Test func reopenedEditorCancelKeyThenSheetCancelCannotRetainOldKeyAtNewEndpoint() throws {
         let keychain = AuditingCredentials()
-        let store = SettingsStore(defaults: freshDefaults(), keychain: keychain)
+        let store = SettingsStore(defaults: freshDefaults(), keychain: keychain, record: LegacyModelFixture.record())
         let configuration = try #require(store.record.modelConfigurations.first { $0.provider == "openai" })
         try keychain.setKey("KA_SYNTHETIC", configurationID: configuration.id)
 
@@ -112,7 +112,7 @@ struct ModelConfigurationRegressionTests {
     /// KA at endpoint B — the transaction enforces the rule itself.
     @Test func saveTransactionEnforcesEndpointCredentialRuleEvenWithoutStagedDelete() throws {
         let keychain = AuditingCredentials()
-        let store = SettingsStore(defaults: freshDefaults(), keychain: keychain)
+        let store = SettingsStore(defaults: freshDefaults(), keychain: keychain, record: LegacyModelFixture.record())
         let configuration = try #require(store.record.modelConfigurations.first { $0.provider == "openai" })
         try keychain.setKey("KA_SYNTHETIC", configurationID: configuration.id)
         store.updateDraft { draft in
@@ -151,7 +151,7 @@ struct ModelConfigurationRegressionTests {
 
     @Test func twoSessionEndpointRestoreRecoversKeyStateWithExplicitCancel() throws {
         let keychain = AuditingCredentials()
-        let store = SettingsStore(defaults: freshDefaults(), keychain: keychain)
+        let store = SettingsStore(defaults: freshDefaults(), keychain: keychain, record: LegacyModelFixture.record())
         let configuration = try #require(store.record.modelConfigurations.first { $0.provider == "openai" })
         try keychain.setKey("KA_SYNTHETIC", configurationID: configuration.id)
         let a = configuration.baseURL
@@ -195,7 +195,7 @@ struct ModelConfigurationRegressionTests {
 
     @Test func reopenedEndpointReplacementSurvivesUnrelatedEdit() throws {
         let keys = AuditingCredentials()
-        let store = SettingsStore(defaults: freshDefaults(), keychain: keys)
+        let store = SettingsStore(defaults: freshDefaults(), keychain: keys, record: LegacyModelFixture.record())
         let original = try #require(store.record.defaultConfiguration)
         keys.keys[original.id] = "SYNTHETIC_KEY_A"
         let b = "https://gateway.example.com/v1/"
@@ -221,7 +221,7 @@ struct ModelConfigurationRegressionTests {
 
     @Test func endpointRestoreWithoutKeyActionRestoresCommittedKey() throws {
         let keys = AuditingCredentials()
-        let store = SettingsStore(defaults: freshDefaults(), keychain: keys)
+        let store = SettingsStore(defaults: freshDefaults(), keychain: keys, record: LegacyModelFixture.record())
         let original = try #require(store.record.defaultConfiguration)
         keys.keys[original.id] = "SYNTHETIC_KEY_A"
         var edited = original
@@ -341,7 +341,7 @@ struct ModelConfigurationRegressionTests {
     /// the text and the editor state, exactly as the view wires it.
     @Test func typingInAddSecureFieldStagesKeyThroughRealBindingPath() throws {
         let keychain = AuditingCredentials()
-        let store = SettingsStore(defaults: freshDefaults(), keychain: keychain)
+        let store = SettingsStore(defaults: freshDefaults(), keychain: keychain, record: LegacyModelFixture.record())
         // Mirror of the sheet's local state driven by keyFieldBinding.
         var keyField = ""
         var keyEdit: ConfigurationSheet.KeyEdit = .inherit
@@ -385,7 +385,7 @@ struct ModelConfigurationRegressionTests {
         // Credential resolution works for the new configuration.
         #expect(try store.resolveCredential(RuntimeModelBinding(configurationID: added.id, baseURL: a, provider: "openai")) == "NEW_SYNTHETIC_KEY")
         // Settings cancellation before Save discards a typed key (fresh store).
-        let cancelStore = SettingsStore(defaults: freshDefaults(), keychain: keychain)
+        let cancelStore = SettingsStore(defaults: freshDefaults(), keychain: keychain, record: LegacyModelFixture.record())
         let draftEntry = ModelConfigurationRecord(
             provider: "glm", profile: ModelProfileID.glmV2, modelID: "glm-5.3", effort: .low,
             baseURL: WorkerContract.glmStandardBaseURL)
@@ -403,6 +403,7 @@ struct ModelConfigurationRegressionTests {
     private func appWithOpenedPausedDocument(gateway: ScriptedGateway) throws -> (AppRuntime, AuditingCredentials, UserDefaults, UUID, ModelConfigurationRecord) {
         let keychain = AuditingCredentials()
         let defaults = UserDefaults(suiteName: "dev.bipara.test.\(UUID())")!
+        LegacyModelFixture.install(defaults)
         let app = AppRuntime(gateway: gateway, keychain: keychain, defaults: defaults)
         let match = try #require(app.settings.record.defaultConfiguration)
         try app.workspace.newTab(source: String(repeating: "Hello there. ", count: 40), direction: .enToZh)
@@ -777,6 +778,7 @@ struct ModelConfigurationRegressionTests {
             let analysisGateway = ScriptedGateway()
             let keychain2 = AuditingCredentials()
             let defaults2 = UserDefaults(suiteName: "dev.bipara.test.\(UUID())")!
+            LegacyModelFixture.install(defaults2)
             let analysisApp = AppRuntime(gateway: analysisGateway, keychain: keychain2, defaults: defaults2)
             let analysisMatch = try #require(analysisApp.settings.record.defaultConfiguration)
             keychain2.keys[analysisMatch.id] = "MATCH_KEY"

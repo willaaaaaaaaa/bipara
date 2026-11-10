@@ -4,7 +4,7 @@ English · [Simplified Chinese](README.zh-CN.md)
 
 Bipara is a large language model (LLM)-powered native macOS app for translation and bilingual reading, built for long Chinese and English texts. Read in side-by-side panes or alternating paragraphs, select text to find corresponding passages, and work with independent documents in tabs.
 
-Bipara uses Swift for native presentation and document/task logic, plus a bundled Python worker with LangChain. End users do not install Python or run a server. OpenAI, Kimi, GLM and DeepSeek are configurable API vendors; provider calls require network access, an eligible account and may incur charges.
+Bipara uses Swift for native presentation and document/task logic, plus a bundled Python worker with LangChain. End users do not install Python or run a server. Model connections use OpenAI Responses or Anthropic Messages, with a custom form for name, protocol, model ID, effort, API Base URL and API key. Users choose compatible models and parameters; provider calls require network access, an eligible account and may incur charges.
 
 Status: experimental source preview. This README does not announce a public release or a qualified installer. Real-provider semantic quality, latency and cost are not fully qualified; native UI and accessibility acceptance is incomplete.
 

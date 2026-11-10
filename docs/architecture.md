@@ -7,7 +7,7 @@
 | Product | LLM-powered translation and bilingual reading; native macOS first, with future iPhone/iPad adaptation possible |
 | Local execution | App-owned logic; no separately deployed server, HTTP listener, or daemon |
 | Languages/runtime | Swift + app-bundled Python child process over pipes |
-| Providers | OpenAI, Kimi, GLM and DeepSeek through one worker boundary, with editable Base URLs, model-specific effort and explicit request profiles. |
+| Providers | OpenAI Responses and Anthropic Messages through one worker boundary, independent of vendor labels/model catalogs, with editable connections and four effort levels. Retain old Chat Completions profiles for existing configurations/jobs. |
 | Framework | LangChain first; explicitly authored LangGraph orchestration deferred |
 | UI | Native reading, Settings and multiple document tabs; English-default interface; System-default appearance with Light/Dark overrides |
 | Implementation baseline | macOS 14+, Swift 6, arm64, CPython 3.13; detailed contracts linked below |
@@ -24,7 +24,7 @@ flowchart LR
     Core --> Gateway[PythonModelGateway]
     Gateway <-->|Local process pipes| Worker[Bundled Python worker]
     Worker --> LC[LangChain prompt and model invocation]
-    LC --> API[Vendor Chat Completions APIs]
+    LC --> API[Responses / Messages / retained Chat Completions APIs]
     UI --> Files[Local document files and preferences]
     Gateway --> Keys[macOS Keychain]
 ```
@@ -42,7 +42,7 @@ The [model configuration contract](design/model-settings.md) freezes endpoint/ef
 | Owner document | Contents |
 | --- | --- |
 | [Native application](design/technical-design.md) | Modules, state, concurrency, AppKit boundary, Settings, appearance, credentials and packaging |
-| [Model configuration](design/model-settings.md) | Model CRUD, active selection, vendor catalog, effort capabilities, endpoint/credential binding and preferences migration |
+| [Model configuration](design/model-settings.md) | Model CRUD, active selection, six-field custom editor, protocol and effort settings, endpoint/credential binding and preferences migration |
 | [Model workflow](design/model-workflow.md) | Pinned trial dependencies, provider defaults/parameters, segmentation, commit, alignment and retry rules |
 | [Worker protocol](design/worker-protocol.md) | Exact pipe frames, typed errors, cancellation, deadlines and process lifetime |
 | [Document format](design/document-format.md) | Versioned local file fields, example, validation and compatibility |
@@ -64,6 +64,6 @@ The runtime must not install packages or require Python from the end user's syst
 
 Keep reusable text/domain logic free of AppKit and LangChain objects. A future mobile version can retain Swift models, prompts, and provider contracts, but `Process`-based execution is not a promised mobile implementation. A service or another runtime needs a future design decision.
 
-Add a provider only through a small profile/factory plus contract tests. Add LangGraph only for a demonstrated branching/resumption requirement the existing workflow cannot reasonably handle. "LangGraph later" means explicitly authored graph orchestration; record actual transitive packages rather than pretending an indirect dependency is an authored application graph.
+Compatible providers require only saved connection settings. A new wire protocol requires a small profile/factory and contract tests. Add LangGraph only for a demonstrated branching/resumption requirement the existing workflow cannot reasonably handle. "LangGraph later" means explicitly authored graph orchestration; record actual transitive packages rather than pretending an indirect dependency is an authored application graph.
 
 Public dependency facts, model protocol contracts, asset provenance, and portable build instructions stay in this repository. Machine-specific configuration and private account details stay outside tracked files. Secrets remain in Keychain or a dedicated secret store. Follow [repository boundaries](repository-boundaries.md).

@@ -62,7 +62,7 @@ Provide a dedicated native Settings window. Organize low-frequency preferences i
 | General | Translation Direction, with Automatic as the initial default |
 | General | Don't ask to save on close, initially off |
 | Models | Active Model picker, followed by configured model instances and Add/Edit/Delete |
-| Reading | Reading Width, Correspondence Color with preview, font family, reading text size, and line spacing |
+| Reading | Reading Width, Correspondence Color, font family, reading text size, and line spacing |
 
 Interface language only changes application chrome; it does not change a document's source language, translation direction, or existing text. Project documentation, code, and comments still default to English. Localized UI strings are product data, not a change to that policy.
 
@@ -70,7 +70,7 @@ Appearance defaults to System and supports explicit Light/Dark overrides. Save a
 
 Reading preferences apply across open tabs. Layout remains a frequent, per-document control on the reading surface. Save applies the entire settings draft; Cancel discards it. Keep preferences small and avoid adding unrequested prompt editors, agent controls, or infrastructure configuration.
 
-The [model configuration design](model-settings.md) owns vendor-scoped choices, instance names, per-instance credentials, active selection and migration. Switching the active model updates the selection immediately from the toolbar. Existing jobs keep their recorded binding, and replacement still requires Retranslate confirmation. Keep exactly one localized app-menu Settings entry and Command-comma shortcut; the Settings window title follows the same language.
+The [model configuration design](model-settings.md) owns the six-field custom editor, instance names, per-instance credentials, active selection and migration. Switching the active model updates the selection immediately from the toolbar. Existing jobs keep their recorded binding, and replacement still requires Retranslate confirmation. Keep exactly one localized app-menu Settings entry and Command-comma shortcut; the Settings window title follows the same language.
 
 ## Typography and native presentation
 
@@ -79,6 +79,10 @@ Default to the system UI font and appropriate Chinese system fallback. Use the n
 The [app icon](icons/README.md) represents parallel text. Use the icon's correspondence motif sparingly; the reading window should remain visually quiet. Final icon sizing and platform masking need separate validation.
 
 Use native window controls, menus, focus behavior, and text selection. Shortcuts are New tab (Command-T), Close tab (Command-W), Translate (Command-Return), layouts (Command-1/2), Settings (Command-comma), and Clear/Dismiss (Escape).
+
+Native text controls expose names in the selected interface language, including after a live language change. Side by side identifies Original text and Translation separately. Paragraphs identifies the combined view as Original and translation and explains that each original paragraph precedes its translation. Keep these names and hints in accessibility metadata; do not insert labels into document text, native selection, copied content or exports. The original-text editor follows the same interface-language setting without changing an in-progress composition.
+
+The reading-size slider has its own localized name and retains native numeric values and adjustment actions. Exclude the adjacent visual size readout from accessibility to avoid duplicate or stale announcements.
 
 ## About Bipara
 
@@ -111,7 +115,9 @@ Do not put `Not translated yet`, `Queued`, skeleton text, or a spinner into ever
 | Failed | `38/142 · 24s · Translation stopped`, with Retry in the toolbar and a concise error detail | Keep completed text and mark affected unfinished ranges; do not imply all remaining work failed |
 | Completed | Checkmark, `142/142 · 1m 23s` | No completion banner or repeated labels in the text |
 
-Counts are completed translation units out of nonblank units, matching current scheduling; expose that meaning in the accessible label/tooltip. Use the actual job snapshot's model for attribution, e.g. `GLM Flash · 142/142 · 1m 23s`. Put full vendor/model/effort and elapsed-time meaning in a tooltip/accessibility detail rather than a long visible status line. At narrow widths collapse attribution to an accessible info control before hiding progress/time. Keep correspondence-analysis progress independent and allow the existing match actions to fit without clipping.
+Counts are completed translation units out of nonblank units. Present model attribution, task state and counts as one accessible static text element. Keep the elapsed clock out of its label so each tick leaves the announcement text stable. Use the actual job snapshot's model for attribution, for example `GLM Flash · 142/142 · 1m 23s`. The tooltip explains the vendor, model, effort, counts and elapsed time. At narrow widths collapse attribution to an accessible info control before hiding progress/time. Keep correspondence-analysis progress independent and allow the existing match actions to fit without clipping.
+
+Use the system primary foreground for compact reading labels, job status and model metadata. Preserve the appearance-adaptive original and translation colors in the paragraph reading key.
 
 Pending/gutter/status elements have no selectable model span. Partial assembly remains paragraph-atomic; never fabricate translation for uncommitted units. Copy, selection analysis and export retain their own canonical-text rules, including explicit missing-content markers in partial bilingual export. Capture paragraph/side anchors before progressive insertion and restore the same logical reading position after layout. A missing target uses the source paragraph anchor until real target text exists.
 
@@ -143,7 +149,7 @@ Clarify the picker help text: `Default for new translations. Existing jobs keep 
 
 ### Correspondence colors
 
-Settings → Reading adds `Correspondence Color`: Blue, Teal, Amber (default), Purple. Show a live local bilingual preview and an appearance-aware swatch for each preset; arbitrary RGB editing is outside the current scope. Save/Cancel uses the existing Settings draft. This preference applies across tabs and is not exported in documents.
+Settings → Reading adds `Correspondence Color`: Blue, Teal, Amber (default), Purple. Show an appearance-aware swatch for each preset; arbitrary RGB editing is outside the current scope. Save/Cancel uses the existing Settings draft. This preference applies across tabs and is not exported in documents.
 
 Amber is the shared default for both appearances: a pale amber fill in Light and a muted dark amber fill in Dark. Its warm hue separates correspondence from the cool translation text and native text selection while retaining the restrained reading layout. Fresh preferences and older records without an explicit color use this default; an explicitly saved preset remains respected. Runtime helpers and the compiled default color asset use the same paired tokens.
 
@@ -158,7 +164,7 @@ These are the adopted paired tokens. Keep source/translation foreground colors l
 
 ### Close preference and English menus
 
-Settings → General adds `Don't ask to save on close`, initially unchecked, with helper text: `Unsaved changes will be discarded when you close a tab or quit. Saved files are not changed.` Enabling it is an explicit opt-in to discard, not autosave or session recovery. Save applies the preference; Cancel discards the draft. Apply it consistently to tab close, Command-W, main-window close and Command-Q. When enabled, skip only the dirty-document Save/Discard/Cancel stage and follow Discard. Keep `Stop translation and close?` for queued/running work, and retain the Settings-draft close review. Normal Save failures, source-replacement confirmation, provider consent and existing-file overwrite handling keep their own behavior. Turning the preference off restores ordinary prompts. Closing a tab cannot cancel another job or delete/overwrite a saved file.
+Settings → General adds `Don't ask to save on close`, initially unchecked, without a separate helper-text row. Enabling it is an explicit opt-in to discard, not autosave or session recovery. Save applies the preference; Cancel discards the draft. Apply it consistently to tab close, Command-W, main-window close and Command-Q. When enabled, skip only the dirty-document Save/Discard/Cancel stage and follow Discard. Keep `Stop translation and close?` for queued/running work, and retain the Settings-draft close review. Normal Save failures, source-replacement confirmation, provider consent and existing-file overwrite handling keep their own behavior. Turning the preference off restores ordinary prompts. Closing a tab cannot cancel another job or delete/overwrite a saved file.
 
 App-owned menus, window titles, toolbar labels and dialogs follow the saved interface language; system-supplied menus follow macOS localization. Fresh preferences default to English. Settings → General → Interface Language supports English and Simplified Chinese under R13/R18. Keep one localized Settings item and Command-comma shortcut. Preserve the saved language when upgrading preferences.
 

@@ -84,14 +84,19 @@ public enum WorkerContract {
     /// URL and effective effort; v2 profiles follow the model
     /// configuration design's capability mapping.
     public static let legacyProviders = ["openai", "glm"]
-    public static let providers = ["openai", "kimi", "glm", "deepseek"]
+    public static let providers = ["openai", "kimi", "glm", "deepseek", "anthropic"]
+    public static func accepts(provider: String, profile: String) -> Bool {
+        profilesByProvider[provider]?.contains(profile) == true
+    }
     public static let profilesByProvider = [
-        "openai": ["openai-json-schema-v1", "openai-json-schema-v2"],
+        "openai": ["openai-json-schema-v1", "openai-json-schema-v2", ModelAPIProtocol.openai.profile],
         "glm": ["glm-json-v1", "glm-json-v2"],
         "kimi": ["kimi-json-v2"],
         "deepseek": ["deepseek-json-v2"],
+        "anthropic": [ModelAPIProtocol.anthropic.profile],
     ]
     public static let legacyProfiles = ["openai": "openai-json-schema-v1", "glm": "glm-json-v1"]
+    /// Retained v2 profiles; new configurations use ModelAPIProtocol.profile.
     public static let currentProfiles = ["openai": "openai-json-schema-v2", "glm": "glm-json-v2",
                                          "kimi": "kimi-json-v2", "deepseek": "deepseek-json-v2"]
     public static let openAIStandardBaseURL = "https://api.openai.com/v1/"

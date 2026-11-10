@@ -80,7 +80,7 @@ public final class TranslationCoordinator: ObservableObject {
             // Retained snapshots keep their recorded prompt versions;
             // availability was preflighted above (D4).
             translationPromptVersion: snapshot.translationPromptVersion,
-            alignmentPromptVersion: snapshot.alignmentPromptVersion)
+            alignmentPromptVersion: snapshot.alignmentPromptVersion, configurationRevision: snapshot.configurationRevision)
         let finished = Set(original.translations.map(\.unitID))
         let units = original.units.filter { !finished.contains($0.id) }
         let plan = SourcePlan(source: original.source, paragraphs: original.paragraphs, units: units)
@@ -191,11 +191,11 @@ public final class TranslationCoordinator: ObservableObject {
                 }
                 let configuration: ModelConfiguration
                 do {
-                    let apiKey = try credential(binding)
+                    let credentials = try ModelCredentials.decode(credential(binding))
                     configuration = .init(
                         provider: resolved.provider, model: resolved.model, profile: resolved.profile,
-                        baseURL: binding.baseURL, effort: resolved.effort, apiKey: apiKey,
-                        configurationID: binding.configurationID
+                        baseURL: binding.baseURL, effort: resolved.effort, apiKey: credentials.apiKey,
+                        configurationID: binding.configurationID, requestOptions: binding.requestOptions, secretHeaders: credentials.headers
                     )
                 } catch {
                     failBatch(batchID, error)

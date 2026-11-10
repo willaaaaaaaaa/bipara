@@ -84,17 +84,23 @@ public final class PythonModelGateway: ModelGateway, @unchecked Sendable {
     }
 
     private static func validate(_ configuration: ModelConfiguration) throws {
-        guard !configuration.apiKey.isEmpty else { throw GatewayError(code: .missingCredential, isLocal: true) }
+        guard !configuration.apiKey.isEmpty || configuration.requestOptions?.authentication == ModelAuthentication.none else { throw GatewayError(code: .missingCredential, isLocal: true) }
         guard configuration.apiKey.utf8.count <= 4096, !configuration.model.isEmpty,
               configuration.model == configuration.model.trimmingCharacters(in: .whitespacesAndNewlines),
               configuration.model.utf8.count <= 256,
-              WorkerContract.providers.contains(configuration.provider),
-              WorkerContract.profilesByProvider[configuration.provider]?.contains(configuration.profile) == true else {
+              WorkerContract.accepts(provider: configuration.provider, profile: configuration.profile) else {
             throw GatewayError(code: .invalidRequest, isLocal: true)
         }
         guard ModelEffort(rawValue: configuration.effort.rawValue) != nil,
               CanonicalBaseURL.isValid(configuration.baseURL) else {
             throw GatewayError(code: .invalidRequest, isLocal: true)
+        }
+        if let api = ModelAPIProtocol.from(profile: configuration.profile) {
+            guard let options = configuration.requestOptions, ModelEffort.editable.contains(configuration.effort) else {
+                throw GatewayError(code: .invalidRequest, isLocal: true)
+            }
+            do { try options.validate(protocol: api) }
+            catch { throw GatewayError(code: .invalidRequest, isLocal: true) }
         }
         if let legacyEffort = WorkerContract.legacyEffort(profile: configuration.profile) {
             // A legacy profile accepts only its original Standard API URL

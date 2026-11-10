@@ -142,7 +142,7 @@ struct CredentialBindingRegressionTests {
     @Test func configurationDeletionRemovesCommittedKeyOnlyThroughSave() throws {
         let defaults = freshDefaults()
         let keychain = FaultCredentials()
-        let store = SettingsStore(defaults: defaults, keychain: keychain)
+        let store = SettingsStore(defaults: defaults, keychain: keychain, record: LegacyModelFixture.record())
         // Two committed configurations sharing one key value.
         let openai = try #require(store.record.modelConfigurations.first { $0.provider == "openai" })
         let glm = try #require(store.record.modelConfigurations.first { $0.provider == "glm" })
@@ -248,60 +248,12 @@ struct CredentialBindingRegressionTests {
             keyEnteredForCanonicalURL: nil, currentCanonicalURL: b) == .clearForEndpointChange)
     }
 
-    // MARK: - model-change editor transitions (seam)
-
-    @Test func modelTransitionsKeepEffortValidAndUpgradeMigratedProfiles() {
-        // Known reasoning → known nonreasoning: Low is not selectable;
-        // effort becomes Auto (presentation only — stored/wire values are
-        // still rejected, never clamped, elsewhere).
-        let toNonreasoning = ConfigurationSheet.modelTransition(
-            provider: "openai", profile: ModelProfileID.openaiV2, effort: .low,
-            existingModel: "gpt-6-luna", existingProfile: ModelProfileID.openaiV2,
-            newModel: "gpt-4.1-mini-2025-04-14")
-        #expect(toNonreasoning.effort == .auto)
-        #expect(toNonreasoning.profile == ModelProfileID.openaiV2)
-        // Known → unknown: Auto only.
-        let toUnknown = ConfigurationSheet.modelTransition(
-            provider: "openai", profile: ModelProfileID.openaiV2, effort: .low,
-            existingModel: "gpt-6-luna", existingProfile: ModelProfileID.openaiV2,
-            newModel: "custom-internal-model")
-        #expect(toUnknown.effort == .auto)
-        // A valid effort is preserved on model changes that support it.
-        let graded = ConfigurationSheet.modelTransition(
-            provider: "glm", profile: ModelProfileID.glmV2, effort: .low,
-            existingModel: "glm-5.3", existingProfile: ModelProfileID.glmV2,
-            newModel: "glm-5.3-flash")
-        #expect(graded.effort == .low)
-        // Migrated GLM v1/Off entry whose model is edited: adopts the v2
-        // profile; Off is not offered for GLM-5.3-Flash so effort resets.
-        let migrated = ConfigurationSheet.modelTransition(
-            provider: "glm", profile: ModelProfileID.glmV1, effort: .off,
-            existingModel: "glm-4.7-flash", existingProfile: ModelProfileID.glmV1,
-            newModel: "glm-5.3-flash")
-        #expect(migrated.profile == ModelProfileID.glmV2)
-        #expect(migrated.effort == .auto)
-        // A transient edit that returns to the original model restores the
-        // migrated entry's legacy profile and effective effort (even after
-        // an intermediate change had already upgraded to v2).
-        let restored = ConfigurationSheet.modelTransition(
-            provider: "glm", profile: ModelProfileID.glmV2, effort: .auto,
-            existingModel: "glm-4.7-flash", existingProfile: ModelProfileID.glmV1,
-            newModel: "glm-4.7-flash")
-        #expect(restored.profile == ModelProfileID.glmV1)
-        #expect(restored.effort == .off)
-        // A new entry (no existing record) never upgrades its profile.
-        let fresh = ConfigurationSheet.modelTransition(
-            provider: "openai", profile: ModelProfileID.openaiV2, effort: .low,
-            existingModel: nil, existingProfile: nil, newModel: "gpt-4.1-mini-2025-04-14")
-        #expect(fresh.profile == ModelProfileID.openaiV2)
-        #expect(fresh.effort == .auto)
-    }
-
     // MARK: - Runtime fixtures shared by the dispatch-level findings
 
     @MainActor
     private func preparedApp(gateway: ScriptedGateway = ScriptedGateway()) -> (AppRuntime, FaultCredentials, UserDefaults) {
         let keys = FaultCredentials(), defs = UserDefaults(suiteName: "dev.bipara.test.\(UUID())")!
+        LegacyModelFixture.install(defs)
         let app = AppRuntime(gateway: gateway, keychain: keys, defaults: defs)
         for configuration in app.settings.record.modelConfigurations { keys.keys[configuration.id] = "SYNTHETIC_TEST_CREDENTIAL" }
         // No disclosure presets: consent tests exercise the real flow.

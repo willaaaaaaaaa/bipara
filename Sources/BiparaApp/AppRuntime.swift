@@ -171,8 +171,9 @@ public final class AppRuntime: ObservableObject {
                     sourceLanguage: direction.0, targetLanguage: direction.1,
                     provider: configuration.provider, model: configuration.modelID,
                     profile: configuration.profile, effort: configuration.effort,
-                    translationPromptVersion: WorkerContract.currentTranslationPromptVersion, alignmentPromptVersion: "alignment.v1")
-                binding = RuntimeModelBinding(configurationID: configuration.id, baseURL: configuration.baseURL, provider: configuration.provider)
+                    translationPromptVersion: WorkerContract.currentTranslationPromptVersion, alignmentPromptVersion: "alignment.v1",
+                    configurationRevision: configuration.revision)
+                binding = configuration.runtimeBinding
             } else {
                 guard let retained else { return }
                 snapshot = retained
@@ -205,7 +206,7 @@ public final class AppRuntime: ObservableObject {
             }
             catch { report(error, fallback: "Translation stopped. Check the model settings and retry."); return }
 
-            guard await consent(provider: frozen.provider, origin: CanonicalBaseURL.origin(of: frozen.baseURL)) else { return }
+            guard await consent(provider: frozen.provider, origin: CanonicalBaseURL.origin(of: frozen.requestOptions?.endpointURL ?? frozen.baseURL)) else { return }
             try Task.checkCancellation()
             if replacement {
                 guard await alert("Replace existing translations?", detail: "Retranslating clears the current translations and correspondence.", buttons: ["Retranslate","Cancel"]) == 0 else { return }
@@ -307,7 +308,8 @@ public final class AppRuntime: ObservableObject {
               current.modelID == presented.modelID,
               current.profile == presented.profile,
               current.effort == presented.effort,
-              current.baseURL == presented.baseURL else { return nil }
+              current.baseURL == presented.baseURL, current.requestOptions == presented.requestOptions,
+              current.revision == presented.revision else { return nil }
         return current
     }
 
@@ -343,8 +345,8 @@ public final class AppRuntime: ObservableObject {
         guard let i = workspace.index(of: request.session) else { return }
         // Explicit rebinding clears cached model analysis for the session.
         if workspace.tabs[i].runtimeBinding != nil { cache[request.session] = nil }
-        workspace.withTab(i) { $0.runtimeBinding = RuntimeModelBinding(configurationID: configurationID, baseURL: configuration.baseURL, provider: configuration.provider) }
-        Task { await translate(request.session, overrideBinding: RuntimeModelBinding(configurationID: configurationID, baseURL: configuration.baseURL, provider: configuration.provider)) }
+        workspace.withTab(i) { $0.runtimeBinding = configuration.runtimeBinding }
+        Task { await translate(request.session, overrideBinding: configuration.runtimeBinding) }
     }
 
     /// Applies an explicit binding for phrase analysis of an existing
@@ -362,7 +364,7 @@ public final class AppRuntime: ObservableObject {
         guard let i = workspace.index(of: request.session),
               workspace.tabs[i].document.jobSnapshot == request.snapshot else { return }
         if workspace.tabs[i].runtimeBinding != nil { cache[request.session] = nil }
-        workspace.withTab(i) { $0.runtimeBinding = RuntimeModelBinding(configurationID: configurationID, baseURL: configuration.baseURL, provider: configuration.provider) }
+        workspace.withTab(i) { $0.runtimeBinding = configuration.runtimeBinding }
         // Re-run the pending selection analysis under the new binding;
         // the re-entered schedule advances the selection owner so any
         // pre-binding analysis task can no longer commit.
@@ -495,6 +497,7 @@ public final class AppRuntime: ObservableObject {
         if action == 1 { settings.cancelDraft(); return true }
         if action == 0 {
             do { try settings.saveDraft(); return true }
+            catch SettingsStore.SettingsError.invalidField { errorMessage = "Some settings are invalid. Check the model and reading settings, then save again." }
             catch { errorMessage = "Settings could not be saved. Previous values were restored where possible." }
         }
         return false
@@ -585,22 +588,22 @@ public final class AppRuntime: ObservableObject {
                     // it, with the key resolved in the Settings transaction
                     // boundary immediately before dispatch (N5).
                     guard let configuration = settings.configuration(binding.configurationID),
-                          configuration.baseURL == binding.baseURL, configuration.provider == binding.provider,
-                          await consent(provider:configuration.provider, origin:CanonicalBaseURL.origin(of:binding.baseURL)) else { return }
+                          configuration.credentialIdentity == binding.credentialIdentity,
+                          await consent(provider:configuration.provider, origin:CanonicalBaseURL.origin(of:binding.requestOptions?.endpointURL ?? binding.baseURL)) else { return }
                     try Task.checkCancellation()
                     guard let postConsent = workspace.index(of:session), workspace.tabs[postConsent].document.sourceRevision == revision,
                           reading[session]?.selectionGeneration == generation,
                           workspace.tabs[postConsent].document.translations.first(where:{$0.unitID==unit}) == translated else { return }
-                    let keyValue: String
-                    do { keyValue = try settings.resolveCredential(binding) }
+                    let credentials: ModelCredentials
+                    do { credentials = try ModelCredentials.decode(settings.resolveCredential(binding)) }
                     catch { return } // deleted/changed endpoint during consent: retain the fallback, zero calls
                     reading[session]?.analyzing = true
                     let before = (readingText as NSString).substring(to:selection.range.location)
                     let after = (readingText as NSString).substring(from:selection.range.end!)
                     let result = try await gateway.alignSelection(.init(readingText:readingText,counterpartText:counterpart,before:before,selectedText:selectedText,after:after),
                         configuration:.init(provider:snapshot.provider,model:snapshot.model,profile:snapshot.profile,
-                                           baseURL:binding.baseURL,effort:snapshot.effort,apiKey:keyValue,
-                                           configurationID:binding.configurationID))
+                                           baseURL:binding.baseURL,effort:snapshot.effort,apiKey:credentials.apiKey,
+                                           configurationID:binding.configurationID, requestOptions: binding.requestOptions, secretHeaders: credentials.headers))
                     try Task.checkCancellation()
                     guard let current = workspace.index(of:session), workspace.tabs[current].document.sourceRevision == revision,
                           reading[session]?.selectionGeneration == generation,

@@ -50,25 +50,21 @@ public struct ReadingTypography: Codable, Sendable, Equatable {
     }
 }
 
-/// Fresh-install seeding retains the two existing baseline models with
-/// separate IDs and no credentials; new configurations use v2 profiles.
+/// Fresh installs use the same open protocol as Add. Existing persisted
+/// configurations are never reseeded or silently converted.
 public func defaultModelConfigurations() -> [ModelConfigurationRecord] {
-    [
+    [ModelVendor.openai, .glm].map { vendor in
         ModelConfigurationRecord(
-            displayName: "OpenAI",
+            displayName: vendor.name,
             provider: "openai",
-            profile: ModelProfileID.openaiV2,
-            modelID: WorkerContract.defaultModels["openai"]!,
-            effort: .auto,
-            baseURL: WorkerContract.openAIStandardBaseURL),
-        ModelConfigurationRecord(
-            displayName: "GLM",
-            provider: "glm",
-            profile: ModelProfileID.glmV2,
-            modelID: WorkerContract.defaultModels["glm"]!,
-            effort: .off,
-            baseURL: WorkerContract.glmStandardBaseURL),
-    ]
+            profile: ModelAPIProtocol.openai.profile,
+            modelID: vendor.models[0],
+            effort: .low,
+            baseURL: vendor.baseURL,
+            vendorLabel: vendor.name,
+            requestOptions: ModelRequestOptions(),
+            revision: UUID())
+    }
 }
 
 /// The single versioned preferences record persisted in UserDefaults
@@ -337,14 +333,25 @@ public final class SettingsStore: ObservableObject {
             throw SettingsError.invalidField("stored preferences record")
         }
         try Self.validate(draft)
+        // Public callers can edit a draft without using the sheet. Keep the
+        // portable binding revision tied to every effective request change.
+        for index in draft.modelConfigurations.indices {
+            let updated = draft.modelConfigurations[index]
+            if updated.requestOptions != nil, let original = record.configuration(id: updated.id) {
+                if updated.hasSameRequest(as: original) {
+                    draft.modelConfigurations[index].revision = original.revision
+                } else if updated.revision == original.revision {
+                    draft.modelConfigurations[index].revision = UUID()
+                }
+            }
+        }
         var changes: [UUID: KeychainStore.KeychainChange] = [:]
         for (id, intent) in keyDrafts {
             switch intent {
             case .set(let key): changes[id] = .set(key)
             case .delete: changes[id] = .delete
             case .clearForEndpointChange:
-                if record.configuration(id: id)?.baseURL != draft.configuration(id: id)?.baseURL
-                    || record.configuration(id: id)?.provider != draft.configuration(id: id)?.provider {
+                if record.configuration(id: id)?.credentialIdentity != draft.configuration(id: id)?.credentialIdentity {
                     changes[id] = .delete
                 }
             }
@@ -364,7 +371,7 @@ public final class SettingsStore: ObservableObject {
         // editor cannot make the old key travel to the new endpoint.
         for configuration in draft.modelConfigurations {
             guard let committed = record.configuration(id: configuration.id),
-                  committed.baseURL != configuration.baseURL || committed.provider != configuration.provider else { continue }
+                  committed.credentialIdentity != configuration.credentialIdentity else { continue }
             if case .set = changes[configuration.id] {} else {
                 changes[configuration.id] = .delete
             }
@@ -413,10 +420,11 @@ public final class SettingsStore: ObservableObject {
         guard let configuration = record.configuration(id: binding.configurationID) else {
             throw SettingsError.configurationUnavailable
         }
-        guard configuration.baseURL == binding.baseURL, configuration.provider == binding.provider else {
+        guard configuration.credentialIdentity == binding.credentialIdentity else {
             throw SettingsError.configurationUnavailable
         }
         guard let keychain else { throw SettingsError.keychainFailure(underlying: "unavailable") }
+        if binding.requestOptions?.authentication == ModelAuthentication.none, !keychain.hasKey(configurationID: binding.configurationID) { return "" }
         guard let key = try keychain.credential(configurationID: binding.configurationID),
               !key.isEmpty, key.utf8.count <= 4096 else {
             throw SettingsError.missingCredential
@@ -429,6 +437,7 @@ public final class SettingsStore: ObservableObject {
         record.modelConfigurations.filter {
             $0.provider == snapshot.provider && $0.modelID == snapshot.model
                 && $0.profile == snapshot.profile && $0.effort == snapshot.effort
+                && $0.revision == snapshot.configurationRevision
         }
     }
 
@@ -453,10 +462,7 @@ public final class SettingsStore: ObservableObject {
         }
         var seenNameEffort = Set<String>()
         for configuration in draft.modelConfigurations {
-            guard WorkerContract.providers.contains(configuration.provider) else {
-                throw SettingsError.invalidField("provider")
-            }
-            guard WorkerContract.profilesByProvider[configuration.provider]?.contains(configuration.profile) == true else {
+            guard WorkerContract.accepts(provider: configuration.provider, profile: configuration.profile) else {
                 throw SettingsError.invalidField("profile")
             }
             let modelID = configuration.modelID
@@ -477,7 +483,18 @@ public final class SettingsStore: ObservableObject {
             guard case .success = CanonicalBaseURL.canonicalize(configuration.baseURL) else {
                 throw SettingsError.invalidField("API Base URL")
             }
-            if let legacyEffort = WorkerContract.legacyEffort(profile: configuration.profile) {
+            if let api = ModelAPIProtocol.from(profile: configuration.profile) {
+                guard let options = configuration.requestOptions, configuration.revision != nil,
+                      ModelEffort.editable.contains(configuration.effort) else { throw SettingsError.invalidField("model configuration") }
+                if let vendor = configuration.vendorLabel {
+                    guard !vendor.isEmpty, vendor.count <= 128, !vendor.contains(where: { $0.isNewline }) else {
+                        throw SettingsError.invalidField("vendor label")
+                    }
+                }
+                try options.validate(protocol: api)
+            } else if configuration.requestOptions != nil || configuration.revision != nil {
+                throw SettingsError.invalidField("profile options")
+            } else if let legacyEffort = WorkerContract.legacyEffort(profile: configuration.profile) {
                 guard configuration.baseURL == WorkerContract.legacyStandardBaseURL(provider: configuration.provider),
                       configuration.effort == legacyEffort else {
                     throw SettingsError.invalidField("legacy profile connection")
