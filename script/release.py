@@ -19,6 +19,8 @@ if sys.version_info < (3, 12):
     raise SystemExit("release: Python 3.12 or newer is required")
 TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 REQUIRED_CHECKS = ("clean-install", "upgrade", "minimum-os")
+MINIMUM_MACOS = (14, 0, 0)
+MACH_O_MAGIC = {b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf"}
 
 
 class ReleaseError(Exception):
@@ -108,6 +110,17 @@ def run_logged(args: list[str], env: dict, log: Path) -> None:
         raise ReleaseError(f"{Path(args[0]).name}: build failed; inspect ignored release logs")
 
 
+def verify_minimum_macos(path: Path) -> None:
+    with path.open("rb") as stream:
+        if stream.read(4) not in MACH_O_MAGIC:
+            return
+    build = command("xcrun", "vtool", "-arch", "arm64", "-show-build", str(path))
+    targets = re.findall(r"^\s+minos\s+(\d+(?:\.\d+){1,2})$", build, re.M)
+    targets += re.findall(r"cmd LC_VERSION_MIN_MACOSX\s+cmdsize \d+\s+version (\d+(?:\.\d+){1,2})", build)
+    if not targets or any(tuple(map(int, target.split("."))) > MINIMUM_MACOS for target in targets):
+        raise ReleaseError(f"binary deployment target exceeds macOS 14.0 or is missing: {path.name}")
+
+
 def verify_bundle(app: Path) -> None:
     helper = app / "Contents/Helpers/BiparaWorker.app"
     if not (helper / "Contents/MacOS/BiparaWorker").is_file():
@@ -127,6 +140,8 @@ def verify_bundle(app: Path) -> None:
             public_ca = b"-----BEGIN CERTIFICATE-----" in certificate and b"PRIVATE KEY" not in certificate
         if any(part in {".local", ".scratch", ".git", "secrets"} for part in path.relative_to(app).parts) or path.suffix in {".p12", ".p8", ".key", ".log"} or (path.suffix == ".pem" and not public_ca):
             raise ReleaseError("private material found in the application bundle")
+        if not path.is_symlink() and path.is_file():
+            verify_minimum_macos(path)
     with tempfile.TemporaryDirectory(prefix="bipara-helper-smoke-") as home:
         result = subprocess.run([str(helper / "Contents/MacOS/BiparaWorker")],
                                 input='{"v":2,"type":"hello"}\n{"v":2,"type":"shutdown"}\n',
@@ -212,7 +227,7 @@ def build_release(tag: str) -> None:
     manifest = {"schema": 2, "tag": tag, "commit": commit, "version": app_version, "build": build_number,
                 "distribution": mode, "runtime_manifest_sha256": digest(ROOT / "licenses/python-runtime/manifest.json"),
                 "architecture": "arm64", "xcode": command("xcodebuild", "-version"),
-                "python": command("uv", "run", "--project", "Worker", "--frozen", "python", "--version", env=env),
+                "python": command("uv", "run", "--project", "Worker", "--no-sync", "python", "--version", env=env),
                 "lock_sha256": digest(ROOT / "Worker/uv.lock"),
                 "prompt_sha256": {p.name: digest(p) for p in sorted((ROOT / "prompts").glob("*.txt"))},
                 "dmg_sha256": digest(dmg)}

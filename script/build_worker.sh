@@ -9,6 +9,7 @@ cd "$ROOT"
 
 RELEASE_APP="build/worker/BiparaWorker.app"
 FIXTURE_APP="build/worker-fixture/BiparaWorkerFixture.app"
+SYNC_TARGET=()
 
 # Optional local run environment (e.g. DEVELOPER_DIR); ignored if absent.
 # shellcheck disable=SC1091
@@ -17,6 +18,9 @@ if [ "${BIPARA_RELEASE_BUILD:-0}" != 1 ]; then
 else
   UV_PYTHON="$(python3 script/prepare_release_runtime.py)" || exit 1
   export UV_PYTHON UV_PYTHON_DOWNLOADS=never UV_PYTHON_PREFERENCE=only-system
+  # A newer build host can otherwise select wheels that require a newer OS.
+  export MACOSX_DEPLOYMENT_TARGET=14.0
+  SYNC_TARGET=(--python-platform aarch64-apple-darwin)
 fi
 case "${1:-}" in ''|--release-only) ;; *) echo 'usage: build_worker.sh [--release-only]' >&2; exit 1 ;; esac
 
@@ -33,14 +37,14 @@ fail() {
 export PYINSTALLER_CONFIG_DIR="$ROOT/build/pyinstaller-cache"
 
 echo "==> Syncing locked worker environment"
-uv sync --project Worker --frozen --group dev
+uv sync --project Worker --frozen --group dev "${SYNC_TARGET[@]}"
 
 echo "==> Recording dependency notices"
-uv run --project Worker --frozen python script/generate_notices.py --out build/third-party
+uv run --project Worker --no-sync python script/generate_notices.py --out build/third-party
 
 echo "==> Building release worker bundle"
 rm -rf build/worker build/pyinstaller-work
-uv run --project Worker --frozen pyinstaller \
+uv run --project Worker --no-sync pyinstaller \
   --clean \
   --distpath build/worker \
   --workpath build/pyinstaller-work \
@@ -50,7 +54,7 @@ uv run --project Worker --frozen pyinstaller \
 echo "==> Building test fixture worker bundle"
 if [ "${1:-}" != --release-only ]; then
 rm -rf build/worker-fixture build/pyinstaller-fixture-work
-uv run --project Worker --frozen pyinstaller \
+uv run --project Worker --no-sync pyinstaller \
   --clean \
   --distpath build/worker-fixture \
   --workpath build/pyinstaller-fixture-work \

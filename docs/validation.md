@@ -2,6 +2,12 @@
 
 Bipara is an experimental source preview. Default development checks do not qualify a public installer, real-provider behavior or the complete native UI.
 
+## First release candidate
+
+On 2026-11-10 (UTC+8), the open-model and native-reading candidate passed the formal-runtime offline check in an isolated arm64 checkout on macOS 27.0.1 with Xcode 27.2. The run covered 41 tooling tests, 282 Swift tests, 343 Python tests, both worker bundles and the native Debug build. The source-input manifest was `d07d36647cc5dff4dc2d904f86658515564820d9ae2fc3e9716bdadeeab00238`. The maintainer reported testing the basic app workflows. The independent native suite passed the typed-key Save case before the run was stopped. It did not complete the full suite. No live-provider requests were made.
+
+Packaging inspection found that host-targeted wheel selection bundled an `orjson` binary requiring macOS 15.0. After targeting macOS 14.0 in the formal worker build, the same locked version selected the arm64 slice with minimum macOS 11.0. The rebuilt local DMG passed mounting and nested signature verification. The Release app also passed the binary deployment-target check, canonical asset checks and the bundled helper handshake and shutdown. The packaging-fix source-input manifest is `b9b1bc512ccb568d2303dd183e2c121504e5a40ee545b2db64e0461291528f96`. The local DMG remains a development artifact. Release installation, upgrade and minimum-OS checks require the exact hosted draft DMG.
+
 ## Custom model editor self-check
 
 The current editor Save fix passed 46 targeted tests across the three suites below and a native Debug app build on 2026-11-10 (UTC+8), with 164-input manifest SHA-256 `5f0353675157694b5e3488435389f88b2d740895184d8cee59db5373168440c6`. A new regression first reproduced `invalidField("model configuration")` for both protocols: new custom records omitted the removed vendor field while Save still required it. The fix accepts absent labels, validates retained labels when present, and distinguishes field-validation errors from credential failures. Regressions verify Save/reload, active selection, synthetic-key retention and rejection before credential writes. No production settings or credentials were changed, and the running app was not restarted. Native UI acceptance remains unrun.
@@ -16,7 +22,7 @@ On 2026-11-09 (UTC+8), the uncommitted working tree passed `script/check.sh` on 
 
 Thirteen targeted native XCTest cases passed across scoped runs, covering model CRUD/preset selection, arbitrary vendor/model IDs, both protocols, the four efforts, explicit legacy conversion, credential edits and endpoint restoration, advanced-field numeric validation/persistence, and the translation/settings smoke flow. Inspected English/light and Chinese/dark collapsed-editor screenshots and the expanded advanced form. The native fixture uses synthetic in-memory credentials and a deterministic gateway. HTTP mock tests additionally capture actual Responses/Messages bodies for both operations and all four efforts, while packaged Swift/Python integration verifies the extended pipe contract. No real-provider calls were made.
 
-A focused code self-review resolved fresh-install defaults, request-revision restoration, numeric-input handling, canceled secret-header drafts, malformed option/header validation and distinct advanced-field accessibility identifiers. Local links, public-content/Gitleaks checks, the relative `CLAUDE.md` link and Git whitespace passed. Raw logs, screenshots, source manifests and review notes remain private. This evidence does not qualify arbitrary third-party endpoints, provider semantics/latency/cost, or an installer; the changes have not been committed or published.
+A focused code self-review resolved fresh-install defaults, request-revision restoration, numeric-input handling, canceled secret-header drafts, malformed option/header validation and distinct advanced-field accessibility identifiers. Local links, public-content/Gitleaks checks, the relative `CLAUDE.md` link and Git whitespace passed. Raw logs, screenshots, source manifests and review notes remain private. This historical evidence does not qualify arbitrary third-party endpoints, provider semantics/latency/cost, or an installer.
 
 ## Tested source and reproduction
 
