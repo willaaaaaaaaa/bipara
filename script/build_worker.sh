@@ -9,7 +9,7 @@ cd "$ROOT"
 
 RELEASE_APP="build/worker/BiparaWorker.app"
 FIXTURE_APP="build/worker-fixture/BiparaWorkerFixture.app"
-SYNC_TARGET=()
+SYNC_OPTIONS=(--frozen --group dev)
 
 # Optional local run environment (e.g. DEVELOPER_DIR); ignored if absent.
 # shellcheck disable=SC1091
@@ -20,7 +20,7 @@ else
   export UV_PYTHON UV_PYTHON_DOWNLOADS=never UV_PYTHON_PREFERENCE=only-system
   # A newer build host can otherwise select wheels that require a newer OS.
   export MACOSX_DEPLOYMENT_TARGET=14.0
-  SYNC_TARGET=(--python-platform aarch64-apple-darwin)
+  SYNC_OPTIONS+=(--python-platform aarch64-apple-darwin)
 fi
 case "${1:-}" in ''|--release-only) ;; *) echo 'usage: build_worker.sh [--release-only]' >&2; exit 1 ;; esac
 
@@ -37,7 +37,7 @@ fail() {
 export PYINSTALLER_CONFIG_DIR="$ROOT/build/pyinstaller-cache"
 
 echo "==> Syncing locked worker environment"
-uv sync --project Worker --frozen --group dev "${SYNC_TARGET[@]}"
+uv sync --project Worker "${SYNC_OPTIONS[@]}"
 
 echo "==> Recording dependency notices"
 uv run --project Worker --no-sync python script/generate_notices.py --out build/third-party

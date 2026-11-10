@@ -8,6 +8,8 @@ On 2026-11-10 (UTC+8), the open-model and native-reading candidate passed the fo
 
 Packaging inspection found that host-targeted wheel selection bundled an `orjson` binary requiring macOS 15.0. After targeting macOS 14.0 in the formal worker build, the same locked version selected the arm64 slice with minimum macOS 11.0. The rebuilt local DMG passed mounting and nested signature verification. The Release app also passed the binary deployment-target check, canonical asset checks and the bundled helper handshake and shutdown. The packaging-fix source-input manifest is `b9b1bc512ccb568d2303dd183e2c121504e5a40ee545b2db64e0461291528f96`. The local DMG remains a development artifact. Release installation, upgrade and minimum-OS checks require the exact hosted draft DMG.
 
+A follow-up verified both development and formal release-only worker builds with macOS Bash 3.2. The formal bundle still selected the macOS 11.0-compatible `orjson` slice.
+
 ## Custom model editor self-check
 
 The current editor Save fix passed 46 targeted tests across the three suites below and a native Debug app build on 2026-11-10 (UTC+8), with 164-input manifest SHA-256 `5f0353675157694b5e3488435389f88b2d740895184d8cee59db5373168440c6`. A new regression first reproduced `invalidField("model configuration")` for both protocols: new custom records omitted the removed vendor field while Save still required it. The fix accepts absent labels, validates retained labels when present, and distinguishes field-validation errors from credential failures. Regressions verify Save/reload, active selection, synthetic-key retention and rejection before credential writes. No production settings or credentials were changed, and the running app was not restarted. Native UI acceptance remains unrun.
