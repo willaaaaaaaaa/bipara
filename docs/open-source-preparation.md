@@ -24,7 +24,7 @@ Issue templates and [support guidance](../SUPPORT.md) provide contributor entry 
 
 | Area | Required result |
 | --- | --- |
-| Product | Document integrity, retained-job configuration safety, native reading/settings/tabs and accessibility acceptance |
+| Product | [App functional acceptance](testing.md#app-functional-acceptance), including document integrity, retained-job configuration safety, reading, tabs and app-owned controls |
 | Providers | Bounded real-provider checks for semantic quality, compatibility, latency and cost |
 | Runtime and licenses | Qualified bundled Python build, verified dependency provenance and complete required notices |
 | Packaging | Version/tag consistency, valid nested code signatures and an explicit tagged distribution policy; initial ad-hoc packages disclose missing Developer ID/notarization |

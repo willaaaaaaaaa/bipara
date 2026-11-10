@@ -18,7 +18,7 @@ import json
 import math
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -46,12 +46,14 @@ ERROR_CODES = (
     "worker_failed",
 )
 
-PROVIDERS = ("openai", "kimi", "glm", "deepseek")
+PROVIDERS = ("openai", "kimi", "glm", "deepseek", "anthropic")
+OPEN_PROFILES = {"openai-responses-v3": "openai", "anthropic-messages-v3": "anthropic"}
 PROFILES_BY_PROVIDER = {
-    "openai": ("openai-json-schema-v1", "openai-json-schema-v2"),
+    "openai": ("openai-json-schema-v1", "openai-json-schema-v2", "openai-responses-v3"),
     "glm": ("glm-json-v1", "glm-json-v2"),
     "kimi": ("kimi-json-v2",),
     "deepseek": ("deepseek-json-v2",),
+    "anthropic": ("anthropic-messages-v3",),
 }
 # A v1 profile accepts only its original Standard API URL and effective
 # effort (OpenAI Auto, GLM Off).
@@ -217,6 +219,7 @@ class Config:
     profile: str
     base_url: str
     effort: str
+    options: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -280,6 +283,7 @@ class Request:
     api_key: str
     prompt_version: str
     input: TranslateInput | AlignInput
+    secret_headers: dict[str, str] = field(default_factory=dict)
 
 
 def _exact_object(value: Any, keys: frozenset[str], what: str) -> dict[str, Any]:
@@ -298,7 +302,7 @@ CONFIG_KEYS = frozenset({"provider", "model", "profile", "base_url", "effort"})
 CREDENTIAL_KEYS = frozenset({"api_key"})
 
 
-def _parse_base_url(raw: Any) -> str:
+def _parse_base_url(raw: Any, *, operation_url: bool = False) -> str:
     """Validate a canonical HTTPS API Base URL.
 
     Agrees with the Swift editor's canonical rules on the wire-relevant
@@ -346,7 +350,7 @@ def _parse_base_url(raw: Any) -> str:
     path = parts.path.lower()
     while len(path) > 1 and path.endswith("/"):
         path = path[:-1]
-    if any(path.endswith(suffix) for suffix in ("/chat/completions", "/responses", "/messages")):
+    if not operation_url and any(path.endswith(suffix) for suffix in ("/chat/completions", "/responses", "/messages")):
         raise RequestError("base_url must not include a full operation path such as /chat/completions")
     return raw
 
@@ -445,7 +449,9 @@ def parse_request(env: Any) -> Request:
         op = env.get("op")
         if op not in ("translate", "align"):
             raise RequestError("op must be translate or align")
-        config_obj = _exact_object(env.get("config"), CONFIG_KEYS, "config")
+        raw_config = env.get("config")
+        is_open = isinstance(raw_config, dict) and raw_config.get("profile") in OPEN_PROFILES
+        config_obj = _exact_object(raw_config, CONFIG_KEYS | {"options"} if is_open else CONFIG_KEYS, "config")
         provider = config_obj["provider"]
         if provider not in PROVIDERS:
             raise RequestError("provider is unsupported")
@@ -466,12 +472,26 @@ def parse_request(env: Any) -> Request:
             # URL and effective effort; custom connections use a v2 profile.
             if base_url != LEGACY_PROFILE_BASE_URL[profile] or effort != LEGACY_PROFILE_EFFORT[profile]:
                 raise RequestError("legacy profile requires its original URL and effort")
-        credentials = _exact_object(env.get("credentials"), CREDENTIAL_KEYS, "credentials")
+        options = None
+        if is_open:
+            from .open_protocol import validate_options
+            if effort not in ("off", "low", "medium", "high"):
+                raise RequestError("open profiles require a four-level effort")
+            options = validate_options(config_obj["options"], provider)
+        credentials = _exact_object(env.get("credentials"), CREDENTIAL_KEYS | {"headers"} if is_open else CREDENTIAL_KEYS, "credentials")
         api_key = credentials["api_key"]
-        if not isinstance(api_key, str) or not api_key or request_utf8_len(api_key, "api_key") > MAX_API_KEY_BYTES:
+        if not isinstance(api_key, str) or (not api_key and not (options and options["authentication"] == "none")) or request_utf8_len(api_key, "api_key") > MAX_API_KEY_BYTES:
             raise RequestError(
                 f"api_key must be a nonempty string of at most {MAX_API_KEY_BYTES} UTF-8 bytes"
             )
+        secret_headers = {}
+        if is_open:
+            if options["authentication"] != "none" and any(not 32 <= ord(c) <= 126 for c in api_key):
+                raise RequestError("invalid authentication header value")
+            from .open_protocol import validate_headers
+            secret_headers = validate_headers(credentials["headers"])
+            if options["authentication"] == "custom" and options["headerName"].lower() in {key.lower() for key in secret_headers}:
+                raise RequestError("duplicate authentication header")
         prompt_version = env.get("prompt_version")
         expected_versions = (
             TRANSLATE_PROMPT_VERSIONS if op == "translate" else (ALIGN_PROMPT_VERSION,)
@@ -493,10 +513,12 @@ def parse_request(env: Any) -> Request:
             profile=profile,
             base_url=base_url,
             effort=effort,
+            options=options,
         ),
         api_key=api_key,
         prompt_version=prompt_version,
         input=parsed_input,
+        secret_headers=secret_headers,
     )
 
 

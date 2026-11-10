@@ -31,7 +31,7 @@ Follow [repository boundaries](docs/repository-boundaries.md) for temporary stor
 
 ## Validation
 
-Run script/check.sh for default offline checks and the native build. Native UI, real-provider and distribution evidence are separate. Follow Tests/README.md for interactive checks. Store detailed execution evidence privately; keep concise current outcomes and limitations in docs/validation.md.
+During routine edits, self-check the diff and use narrowly scoped checks needed to verify the change. Do not automatically start script/check.sh, native UI acceptance, real-provider checks or distribution qualification after editing code. The maintainer initiates and completes acceptance before merge; an agent runs acceptance only when explicitly requested. Follow the trigger rules in docs/testing.md and the commands in Tests/README.md. Required Git hooks and hosted CI still apply. Store detailed execution evidence privately; keep concise current outcomes and limitations in docs/validation.md.
 
 Bind results to their tested source and scope. Distinguish historical evidence, new runs, failures, skipped checks and missing prerequisites. Documentation changes do not establish new product coverage.
 

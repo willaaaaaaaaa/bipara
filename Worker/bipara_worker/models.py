@@ -132,6 +132,8 @@ def check_capability(config: Config) -> None:
     at envelope parsing.
     """
 
+    if config.options is not None:
+        return
     if config.provider == "openai" and _LEGACY_OPENAI_ID.match(config.model):
         raise WorkerError("unsupported_capability")
     if config.profile.endswith("-v2") and config.effort not in efforts_for(
@@ -220,6 +222,10 @@ def _build_model(
     schema: dict[str, Any],
     http_async_client: httpx.AsyncClient | None,
 ) -> BuiltModel:
+    if request.config.options is not None:
+        from .open_protocol import build_model
+        return BuiltModel(model=build_model(request, schema, http_async_client))
+
     from langchain_openai import ChatOpenAI
 
     config = request.config

@@ -85,6 +85,22 @@ final class WorkerInstance: @unchecked Sendable {
 
     /// Serializes the exact translate request envelope. UUIDs are canonical
     /// lowercase; the credential travels only inside the frame.
+    private static func wireConfig(_ configuration: ModelConfiguration) -> [String: Any] {
+        var config: [String: Any] = ["provider": configuration.provider, "model": configuration.model,
+            "profile": configuration.profile, "base_url": configuration.baseURL, "effort": configuration.effort.rawValue]
+        if let options = configuration.requestOptions,
+           let data = try? JSONEncoder().encode(options), let json = try? JSONSerialization.jsonObject(with: data) {
+            config["options"] = json
+        }
+        return config
+    }
+
+    private static func wireCredentials(_ configuration: ModelConfiguration) -> [String: Any] {
+        var credentials: [String: Any] = ["api_key": configuration.apiKey]
+        if configuration.requestOptions != nil { credentials["headers"] = configuration.secretHeaders }
+        return credentials
+    }
+
     func sendTranslate(
         _ request: TranslateBatchRequest,
         configuration: ModelConfiguration,
@@ -95,14 +111,8 @@ final class WorkerInstance: @unchecked Sendable {
             "type": "request",
             "id": requestID,
             "op": "translate",
-            "config": [
-                "provider": configuration.provider,
-                "model": configuration.model,
-                "profile": configuration.profile,
-                "base_url": configuration.baseURL,
-                "effort": configuration.effort.rawValue,
-            ] as [String: Any],
-            "credentials": ["api_key": configuration.apiKey],
+            "config": Self.wireConfig(configuration),
+            "credentials": Self.wireCredentials(configuration),
             "prompt_version": request.promptVersion,
             "input": [
                 "source_language": request.sourceLanguage.rawValue,
@@ -130,14 +140,8 @@ final class WorkerInstance: @unchecked Sendable {
             "type": "request",
             "id": requestID,
             "op": "align",
-            "config": [
-                "provider": configuration.provider,
-                "model": configuration.model,
-                "profile": configuration.profile,
-                "base_url": configuration.baseURL,
-                "effort": configuration.effort.rawValue,
-            ] as [String: Any],
-            "credentials": ["api_key": configuration.apiKey],
+            "config": Self.wireConfig(configuration),
+            "credentials": Self.wireCredentials(configuration),
             "prompt_version": "alignment.v1",
             "input": [
                 "reading_text": request.readingText,

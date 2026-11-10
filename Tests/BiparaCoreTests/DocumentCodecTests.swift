@@ -68,6 +68,28 @@ struct DocumentCodecTests {
         #expect(decoded.layout == .sideBySide)
     }
 
+    @Test func openProtocolAttributionRoundTripsWithoutConnectionDetails() throws {
+        for api in ModelAPIProtocol.allCases {
+            for effort in ModelEffort.editable {
+                var document = try makeDocument()
+                document.jobSnapshot?.provider = api.rawValue
+                document.jobSnapshot?.profile = api.profile
+                document.jobSnapshot?.model = "unknown-model-2027"
+                document.jobSnapshot?.effort = effort
+                document.jobSnapshot?.configurationRevision = UUID()
+                let data = try DocumentCodec.encode(document)
+                #expect(try DocumentCodec.decode(data) == document)
+                let json = String(decoding: data, as: UTF8.self)
+                #expect(json.contains("configuration_revision"))
+                for key in ["baseURL", "base_url", "endpointURL", "apiKey", "credentials", "extraBodyJSON", "requestOptions"] {
+                    #expect(!json.contains(key))
+                }
+                document.jobSnapshot?.configurationRevision = nil
+                #expect(throws: CoreError.self) { try DocumentCodec.decode(DocumentCodec.encode(document)) }
+            }
+        }
+    }
+
     @Test func partialDocumentRoundTripsPausedWork() throws {
         // Multi-paragraph source with only the first paragraph translated.
         let source = "第一段完整句子。\n\n第二段完整句子。\n"

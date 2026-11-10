@@ -6,6 +6,7 @@ import Foundation
 /// thinking where no graded effort exists; `minimal` is the lowest graded
 /// level, offered only for models whose provider documents it.
 public enum ModelEffort: String, Codable, Sendable, CaseIterable, Equatable {
+    public static let editable: [Self] = [.off, .low, .medium, .high]
     case auto
     case off
     case on
@@ -19,9 +20,8 @@ public enum ModelEffort: String, Codable, Sendable, CaseIterable, Equatable {
     public var isExplicit: Bool { self != .auto }
 }
 
-/// Versioned request-profile identifiers. New configurations use v2
-/// profiles; v1 profiles remain compatibility contracts for migrated
-/// configurations and retained jobs.
+/// Versioned request-profile identifiers. V1/v2 profiles remain
+/// compatibility contracts; ModelAPIProtocol owns new configurations.
 public enum ModelProfileID {
     public static let openaiV1 = "openai-json-schema-v1"
     public static let openaiV2 = "openai-json-schema-v2"

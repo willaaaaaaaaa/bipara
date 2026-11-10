@@ -234,7 +234,8 @@ struct AcceptanceRepairTests {
         keys.prepareDefault(app.settings,defaults:defs)
         try app.workspace.newTab(source:String(repeating:"Hello there.\n\n",count:WorkerContract.maxUnitsPerBatch * 4),direction:.enToZh)
         let session=app.workspace.tabs[0].sessionID
-        let defaultID=try #require(app.settings.record.defaultConfiguration?.id)
+        let original=try #require(app.settings.record.defaultConfiguration)
+        let defaultID=original.id
         let job=Task{await app.translate(session)}
         await barrier.started(1)
         // A model edit at the same endpoint does not mutate the running
@@ -259,7 +260,7 @@ struct AcceptanceRepairTests {
         let tab=app.workspace.tabs[0]
         #expect(tab.job.state == .failed)
         #expect(!tab.document.translations.isEmpty)
-        #expect(g.configurations.allSatisfy{$0.model=="gpt-4.1-mini-2025-04-14"})
+        #expect(g.configurations.allSatisfy{$0.model==original.modelID && $0.requestOptions==original.requestOptions})
         #expect(g.configurations.allSatisfy{$0.baseURL==WorkerContract.openAIStandardBaseURL})
         // The frozen binding never retargets to another entry.
         #expect(tab.runtimeBinding?.configurationID == defaultID)
@@ -274,9 +275,10 @@ struct AcceptanceRepairTests {
         let session=app.workspace.tabs[0].sessionID
         // Simulate an opened file: a paused partial job with a snapshot
         // but no session-local runtime binding.
+        let current=try #require(app.settings.record.defaultConfiguration)
         let openedSnapshot=JobSnapshot(jobID:UUID(),sourceRevision:1,sourceLanguage:.en,targetLanguage:.zh,
-            provider:"openai",model:"gpt-4.1-mini-2025-04-14",profile:ModelProfileID.openaiV2,effort:.auto,
-            translationPromptVersion:"translation.v1",alignmentPromptVersion:"alignment.v1")
+            provider:current.provider,model:current.modelID,profile:current.profile,effort:current.effort,
+            translationPromptVersion:"translation.v1",alignmentPromptVersion:"alignment.v1",configurationRevision:current.revision)
         let firstUnit=app.workspace.tabs[0].document.units[0]
         app.workspace.withTab(0){
             $0.document.jobSnapshot=openedSnapshot
@@ -302,7 +304,7 @@ struct AcceptanceRepairTests {
         app.bindAndResume(request,configurationID:match.id)
         try await appWaitUntil{app.workspace.tabs[0].job.state == .completed}
         #expect(g.dispatchCount == 1)
-        #expect(g.configurations.allSatisfy{$0.baseURL==WorkerContract.openAIStandardBaseURL && $0.effort == .auto})
+        #expect(g.configurations.allSatisfy{$0.baseURL==WorkerContract.openAIStandardBaseURL && $0.effort == current.effort})
         #expect(app.workspace.tabs[0].runtimeBinding?.configurationID == match.id)
     }
 

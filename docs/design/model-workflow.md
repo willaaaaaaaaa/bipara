@@ -4,7 +4,7 @@ Numeric limits are engineering bounds and evaluation targets. Use named constant
 
 Batch planning is bounded to 64 units / 8,192 UTF-8 bytes / 32 KiB serialized input. One document session may hold up to two concurrent translation batches inside four global concurrent model operations. The v2 plain output caps are 8,192/2,048 tokens; both legacy profiles keep 4096/1024. These limits bound local admission and provider work; they do not guarantee provider latency.
 
-New model configurations follow the [model configuration design](model-settings.md). V2 profiles add explicit Base URLs and model-specific effort; v1 profiles below remain compatibility contracts for migrated configurations and retained jobs. See the [validation report](../validation.md) for implementation and provider acceptance evidence.
+New model configurations follow the [model configuration design](model-settings.md). Open profiles fix OpenAI to Responses and Anthropic to Messages with user-selected options. V1/v2 profiles below remain compatibility contracts for saved configurations and retained jobs. See the [validation report](../validation.md) for implementation and provider acceptance evidence.
 
 New jobs use `translation.v2`; retained jobs keep `translation.v1`, including Retry/Resume. The translation output schema and `alignment.v1` remain unchanged. Dispatch verifies prompt attribution. See [prompts](../../prompts/README.md) and [acceptance](../testing.md#translation-prompt-v2). The same-response check adds no model request or repair loop. Offline evidence does not establish provider quality.
 
@@ -13,6 +13,12 @@ New jobs use `translation.v2`; retained jobs keep `translation.v1`, including Re
 Use CPython 3.13 and the frozen dependency environment in [Worker/uv.lock](../../Worker/uv.lock). Direct runtime and development dependencies are declared in [Worker/pyproject.toml](../../Worker/pyproject.toml); PyInstaller bundles the production worker and separate test fixture. Resolve dependency changes through the normal lockfile and integration checks. Dependency conflicts require design review before changing the runtime architecture. See [validation status](../validation.md) for executed packaging and test evidence.
 
 Use LangChain's prompt/message composition and asynchronous model invocation. Explicit provider profiles encapsulate request differences, accepting the explicit configuration URL/profile/effort rather than global hardcoded endpoints. Install only the named modules; there is no need for a general agent executor, tool registry, LangSmith account, `langchain-community`, or an explicitly authored LangGraph workflow. [LangChain's OpenAI integration](https://docs.langchain.com/oss/python/integrations/chat/openai) provides the selected `ChatOpenAI` adapter; its presence is a library choice, not proof of GLM feature parity.
+
+### Open protocol profiles
+
+`openai-responses-v3` and `anthropic-messages-v3` use a narrow LangChain `BaseChatModel` adapter over the existing httpx client. No new dependency or secondary orchestration path is introduced. The adapter serializes Responses `input` or Messages `system` plus `messages` explicitly; it never infers an API from the model name. The same canonical system asset and serialized user input are used, with no tools, history, streaming, retries or redirects. OpenAI sets `store: false`.
+
+All four efforts are admitted for arbitrary model IDs. Exact option precedence and default reasoning mappings are owned by [model configuration](model-settings.md#open-configuration-contract). Native output format is explicit and local canonical validation always runs. Parse only final assistant text; ignore reasoning blocks, reject tools/refusal/malformed blocks, and treat truncation as `output_limit`. Bound the raw response to 2 MiB before strict JSON parsing; retain the existing 128 KiB decoded-content cap, 120-second invocation deadline and cancellation behavior. Provider compatibility is user-selected and real-provider acceptance is separate from captured offline requests.
 
 ### Legacy v1 profiles
 

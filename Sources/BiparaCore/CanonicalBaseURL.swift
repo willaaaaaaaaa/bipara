@@ -26,7 +26,7 @@ public enum CanonicalBaseURL {
     static let operationSuffixes = ["/chat/completions", "/responses", "/messages"]
 
     /// Returns the canonical form, or the precise rejection reason.
-    public static func canonicalize(_ raw: String) -> Result<String, ValidationError> {
+    public static func canonicalize(_ raw: String, operationURL: Bool = false) -> Result<String, ValidationError> {
         guard !raw.isEmpty else { return .failure(.empty) }
         guard raw.utf8.count <= maxUTF8Bytes else { return .failure(.tooManyBytes) }
         guard !raw.unicodeScalars.contains(where: { $0.properties.isWhitespace || $0.value < 0x20 || $0.value == 0x7F }) else {
@@ -66,7 +66,7 @@ public enum CanonicalBaseURL {
         while pathForSuffixCheck.count > 1, pathForSuffixCheck.hasSuffix("/") {
             pathForSuffixCheck = String(pathForSuffixCheck.dropLast())
         }
-        guard !operationSuffixes.contains(where: { pathForSuffixCheck.lowercased().hasSuffix($0) }) else {
+        guard operationURL || !operationSuffixes.contains(where: { pathForSuffixCheck.lowercased().hasSuffix($0) }) else {
             return .failure(.operationSuffix)
         }
         var canonical = "https://\(host)"
@@ -81,7 +81,7 @@ public enum CanonicalBaseURL {
         while path.count > 1, path.hasSuffix("/") { path = String(path.dropLast()) }
         if path == "/" { path = "" }
         if !path.isEmpty, !path.hasPrefix("/") { path = "/" + path }
-        canonical += path.isEmpty ? "/" : path + "/"
+        canonical += operationURL ? (encodedPath.isEmpty ? "/" : encodedPath) : (path.isEmpty ? "/" : path + "/")
         return .success(canonical)
     }
 

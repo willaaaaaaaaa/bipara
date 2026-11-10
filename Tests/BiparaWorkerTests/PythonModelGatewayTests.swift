@@ -100,6 +100,29 @@ struct PythonModelGatewayTests {
         #expect(matches[0].occurrence == 1)
     }
 
+    @Test(arguments: ModelAPIProtocol.allCases, ModelEffort.editable)
+    func openProtocolsCrossThePackagedPipe(api: ModelAPIProtocol, effort: ModelEffort) async throws {
+        guard skipUnlessFixtureBuilt() else { Issue.record("fixture bundle not built"); return }
+        let gateway = PythonModelGateway(executableURL: Self.fixtureExecutable)
+        var options = ModelRequestOptions()
+        options.authentication = ModelAuthentication.none
+        options.endpointURL = "https://gateway.example.com/invoke"
+        options.extraBodyJSON = "{\"thinking\":{\"type\":\"disabled\"}}"
+        let configuration = ModelConfiguration(provider: api.rawValue, model: "unknown-model-2027", profile: api.profile,
+            baseURL: "https://gateway.example.com/api/", effort: effort, apiKey: "",
+            requestOptions: options, secretHeaders: ["X-Tenant": "synthetic-tenant"])
+        do {
+            let translated = try await gateway.translateBatch(Self.t01Request, configuration: configuration)
+            #expect(translated.meta.provider == api.rawValue)
+            #expect(translated.meta.requestedEffort == effort)
+            #expect(translated.translations.first?.unitID == Self.t01Request.units.first?.unitID)
+            let aligned = try await gateway.alignSelection(Self.a01Request, configuration: configuration)
+            #expect(aligned.meta.requestedModel == "unknown-model-2027")
+            #expect(aligned.meta.requestedEffort == effort)
+        } catch { await gateway.shutdown(); throw error }
+        await gateway.shutdown()
+    }
+
     @Test func secondOperationReusesTheSameWorker() async throws {
         guard skipUnlessFixtureBuilt() else {
             Issue.record("fixture bundle not built; run script/build_worker.sh")

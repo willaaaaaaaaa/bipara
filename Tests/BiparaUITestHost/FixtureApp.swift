@@ -57,9 +57,19 @@ actor FixtureGateway:ModelGateway {
             ] : []
         )
         let value = AppRuntime(gateway: gateway, keychain: keys, defaults: defaults)
+        if args.contains("--legacy-models") {
+            value.settings.updateDraft { draft in
+                draft.modelConfigurations = [ModelConfigurationRecord(displayName: "OpenAI", provider: "openai",
+                    profile: ModelProfileID.openaiV2, modelID: "gpt-4.1-mini-2025-04-14", effort: .auto,
+                    baseURL: WorkerContract.openAIStandardBaseURL)]
+                draft.defaultModelConfigurationID = draft.modelConfigurations.first?.id
+            }
+            try! value.settings.saveDraft()
+        }
         if let id=value.settings.record.defaultConfiguration?.id{keys.keys[id]="SYNTHETIC_UI_FIXTURE"}
         for configuration in value.settings.record.modelConfigurations{keys.keys[configuration.id]="SYNTHETIC_UI_FIXTURE"}
         defaults.set(true,forKey:"dev.bipara.disclosure.openai|https://api.openai.com")
+        defaults.set(true,forKey:"dev.bipara.disclosure.openai|https://open.bigmodel.cn")
         defaults.set(true,forKey:"dev.bipara.disclosure.glm|https://open.bigmodel.cn")
         func argument(_ key:String)->String?{guard let i=args.firstIndex(of:key),i+1<args.count else{return nil};return args[i+1]}
         value.settings.updateDraft{
@@ -91,14 +101,14 @@ actor FixtureGateway:ModelGateway {
                 tab.document.title="Reading notes";tab.automaticTitle=false
                 let snapshot=JobSnapshot(jobID:UUID(),sourceRevision:tab.document.sourceRevision,sourceLanguage:.en,targetLanguage:.zh,
                     provider:configuration.provider,model:configuration.modelID,profile:configuration.profile,effort:configuration.effort,
-                    translationPromptVersion:"translation.v1",alignmentPromptVersion:"alignment.v1")
+                    translationPromptVersion:"translation.v1",alignmentPromptVersion:"alignment.v1",configurationRevision:configuration.revision)
                 let translations=["好的翻译既保留含义，也保留行文节奏。", "即使两种语言使用不同的句式，每一段仍属于同一份文档。", "更宽的阅读区域能让长文舒展一些。", "文字保持舒适的字号，原文与译文也依然方便对照。", "后续内容翻译期间，已完成的段落仍然可读。", "你可以暂停任务，稍后继续。"]
                 let completed=args.contains("--reading-complete") ? tab.document.units.count : 4
                 tab.document.translations=tab.document.units.prefix(completed).enumerated().map { .init(unitID:$0.element.id,text:translations[$0.offset % translations.count],completedAt:Date()) }
                 tab.document.jobSnapshot=snapshot;tab.document.resolvedDirection = .enToZh
                 tab.job.snapshot=snapshot;tab.job.totalNonblankUnits=tab.document.units.count
                 tab.job.completedUnitIDs=Set(tab.document.translations.map(\.unitID));tab.job.state=tab.job.isFinished ? .completed : .paused
-                tab.runtimeBinding = .init(configurationID:configuration.id,baseURL:configuration.baseURL,provider:configuration.provider)
+                tab.runtimeBinding = configuration.runtimeBinding
                 if args.contains("--paragraphs") { tab.layout = .paragraphs }
             }
         }

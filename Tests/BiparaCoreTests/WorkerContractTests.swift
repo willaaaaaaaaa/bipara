@@ -40,8 +40,9 @@ struct WorkerContractTests {
     }
 
     @Test func providerProfiles() {
-        #expect(WorkerContract.providers == ["openai", "kimi", "glm", "deepseek"])
-        #expect(WorkerContract.profilesByProvider["openai"] == ["openai-json-schema-v1", "openai-json-schema-v2"])
+        #expect(WorkerContract.providers == ["openai", "kimi", "glm", "deepseek", "anthropic"])
+        #expect(WorkerContract.profilesByProvider["openai"] == ["openai-json-schema-v1", "openai-json-schema-v2", "openai-responses-v3"])
+        #expect(WorkerContract.profilesByProvider["anthropic"] == ["anthropic-messages-v3"])
         #expect(WorkerContract.profilesByProvider["glm"] == ["glm-json-v1", "glm-json-v2"])
         #expect(WorkerContract.legacyProfiles["openai"] == "openai-json-schema-v1")
         #expect(WorkerContract.currentProfiles["glm"] == "glm-json-v2")
