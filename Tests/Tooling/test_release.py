@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import plistlib
 import subprocess
 import tempfile
 import unittest
@@ -104,6 +105,8 @@ class ReleaseTests(unittest.TestCase):
         app = self.root / ".local/Bipara.app"
         helper = app / "Contents/Helpers/BiparaWorker.app/Contents"
         (helper / "MacOS").mkdir(parents=True)
+        info = app / "Contents/Info.plist"
+        info.write_bytes(plistlib.dumps({"LSMinimumSystemVersion": "27.0.1"}))
         (helper / "MacOS/BiparaWorker").write_bytes(b"fixture")
         notices = helper / "Resources/ThirdPartyLicenses"
         notices.mkdir(parents=True)
@@ -113,20 +116,22 @@ class ReleaseTests(unittest.TestCase):
         cert.write_bytes(b"-----BEGIN CERTIFICATE-----\nsynthetic certificate\n")
         result = subprocess.CompletedProcess([], 0, '{"type":"ready"}\n{"type":"stopped"}\n', '')
         with patch.object(release, "ROOT", self.root), patch.object(release, "command", return_value="arm64"), patch.object(release.subprocess, "run", return_value=result):
-            release.verify_bundle(app)
+            release.verify_bundle(app, "27.0.1")
+            with self.assertRaisesRegex(release.ReleaseError, "minimum macOS differs"):
+                release.verify_bundle(app, "27.0.2")
             cert.write_bytes(b"-----BEGIN " + b"PRIVATE KEY-----\nsynthetic forbidden content\n")
             with self.assertRaisesRegex(release.ReleaseError, "private material"):
-                release.verify_bundle(app)
+                release.verify_bundle(app, "27.0.1")
 
     def test_release_rejects_native_dependencies_above_the_deployment_target(self):
         binary = self.root / "fixture.so"
         binary.write_bytes(b"\xcf\xfa\xed\xfe")
-        with patch.object(release, "command", return_value="cmd LC_BUILD_VERSION\n    minos 15.0"):
-            with self.assertRaisesRegex(release.ReleaseError, "exceeds macOS 14.0"):
-                release.verify_minimum_macos(binary)
-        for build in ("cmd LC_BUILD_VERSION\n    minos 14.0", "cmd LC_VERSION_MIN_MACOSX\n  cmdsize 16\n  version 11.0"):
+        with patch.object(release, "command", return_value="cmd LC_BUILD_VERSION\n    minos 27.0.2"):
+            with self.assertRaisesRegex(release.ReleaseError, r"exceeds macOS 27\.0\.1"):
+                release.verify_minimum_macos(binary, "27.0.1")
+        for build in ("cmd LC_BUILD_VERSION\n    minos 27.0.1", "cmd LC_VERSION_MIN_MACOSX\n  cmdsize 16\n  version 11.0"):
             with patch.object(release, "command", return_value=build):
-                release.verify_minimum_macos(binary)
+                release.verify_minimum_macos(binary, "27.0.1")
 
     def test_notarized_policy_still_requires_ticket_checks(self):
         folder = self.prepare_assets()

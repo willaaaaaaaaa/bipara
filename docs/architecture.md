@@ -10,7 +10,7 @@
 | Providers | OpenAI Responses and Anthropic Messages through one worker boundary, independent of vendor labels/model catalogs, with editable connections and four effort levels. Retain old Chat Completions profiles for existing configurations/jobs. |
 | Framework | LangChain first; explicitly authored LangGraph orchestration deferred |
 | UI | Native reading, Settings and multiple document tabs; English-default interface; System-default appearance with Light/Dark overrides |
-| Implementation baseline | macOS 14+, Swift 6, arm64, CPython 3.13; detailed contracts linked below |
+| Implementation baseline | Swift 6, arm64 and CPython 3.13; the first public installer requires macOS 27.0.1 or later |
 | Validation | Native app and packaged worker run on the development machine; M0 feasibility passed, M1 native acceptance partial; see [current evidence](validation.md) |
 | Distribution | MIT; tagged formal DMGs; Intel/mobile and App Store qualification remain separate |
 
