@@ -6,6 +6,8 @@ Bipara is experimental. Default development checks do not qualify a public insta
 
 On 2026-11-11 (UTC+8), the v0.1.2 candidate (build 3, source commit `ed7d563101168c88b8e07951f95f44206d95090d`) passed the formal-mode offline suite on Apple Silicon macOS 27.0.1 with Xcode 27.2. The run covered 51 tooling, 282 Swift and 343 Python tests, both worker bundles and the native Debug build. The 167-input source manifest has SHA-256 `4e604cd8cf9508bada1d7f4b87dfe2880314b34ba0ee44dc3976eb85683417f1`. The corresponding [main-branch CI run](https://github.com/willaaaaaaaaa/bipara/actions/runs/43025068649) passed on macOS 26. This evidence covers offline builds and tests. See the version’s [release notes](https://github.com/willaaaaaaaaa/bipara/releases) for final installer checks and their scope.
 
+The v0.1.2 Apple Silicon DMG passed bundle checks and the local upgrade smoke from v0.1.1. The [Intel release build](https://github.com/willaaaaaaaaa/bipara/actions/runs/43026977264) failed on Swift 6.3.3 data-race diagnostics for the translation coordinator. The v0.1.2 draft was retained. The follow-up confines scheduling state to the main-actor task group without changing how batches are dispatched or consumed.
+
 ## macOS compatibility policy
 
 The current compatibility targets are macOS 26 and 27 on Apple Silicon, plus macOS 26 on compatible Intel Macs, with minimum deployment version 26.0. Acceptance is limited to the maintainer's local OS and exact final DMG; macOS 26 has not received maintainer runtime acceptance. The policy/configuration change does not qualify a new installer or extend historical results to other systems. Clean-machine isolation and other OS versions remain unverified.
