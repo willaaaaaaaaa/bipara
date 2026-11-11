@@ -84,9 +84,9 @@ public final class TranslationCoordinator: ObservableObject {
         let finished = Set(original.translations.map(\.unitID))
         let units = original.units.filter { !finished.contains($0.id) }
         let plan = SourcePlan(source: original.source, paragraphs: original.paragraphs, units: units)
-        var batches = try SourcePlanner.formBatches(plan)
-        guard !batches.isEmpty else { return }
-        let originalBatchCount = batches.count
+        let initialBatches = try SourcePlanner.formBatches(plan)
+        guard !initialBatches.isEmpty else { return }
+        let originalBatchCount = initialBatches.count
         workspace.withTab(index) { tab in
             if tab.job.snapshot != nil || tab.job.state != .idle {
                 tab.job.snapshot = resolved
@@ -94,10 +94,10 @@ public final class TranslationCoordinator: ObservableObject {
                 tab.job.totalNonblankUnits = original.units.count
                 if tab.job.state != .queued {
                     if tab.job.state == .idle { tab.job.state = .paused }
-                    _ = tab.job.apply(.resume(batches: Array(batches.indices)))
+                    _ = tab.job.apply(.resume(batches: Array(initialBatches.indices)))
                 }
             } else {
-                _ = tab.job.apply(.translate(snapshot: resolved, batches: Array(batches.indices), totalNonblankUnits: original.units.count))
+                _ = tab.job.apply(.translate(snapshot: resolved, batches: Array(initialBatches.indices), totalNonblankUnits: original.units.count))
             }
         }
         guard let initialIndex = workspace.index(of: session) else { return }
@@ -112,11 +112,13 @@ public final class TranslationCoordinator: ObservableObject {
         }
 
         let maxInFlight = max(1, WorkerContract.translationBatchesPerSession)
-        var firstFailure: Error?
-        var cancelledByUser = false
-        var abandoned = false
-
-        await withTaskGroup(of: BatchOutcome.self, isolation: #isolation) { group in
+        let (cancelledByUser, firstFailure) = await withTaskGroup(
+            of: BatchOutcome.self, returning: (Bool, (any Error)?).self, isolation: #isolation
+        ) { @MainActor group in
+            var batches = initialBatches
+            var firstFailure: Error?
+            var cancelledByUser = false
+            var abandoned = false
             var inFlight = 0
 
             @MainActor func canStartMore() -> Bool {
@@ -267,6 +269,7 @@ public final class TranslationCoordinator: ObservableObject {
                     while canStartMore() { startNext(group: &group) }
                 }
             }
+            return (cancelledByUser, firstFailure)
         }
         if cancelledByUser { throw CancellationError() }
         if let firstFailure { throw firstFailure }
