@@ -111,18 +111,25 @@ public final class TranslationCoordinator: ObservableObject {
             case failure(batchID: Int, gatewayError: GatewayError?)
         }
 
+        // A single actor-isolated owner keeps mutable scheduling state out of
+        // the captures shared by the group's nested helpers.
+        @MainActor final class BatchSchedule {
+            var batches: [TranslationBatch]
+            var firstFailure: (any Error)?
+
+            init(batches: [TranslationBatch]) { self.batches = batches }
+        }
+
+        let schedule = BatchSchedule(batches: initialBatches)
         let maxInFlight = max(1, WorkerContract.translationBatchesPerSession)
-        let (cancelledByUser, firstFailure) = await withTaskGroup(
-            of: BatchOutcome.self, returning: (Bool, (any Error)?).self, isolation: #isolation
-        ) { @MainActor group in
-            var batches = initialBatches
-            var firstFailure: Error?
-            var cancelledByUser = false
-            var abandoned = false
+        var cancelledByUser = false
+        var abandoned = false
+
+        await withTaskGroup(of: BatchOutcome.self, isolation: #isolation) { group in
             var inFlight = 0
 
             @MainActor func canStartMore() -> Bool {
-                guard inFlight < maxInFlight, firstFailure == nil, !cancelledByUser, !abandoned,
+                guard inFlight < maxInFlight, schedule.firstFailure == nil, !cancelledByUser, !abandoned,
                       let i = currentIndex(session, original: original, attempt: attempt, workspace: workspace) else { return false }
                 return !workspace.tabs[i].job.queuedBatchIDs.isEmpty
             }
@@ -141,23 +148,23 @@ public final class TranslationCoordinator: ObservableObject {
                 if let i = currentIndex(session, original: original, attempt: attempt, workspace: workspace) {
                     workspace.withTab(i) { _ = $0.job.apply(.batchFailed(batchID: batchID)) }
                 }
-                if firstFailure == nil { firstFailure = error }
+                if schedule.firstFailure == nil { schedule.firstFailure = error }
             }
 
             @MainActor func splitFailedBatch(_ batchID: Int, _ error: GatewayError) -> Bool {
                 guard error.code == .invalidOutput, error.validationFailure == .unitMismatch,
-                      batchID < originalBatchCount, firstFailure == nil, !Task.isCancelled,
+                      batchID < originalBatchCount, schedule.firstFailure == nil, !Task.isCancelled,
                       let i = currentIndex(session, original: original, attempt: attempt, workspace: workspace),
                       workspace.tabs[i].job.activeBatchIDs.contains(batchID) else { return false }
-                let failedUnits = batches[batchID].unitIDs.compactMap { byID[$0] }
+                let failedUnits = schedule.batches[batchID].unitIDs.compactMap { byID[$0] }
                 guard failedUnits.count > 1 else { return false }
                 let midpoint = failedUnits.count / 2
                 let replacements = try? [failedUnits[..<midpoint], failedUnits[midpoint...]].flatMap { half in
                     try SourcePlanner.formBatches(SourcePlan(source: plan.source, paragraphs: plan.paragraphs, units: Array(half)))
                 }
                 guard let replacements, replacements.count == 2 else { return false }
-                let replacementIDs = [batches.count, batches.count + 1]
-                batches.append(contentsOf: replacements)
+                let replacementIDs = [schedule.batches.count, schedule.batches.count + 1]
+                schedule.batches.append(contentsOf: replacements)
                 workspace.withTab(i) { _ = $0.job.apply(.batchSplit(batchID: batchID, replacementIDs: replacementIDs)) }
                 return true
             }
@@ -172,7 +179,7 @@ public final class TranslationCoordinator: ObservableObject {
                     abandoned = true
                     return
                 }
-                let batch = batches[batchID]
+                let batch = schedule.batches[batchID]
                 workspace.withTab(i) { tab in
                     if !tab.job.activeBatchIDs.contains(batchID) { _ = tab.job.apply(.batchDispatched(batchID: batchID)) }
                 }
@@ -236,7 +243,7 @@ public final class TranslationCoordinator: ObservableObject {
                     }
                 case let .failure(batchID, gatewayError):
                     if let gatewayError {
-                        if firstFailure == nil, !cancelledByUser, !abandoned, !Task.isCancelled,
+                        if schedule.firstFailure == nil, !cancelledByUser, !abandoned, !Task.isCancelled,
                            let delay = gatewayError.glmCooldown(provider: resolved.provider),
                            delay <= WorkerContract.glmAutomaticWaitBudget,
                            replayedBatches.insert(batchID).inserted {
@@ -244,7 +251,7 @@ public final class TranslationCoordinator: ObservableObject {
                         } else if replayedBatches.contains(batchID) || !splitFailedBatch(batchID, gatewayError) {
                             failBatch(batchID, gatewayError)
                         }
-                    } else if firstFailure == nil && !cancelledByUser {
+                    } else if schedule.firstFailure == nil && !cancelledByUser {
                         // A cancellation with no earlier failure is the
                         // user cancelling the attempt.
                         markCancelled()
@@ -261,7 +268,7 @@ public final class TranslationCoordinator: ObservableObject {
             while let outcome = await group.next() {
                 inFlight -= 1
                 await handle(outcome, group: &group)
-                if firstFailure != nil || cancelledByUser {
+                if schedule.firstFailure != nil || cancelledByUser {
                     // Stop paying for further batches; in-flight siblings
                     // drain and may still commit if they already finished.
                     group.cancelAll()
@@ -269,10 +276,9 @@ public final class TranslationCoordinator: ObservableObject {
                     while canStartMore() { startNext(group: &group) }
                 }
             }
-            return (cancelledByUser, firstFailure)
         }
         if cancelledByUser { throw CancellationError() }
-        if let firstFailure { throw firstFailure }
+        if let firstFailure = schedule.firstFailure { throw firstFailure }
     }
 
     /// Validates a batch result against its request and commits it
