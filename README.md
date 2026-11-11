@@ -6,13 +6,13 @@ Bipara is a large language model (LLM)-powered native macOS app for translation 
 
 Bipara uses Swift for native presentation and document/task logic, plus a bundled Python worker with LangChain. End users do not install Python or run a server. Model connections use OpenAI Responses or Anthropic Messages, with a custom form for name, protocol, model ID, effort, API Base URL and API key. Users choose compatible models and parameters; provider calls require network access, an eligible account and may incur charges.
 
-Status: experimental source preview. This README does not announce a public release or a qualified installer. Real-provider semantic quality, latency and cost are not fully qualified; native UI and accessibility acceptance is incomplete.
+Bipara is experimental. Real-provider semantic quality, latency and cost are not fully qualified; native UI and accessibility acceptance is incomplete.
 
 ## Install and use
 
 For source builds, follow the development instructions below. Source-readiness requires public-content, history and identity review, plus offline regression checks; their current results and blockers are in [validation status](docs/validation.md).
 
-Every public installer must have a protected version tag and an arm64 DMG validated for installation and upgrade on the maintainer's local Mac against its exact checksum. The release notes identify the tested macOS version; this does not establish clean-machine or cross-version qualification. The initial distribution uses ad-hoc signing without Apple notarization or a verified Developer ID. macOS may require a per-app Open Anyway exception; see [installation and trust](docs/releasing.md#install-and-publish). No qualified download is available yet.
+Every public installer must have a protected version tag and an arm64 DMG validated for installation and upgrade on the maintainer's local Mac against its exact checksum. The release notes identify the tested macOS version; this does not establish clean-machine or cross-version qualification. The initial distribution uses ad-hoc signing without Apple notarization or a verified Developer ID. macOS may require a per-app Open Anyway exception; see [installation and trust](docs/releasing.md#install-and-publish). Find available installers, checksums and test coverage in [GitHub Releases](https://github.com/willaaaaaaaaa/bipara/releases).
 
 Open Settings, add a model configuration with its exact model, API Base URL and key, and choose an Active Model. Paste text or open a UTF-8 .txt file, then translate. Switch reading layouts without retranslating. Save editable work as .bipara or explicitly export/copy text. Read [Privacy](PRIVACY.md) before sending documents.
 

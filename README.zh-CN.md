@@ -6,13 +6,13 @@ Bipara 是一款由大语言模型（LLM）驱动的原生 macOS 翻译与双语
 
 应用使用 Swift 管理原生界面、文档和任务，内置 Python worker 通过 LangChain 调用模型。最终用户无需安装 Python 或运行服务器。模型连接支持 OpenAI Responses 和 Anthropic Messages，统一通过自定义表单填写名称、接口协议、模型 ID、推理力度、API Base URL 和 API 密钥。用户自行选择兼容的模型和参数；调用需要网络、符合资格的账户，并可能产生服务商费用。
 
-当前为实验性源码预览。本文不代表已有公开发行或合格安装包。真实服务商的语义质量、延迟和费用尚未完整验收，原生 UI 与无障碍验收也未完成。
+Bipara 目前处于实验阶段。真实服务商的语义质量、延迟和费用尚未完整验收，原生 UI 与无障碍验收也未完成。
 
 ## 安装与使用
 
 源码构建请按下方开发说明操作。源码就绪需要公共内容、历史与身份审查，以及离线回归检查；当前结果和阻碍见[验证状态](docs/validation.md)。
 
-每个公开安装版本必须有受保护的版本 tag 和可安装 arm64 DMG，并针对该包的精确校验和在维护者本机完成安装和升级验收。发布说明记录实际测试的 macOS 版本；本机结果不代表干净机器或跨系统验收。首版采用 ad-hoc 签名，未经 Apple 公证，也没有经过验证的 Developer ID 身份；macOS 可能要求针对本应用选择“仍要打开”。详见[安装与信任说明](docs/releasing.md#install-and-publish)。目前尚无通过验收的下载包。
+每个公开安装版本必须有受保护的版本 tag 和可安装 arm64 DMG，并针对该包的精确校验和在维护者本机完成安装和升级验收。发布说明记录实际测试的 macOS 版本；本机结果不代表干净机器或跨系统验收。首版采用 ad-hoc 签名，未经 Apple 公证，也没有经过验证的 Developer ID 身份；macOS 可能要求针对本应用选择“仍要打开”。详见[安装与信任说明](docs/releasing.md#install-and-publish)。可用安装包、校验和及各版本的验收范围见 [GitHub Releases](https://github.com/willaaaaaaaaa/bipara/releases)。
 
 在 Settings 中添加模型配置，填写实际模型、API Base URL 和密钥，选择 Active Model。粘贴文本或打开 UTF-8 txt 文件后翻译；切换阅读布局无需重新翻译。可保存为 bipara 文档，或显式导出、复制文本。发送文档前请阅读 [隐私说明](PRIVACY.md)。
 

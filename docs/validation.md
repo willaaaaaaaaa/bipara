@@ -1,6 +1,10 @@
 # Validation status
 
-Bipara is an experimental source preview. Default development checks do not qualify a public installer, real-provider behavior or the complete native UI.
+Bipara is experimental. Default development checks do not qualify a public installer, real-provider behavior or the complete native UI.
+
+## Release candidate v0.1.2
+
+On 2026-11-11 (UTC+8), the v0.1.2 candidate (build 3, source commit `ed7d563101168c88b8e07951f95f44206d95090d`) passed the formal-mode offline suite on Apple Silicon macOS 27.0.1 with Xcode 27.2. The run covered 51 tooling, 282 Swift and 343 Python tests, both worker bundles and the native Debug build. The 167-input source manifest has SHA-256 `4e604cd8cf9508bada1d7f4b87dfe2880314b34ba0ee44dc3976eb85683417f1`. The corresponding [main-branch CI run](https://github.com/willaaaaaaaaa/bipara/actions/runs/43025068649) passed on macOS 26. This evidence covers offline builds and tests. See the version’s [release notes](https://github.com/willaaaaaaaaa/bipara/releases) for final installer checks and their scope.
 
 ## macOS compatibility policy
 
