@@ -15,10 +15,12 @@ from urllib.request import urlopen
 TOOLS = {
     "gitleaks": ("gitleaks/gitleaks", "8.30.1", {
         "Darwin-arm64": ("darwin_arm64", "b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5"),
+        "Darwin-x86_64": ("darwin_x64", "dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709"),
         "Linux-x86_64": ("linux_x64", "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"),
     }),
     "actionlint": ("rhysd/actionlint", "1.7.12", {
         "Darwin-arm64": ("darwin_arm64", "aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f"),
+        "Darwin-x86_64": ("darwin_amd64", "5b44c3bc2255115c9b69e30efc0fecdf498fdb63c5d58e17084fd5f16324c644"),
         "Linux-x86_64": ("linux_amd64", "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"),
     }),
 }

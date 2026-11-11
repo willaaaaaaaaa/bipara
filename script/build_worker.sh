@@ -10,17 +10,21 @@ cd "$ROOT"
 RELEASE_APP="build/worker/BiparaWorker.app"
 FIXTURE_APP="build/worker-fixture/BiparaWorkerFixture.app"
 SYNC_OPTIONS=(--frozen --group dev)
-
 # Optional local run environment (e.g. DEVELOPER_DIR); ignored if absent.
 # shellcheck disable=SC1091
 if [ "${BIPARA_RELEASE_BUILD:-0}" != 1 ]; then
   [ -f "script/env.local.sh" ] && . "script/env.local.sh" || true
-else
+fi
+export BIPARA_TARGET_ARCH="${BIPARA_TARGET_ARCH:-$(uname -m)}"
+case "$BIPARA_TARGET_ARCH" in arm64) PYTHON_PLATFORM=aarch64-apple-darwin ;; x86_64) PYTHON_PLATFORM=x86_64-apple-darwin ;; *) echo "Unsupported architecture" >&2; exit 1 ;; esac
+# Reject a mismatched host before downloading or changing the environment.
+[ "$(uname -m)" = "$BIPARA_TARGET_ARCH" ] || { echo "worker build host must match BIPARA_TARGET_ARCH" >&2; exit 1; }
+if [ "${BIPARA_RELEASE_BUILD:-0}" = 1 ]; then
   UV_PYTHON="$(python3 script/prepare_release_runtime.py)" || exit 1
   export UV_PYTHON UV_PYTHON_DOWNLOADS=never UV_PYTHON_PREFERENCE=only-system
   # A newer build host can otherwise select wheels that require a newer OS.
   export MACOSX_DEPLOYMENT_TARGET=14.0
-  SYNC_OPTIONS+=(--python-platform aarch64-apple-darwin)
+  SYNC_OPTIONS+=(--python-platform "$PYTHON_PLATFORM")
 fi
 case "${1:-}" in ''|--release-only) ;; *) echo 'usage: build_worker.sh [--release-only]' >&2; exit 1 ;; esac
 
@@ -28,10 +32,6 @@ fail() {
   echo "build_worker.sh: $1" >&2
   exit 1
 }
-
-# The M0 acceptance target is Apple Silicon; refuse to emit a bundle for
-# another architecture instead of producing an unqualified artifact.
-[ "$(uname -m)" = "arm64" ] || fail "worker bundles build for arm64 only; this machine reports $(uname -m)"
 
 # Keep separate checkouts from deleting or rewriting a shared binary cache.
 export PYINSTALLER_CONFIG_DIR="$ROOT/build/pyinstaller-cache"

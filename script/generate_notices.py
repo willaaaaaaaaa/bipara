@@ -9,6 +9,7 @@ import importlib.metadata as metadata
 import json
 import os
 from pathlib import Path
+import platform
 import shutil
 import sys
 import tomllib
@@ -97,7 +98,11 @@ def collect(destination: Path) -> list[dict]:
     records.append({"name": "CPython", "version": sys.version.split()[0], "role": "runtime",
                     "license": "PSF and included component licenses", "files": ["CPython/LICENSE.txt"]})
     provenance = ROOT / "licenses/python-runtime"
-    manifest = json.loads((provenance / "manifest.json").read_text())
+    arch = os.environ.get("BIPARA_TARGET_ARCH", platform.machine())
+    if arch not in {"arm64", "x86_64"}:
+        raise ValueError("unsupported target architecture")
+    manifest_name = "manifest-x86_64.json" if arch == "x86_64" else "manifest.json"
+    manifest = json.loads((provenance / manifest_name).read_text())
     library = Path(sys.base_prefix) / f"lib/libpython{sys.version_info.major}.{sys.version_info.minor}.dylib"
     matched = library.is_file() and hashlib.sha256(library.read_bytes()).hexdigest() == manifest["python_library_sha256"]
     if os.environ.get("BIPARA_RELEASE_BUILD") == "1" and not matched:
@@ -107,6 +112,7 @@ def collect(destination: Path) -> list[dict]:
             if hashlib.sha256((provenance / name).read_bytes()).hexdigest() != expected:
                 raise ValueError("upstream runtime license fingerprint mismatch")
         shutil.copytree(provenance, destination / "PythonRuntime")
+        shutil.copyfile(provenance / manifest_name, destination / "PythonRuntime/manifest.json")
         records.append({"name": "Python runtime component notices", "version": manifest["upstream_build"],
                         "role": "runtime", "license": "Conservative upstream component inventory; see supplied terms",
                         "files": ["PythonRuntime/" + name for name in manifest["license_sha256"]]})

@@ -50,4 +50,4 @@ Scanners cannot judge every natural-language passage or image. Review screenshot
 
 ## Publication
 
-The project uses MIT. Public repository creation, remote pushes, visibility changes and publication remain explicit operations. Follow [the preparation plan](open-source-preparation.md) and [release procedure](releasing.md). Preserve tested state and disclose missing provider, UI, minimum-OS and distribution evidence.
+The project uses MIT. Public repository creation, remote pushes, visibility changes and publication remain explicit operations. Follow [the preparation plan](open-source-preparation.md) and [release procedure](releasing.md). Preserve tested state and disclose missing provider, UI, cross-version, clean-machine and distribution evidence.

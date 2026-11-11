@@ -12,11 +12,11 @@ Status: experimental source preview. This README does not announce a public rele
 
 For source builds, follow the development instructions below. Source-readiness requires public-content, history and identity review, plus offline regression checks; their current results and blockers are in [validation status](docs/validation.md).
 
-Every public installer must have a protected version tag and an arm64 DMG qualified for clean installation, upgrade and minimum-OS use against its exact checksum. The initial distribution uses ad-hoc signing without Apple notarization or a verified Developer ID. macOS may require a per-app Open Anyway exception; see [installation and trust](docs/releasing.md#install-and-publish). No qualified download is available yet.
+Every public installer must have a protected version tag and an arm64 DMG validated for installation and upgrade on the maintainer's local Mac against its exact checksum. The release notes identify the tested macOS version; this does not establish clean-machine or cross-version qualification. The initial distribution uses ad-hoc signing without Apple notarization or a verified Developer ID. macOS may require a per-app Open Anyway exception; see [installation and trust](docs/releasing.md#install-and-publish). No qualified download is available yet.
 
 Open Settings, add a model configuration with its exact model, API Base URL and key, and choose an Active Model. Paste text or open a UTF-8 .txt file, then translate. Switch reading layouts without retranslating. Save editable work as .bipara or explicitly export/copy text. Read [Privacy](PRIVACY.md) before sending documents.
 
-The first public installer targets Apple Silicon and requires macOS 27.0.1 or later. See the validation status for tested environments and installation evidence. VoiceOver, keyboard-only workflows, Increase Contrast and Reduce Motion still require complete native acceptance.
+Bipara targets macOS 26 and 27 on Apple Silicon, plus macOS 26 on compatible Intel Macs, with a minimum deployment version of macOS 26.0. Acceptance is limited to the maintainer's local macOS version; other target versions are not maintainer-tested, and users must verify compatibility on their own devices. Intel uses a separate installer and receives no maintainer runtime acceptance. See the validation status and each release's notes for actual tested environments and installation evidence. VoiceOver, keyboard-only workflows, Increase Contrast and Reduce Motion still require complete native acceptance.
 
 ## Develop
 

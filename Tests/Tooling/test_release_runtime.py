@@ -16,6 +16,9 @@ spec.loader.exec_module(runtime)
 
 class RuntimeTests(unittest.TestCase):
     def setUp(self):
+        env = patch.dict(runtime.os.environ, {"BIPARA_TARGET_ARCH": "arm64"})
+        env.start()
+        self.addCleanup(env.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         (self.root / "licenses/python-runtime").mkdir(parents=True)
@@ -49,6 +52,20 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cached"):
             runtime.prepare()
         self.assertEqual(cache.read_bytes(), b"changed")
+
+    def test_intel_runtime_uses_separate_manifest_and_cache(self):
+        (self.root / "licenses/python-runtime/manifest-x86_64.json").write_text(json.dumps(self.manifest))
+        arm = runtime.prepare()
+        with patch.dict(runtime.os.environ, {"BIPARA_TARGET_ARCH": "x86_64"}):
+            intel = runtime.prepare()
+        self.assertNotEqual(arm, intel)
+        self.assertIn("release-runtime-x86_64", str(intel))
+        self.assertTrue(arm.is_file() and intel.is_file())
+
+    def test_intel_host_selects_intel_runtime_without_override(self):
+        (self.root / "licenses/python-runtime/manifest-x86_64.json").write_text(json.dumps(self.manifest))
+        with patch.dict(runtime.os.environ, {}, clear=True), patch.object(runtime.platform, "machine", return_value="x86_64"):
+            self.assertIn("release-runtime-x86_64", str(runtime.prepare()))
 
     def test_bad_download_is_not_promoted_or_left_as_a_cache_hit(self):
         with self.assertRaises(ValueError):

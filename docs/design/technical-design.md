@@ -8,7 +8,7 @@ Read [architecture](../architecture.md) for decision ownership, [model workflow]
 
 ## Build and module boundaries
 
-Require macOS 27.0.1 or later and Apple Silicon for the first public installer. The Release app takes its deployment target from `BIPARA_RELEASE_MINIMUM_MACOS` in `Config/Version.xcconfig`. Use Swift 6 language mode and system frameworks on the Swift side. Intel/universal distribution and mobile execution are separate future qualification tasks.
+Target macOS 26 and 27 on Apple Silicon, plus macOS 26 on compatible Intel Macs, with a minimum deployment version of 26.0. The Debug and Release app take their deployment target from `BIPARA_RELEASE_MINIMUM_MACOS` in `Config/Version.xcconfig`. Use availability checks and compatible fallbacks for APIs newer than the minimum. Only the maintainer's local OS receives runtime acceptance; other target versions remain unverified. This support policy does not add an upper-version launch block or promise compatibility with future macOS releases. Use Swift 6 language mode and system frameworks on the Swift side. Ship separate arm64 and x86_64 installers; universal packaging and mobile execution remain separate scope. Intel runtime acceptance is not required and must not be implied by a successful build.
 
 Create one checked-in Xcode project, `Bipara.xcodeproj`, with shared scheme `Bipara`; use a root Swift package for `BiparaCore` and its tests. No project generator, dependency injection framework, database, server, or graph scheduler is needed.
 

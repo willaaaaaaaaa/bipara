@@ -81,7 +81,7 @@ Build the following original synthetic fixture families, with deterministic seed
 | PRIV-02 | Keychain failures do not partially apply Settings silently; Cancel/close behavior preserves prior settings; deletion/rotation is scoped | R14 |
 | PRIV-03 | Equal key values remain independently scoped per configuration; endpoint changes clear draft key and require re-entry, reverting URL restores original draft state; old jobs cannot read a new endpoint's key; consent is per provider/origin; private endpoint/alias/credential/configuration canaries absent from saved files, prompts, logs and errors; redirects/environment overrides cannot forward credentials | R7, R11, R17 |
 
-Milestone acceptance is cumulative: M0 records only the explicitly listed IPC/package smoke subsets, M2 completes IPC/JOB plus local/transport privacy, M3 completes real model-message privacy, and M5 completes clean-machine/distribution coverage. A partial acceptance ID stays marked partial until its full listed behavior passes.
+Milestone acceptance is cumulative: M0 records only the explicitly listed IPC/package smoke subsets, M2 completes IPC/JOB plus local/transport privacy, M3 completes real model-message privacy, and M5 completes local installation/upgrade and distribution coverage under the declared OS support policy. A partial acceptance ID stays marked partial until its full listed behavior passes.
 
 Use fake clocks/scheduled responses to make concurrency and deadlines deterministic. Include adversarial ordering rather than only happy-path snapshots. Run the real worker process offline for transport assertions, not only two language-local codec mocks. Inject short test deadlines without changing production constants. For negative tests, assert both the visible error and absence of a mutation/network call.
 
@@ -174,8 +174,8 @@ Semantic evidence requires independent human review; an LLM is not the unreviewe
 | ID | Required evidence |
 | --- | --- |
 | PKG-01 | Copied app runs from a path containing spaces without repo paths/system Python/uv/pip; helper resolves bundled assets, no startup downloads/listeners or helper Dock icon |
-| PKG-02 | Actual clean supported Mac/VM/user environment, minimum OS check, complete launch/read/save/model/quit smoke; stripped PATH alone is only partial isolation evidence |
-| PKG-03 | Nested binaries and main bundle signature verification under the tagged distribution policy. Initial ad-hoc packages disclose missing Developer ID/notarization and demonstrate the expected warning plus per-app exception on supported systems. The optional Developer ID policy additionally requires actual notarization/Gatekeeper acceptance |
+| PKG-02 | Exact final DMG installed and upgraded on the maintainer's local Mac running macOS 26 or 27; record its checksum and exact OS version, exercise launch/read/save/model/quit smoke, and preserve settings/documents/Keychain during upgrade. Check every bundled binary's deployment target. Other OS versions and clean-machine behavior remain unverified; neither stripped PATH nor a fresh user account proves clean-machine isolation |
+| PKG-03 | Nested binaries and main bundle signature verification under the tagged distribution policy. Initial ad-hoc packages disclose missing Developer ID/notarization and demonstrate the expected warning plus per-app exception on the tested local system. The optional Developer ID policy additionally requires actual notarization/Gatekeeper acceptance |
 | PKG-04 | Repeated launches/quits and app crash leave no orphan worker; packaged cancellation and two requests behave like development tests |
 | OSS-01 | Dependency versions/licenses, asset provenance, portable setup, English docs and default UI, ignored artifacts and no private addresses/paths/secrets; no unapproved license or publication |
 

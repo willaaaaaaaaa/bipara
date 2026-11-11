@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import plistlib
 import re
 import shutil
@@ -19,12 +20,19 @@ ROOT = Path(__file__).resolve().parents[1]
 if sys.version_info < (3, 12):
     raise SystemExit("release: Python 3.12 or newer is required")
 TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
-REQUIRED_CHECKS = ("clean-install", "upgrade", "minimum-os")
+REQUIRED_CHECKS = ("local-install", "upgrade")
 MACH_O_MAGIC = {b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf"}
 
 
 class ReleaseError(Exception):
     pass
+
+
+def architecture() -> str:
+    value = os.environ.get("BIPARA_TARGET_ARCH", platform.machine())
+    if value not in {"arm64", "x86_64"}:
+        raise ReleaseError("unsupported target architecture")
+    return value
 
 
 def command(*args: str, cwd: Path = ROOT, env: dict | None = None) -> str:
@@ -76,19 +84,24 @@ def digest(path: Path) -> str:
     return value.hexdigest()
 
 
-def assets(tag: str) -> tuple[str, str, str]:
+def assets(tag: str, arch: str = "arm64") -> tuple[str, str, str]:
     if not TAG.fullmatch(tag):
         raise ReleaseError("invalid formal tag")
-    return f"Bipara-{tag[1:]}-arm64.dmg", "SHA256SUMS", "release-manifest.json"
+    if arch not in {"arm64", "x86_64"}:
+        raise ReleaseError("unsupported target architecture")
+    suffix = "" if arch == "arm64" else "-x86_64"
+    return f"Bipara-{tag[1:]}-{arch}.dmg", f"SHA256SUMS{suffix}", f"release-manifest{suffix}.json"
 
 
-def verify_assets(folder: Path, tag: str, commit: str, mode: str) -> dict:
-    names = assets(tag)
-    if {p.name for p in folder.iterdir()} != set(names) or any((folder / n).is_symlink() for n in names):
+def verify_assets(folder: Path, tag: str, commit: str, mode: str, arch: str = "arm64") -> dict:
+    names = assets(tag, arch)
+    inventory = {p.name for p in folder.iterdir()}
+    combined = set(assets(tag)) | set(assets(tag, "x86_64"))
+    if inventory not in (set(names), combined) or any((folder / n).is_symlink() for n in names):
         raise ReleaseError("release asset inventory differs from the allowlist")
     manifest = json.loads((folder / names[2]).read_text())
     allowed = {"schema", "tag", "commit", "version", "build", "architecture", "xcode", "python", "lock_sha256", "prompt_sha256", "dmg_sha256", "distribution", "runtime_manifest_sha256"}
-    if not isinstance(manifest, dict) or set(manifest) != allowed or manifest["schema"] != 2 or manifest["architecture"] != "arm64":
+    if not isinstance(manifest, dict) or set(manifest) != allowed or manifest["schema"] != 2 or manifest["architecture"] != arch:
         raise ReleaseError("invalid release manifest")
     if manifest["distribution"] != mode or mode not in {"ad-hoc", "developer-id"}:
         raise ReleaseError("asset distribution mode differs from the tagged policy")
@@ -99,6 +112,8 @@ def verify_assets(folder: Path, tag: str, commit: str, mode: str) -> dict:
     expected = "".join(f"{digest(folder / n)}  {n}\n" for n in (names[0], names[2]))
     if (folder / names[1]).read_text() != expected:
         raise ReleaseError("release checksum inventory mismatch")
+    if arch == "arm64" and inventory == combined:
+        verify_assets(folder, tag, commit, mode, "x86_64")
     return manifest
 
 
@@ -110,23 +125,27 @@ def run_logged(args: list[str], env: dict, log: Path) -> None:
         raise ReleaseError(f"{Path(args[0]).name}: build failed; inspect ignored release logs")
 
 
-def release_minimum_macos() -> str:
-    text = (ROOT / "Config/Version.xcconfig").read_text()
-    minimum = re.search(r"^BIPARA_RELEASE_MINIMUM_MACOS\s*=\s*(\d+\.\d+\.\d+)$", text, re.M)
+def release_minimum_macos(ref: str | None = None) -> str:
+    text = command("git", "show", f"{ref}:Config/Version.xcconfig") if ref else (ROOT / "Config/Version.xcconfig").read_text()
+    minimum = re.search(r"^BIPARA_RELEASE_MINIMUM_MACOS\s*=\s*(\d+\.\d+(?:\.\d+)?)$", text, re.M)
     if not minimum:
         raise ReleaseError("missing or invalid release macOS minimum")
     return minimum[1]
+
+
+def macos_version(value: str) -> tuple[int, ...]:
+    parts = tuple(map(int, value.split(".")))
+    return parts + (0,) * (3 - len(parts))
 
 
 def verify_minimum_macos(path: Path, minimum: str) -> None:
     with path.open("rb") as stream:
         if stream.read(4) not in MACH_O_MAGIC:
             return
-    build = command("xcrun", "vtool", "-arch", "arm64", "-show-build", str(path))
+    build = command("xcrun", "vtool", "-arch", architecture(), "-show-build", str(path))
     targets = re.findall(r"^\s+minos\s+(\d+(?:\.\d+){1,2})$", build, re.M)
     targets += re.findall(r"cmd LC_VERSION_MIN_MACOSX\s+cmdsize \d+\s+version (\d+(?:\.\d+){1,2})", build)
-    maximum = tuple(map(int, minimum.split(".")))
-    if not targets or any(tuple(map(int, target.split("."))) > maximum for target in targets):
+    if not targets or any(macos_version(target) > macos_version(minimum) for target in targets):
         raise ReleaseError(f"binary deployment target exceeds macOS {minimum} or is missing: {path.name}")
 
 
@@ -135,7 +154,7 @@ def verify_bundle(app: Path, minimum: str) -> None:
     if not (helper / "Contents/MacOS/BiparaWorker").is_file():
         raise ReleaseError("bundled worker is missing")
     command("codesign", "--verify", "--deep", "--strict", str(app))
-    if command("lipo", "-archs", str(app / "Contents/MacOS/Bipara")) != "arm64":
+    if command("lipo", "-archs", str(app / "Contents/MacOS/Bipara")) != architecture():
         raise ReleaseError("unexpected application architecture")
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
     if info.get("LSMinimumSystemVersion") != minimum:
@@ -177,8 +196,8 @@ def build_release(tag: str) -> None:
         identities = command("security", "find-identity", "-v", "-p", "codesigning")
         if f'"{identity}"' not in identities:
             raise ReleaseError("the configured signing identity is unavailable")
-    if command("uname", "-m") != "arm64":
-        raise ReleaseError("formal packages currently target arm64")
+    if command("uname", "-m") != architecture():
+        raise ReleaseError("build the worker on a host matching BIPARA_TARGET_ARCH")
     env = os.environ.copy()
     env["BIPARA_RELEASE_BUILD"] = "1"
     env["UV_PYTHON"] = command(sys.executable, "script/prepare_release_runtime.py")
@@ -195,7 +214,7 @@ def build_release(tag: str) -> None:
     run_logged(["script/build_worker.sh", "--release-only"], env, logs / "worker.log")
     derived = ROOT / "build/tagged-release"
     shutil.rmtree(derived, ignore_errors=True)
-    run_logged(["xcodebuild", "-project", "Bipara.xcodeproj", "-scheme", "Bipara", "-configuration", "Release", "-destination", "platform=macOS,arch=arm64", "-derivedDataPath", str(derived), "CODE_SIGNING_ALLOWED=NO", "build"], env, logs / "native.log")
+    run_logged(["xcodebuild", "-project", "Bipara.xcodeproj", "-scheme", "Bipara", "-configuration", "Release", "-destination", "generic/platform=macOS", f"ARCHS={architecture()}", "ONLY_ACTIVE_ARCH=NO", "-derivedDataPath", str(derived), "CODE_SIGNING_ALLOWED=NO", "build"], env, logs / "native.log")
     app = derived / "Build/Products/Release/Bipara.app"
     resources = app / "Contents/Resources"
     shutil.copy2(ROOT / "LICENSE", resources / "LICENSE")
@@ -214,7 +233,7 @@ def build_release(tag: str) -> None:
         staging.mkdir()
         command("ditto", str(app), str(staging / "Bipara.app"))
         (staging / "Applications").symlink_to("/Applications")
-        dmg = output / assets(tag)[0]
+        dmg = output / assets(tag, architecture())[0]
         command("hdiutil", "create", "-volname", "Bipara", "-srcfolder", str(staging), "-format", "UDZO", str(dmg))
         if mode == "developer-id":
             command("codesign", "--sign", identity, "--timestamp", str(dmg))
@@ -237,29 +256,33 @@ def build_release(tag: str) -> None:
         finally:
             command("hdiutil", "detach", str(mount))
     manifest = {"schema": 2, "tag": tag, "commit": commit, "version": app_version, "build": build_number,
-                "distribution": mode, "runtime_manifest_sha256": digest(ROOT / "licenses/python-runtime/manifest.json"),
-                "architecture": "arm64", "xcode": command("xcodebuild", "-version"),
+                "distribution": mode, "runtime_manifest_sha256": digest(ROOT / "licenses/python-runtime" / ("manifest.json" if architecture() == "arm64" else "manifest-x86_64.json")),
+                "architecture": architecture(), "xcode": command("xcodebuild", "-version"),
                 "python": command("uv", "run", "--project", "Worker", "--no-sync", "python", "--version", env=env),
                 "lock_sha256": digest(ROOT / "Worker/uv.lock"),
                 "prompt_sha256": {p.name: digest(p) for p in sorted((ROOT / "prompts").glob("*.txt"))},
                 "dmg_sha256": digest(dmg)}
-    (output / "release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    (output / "SHA256SUMS").write_text("".join(f"{digest(output / n)}  {n}\n" for n in (assets(tag)[0], assets(tag)[2])))
-    verify_assets(output, tag, commit, mode)
+    (output / assets(tag, architecture())[2]).write_text(json.dumps(manifest, indent=2) + "\n")
+    (output / assets(tag, architecture())[1]).write_text("".join(f"{digest(output / n)}  {n}\n" for n in (assets(tag, architecture())[0], assets(tag, architecture())[2])))
+    verify_assets(output, tag, commit, mode, architecture())
     print(f"release: verified assets in build/release/{tag}")
 
 
-def github_release(tag: str, *, publish: bool, expected_sha: str = "", verified: list[str] | None = None) -> None:
+def github_release(tag: str, *, publish: bool, expected_sha: str = "", verified: list[str] | None = None, tested_macos: str = "") -> None:
     _, _, commit = source(tag, require_checkout=not publish)
     mode = distribution(ref=f"refs/tags/{tag}")
-    if publish and (set(verified or []) != set(REQUIRED_CHECKS) or not re.fullmatch(r"[a-f0-9]{64}", expected_sha)):
-        raise ReleaseError("publication requires the exact checksum and all three installation declarations")
+    if publish and (set(verified or []) != set(REQUIRED_CHECKS) or not re.fullmatch(r"[a-f0-9]{64}", expected_sha)
+                    or not re.fullmatch(r"(?:26|27)\.\d+(?:\.\d+)?", tested_macos)):
+        raise ReleaseError("publication requires the exact checksum, local-install/upgrade declarations and tested macOS 26 or 27 version")
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         raise ReleaseError("GITHUB_REPOSITORY must identify the selected public repository")
     if publish:
-        metadata = json.loads(command("gh", "release", "view", tag, "--repo", repo, "--json", "isDraft,assets"))
-        if not metadata["isDraft"] or {x["name"] for x in metadata["assets"]} != set(assets(tag)):
+        minimum = release_minimum_macos(ref=f"refs/tags/{tag}")
+        if macos_version(tested_macos) < macos_version(minimum):
+            raise ReleaseError("tested macOS is below the tagged package minimum")
+        metadata = json.loads(command("gh", "release", "view", tag, "--repo", repo, "--json", "isDraft,assets,body"))
+        if not metadata["isDraft"] or {x["name"] for x in metadata["assets"]} not in (set(assets(tag)), set(assets(tag)) | set(assets(tag, "x86_64"))):
             raise ReleaseError("publication requires a draft with the exact asset allowlist")
         with tempfile.TemporaryDirectory(prefix="bipara-release-check-") as temp:
             folder = Path(temp)
@@ -272,10 +295,28 @@ def github_release(tag: str, *, publish: bool, expected_sha: str = "", verified:
                 command("spctl", "--assess", "--type", "open", "--context", "context:primary-signature", str(folder / assets(tag)[0]))
             else:
                 command("hdiutil", "verify", str(folder / assets(tag)[0]))
-        command("gh", "release", "edit", tag, "--repo", repo, "--draft=false", "--latest")
+            intel = (folder / assets(tag, "x86_64")[0]).is_file()
+            if intel:
+                intel_dmg = str(folder / assets(tag, "x86_64")[0])
+                if mode == "developer-id":
+                    command("xcrun", "stapler", "validate", intel_dmg)
+                    command("spctl", "--assess", "--type", "open", "--context", "context:primary-signature", intel_dmg)
+                else:
+                    command("hdiutil", "verify", intel_dmg)
+            notes = folder / "release-notes.md"
+            compatibility = ("Compatibility targets: macOS 26 and 27 on Apple Silicon." if macos_version(minimum) == (26, 0, 0)
+                             else f"Apple Silicon package minimum: macOS {minimum} (tagged configuration).")
+            notes.write_text(metadata.get("body", "").rstrip() + "\n\n"
+                             + compatibility + "\n\n"
+                             f"Installation and upgrade of the Apple silicon DMG were validated on macOS {tested_macos}. "
+                             "This is local-machine evidence, not clean-machine or cross-version qualification. "
+                             "Other macOS versions have not been maintainer-tested for this package; users must verify their own environment.\n\n"
+                             f"Tested DMG SHA-256: `{expected_sha}`\n"
+                             + ("\nThe Intel installer targets compatible Intel Macs running macOS 26 only. It has not received maintainer runtime acceptance.\n" if intel else ""))
+            command("gh", "release", "edit", tag, "--repo", repo, "--notes-file", str(notes), "--draft=false", "--latest")
     else:
         folder = ROOT / "build/release" / tag
-        verify_assets(folder, tag, commit, mode)
+        verify_assets(folder, tag, commit, mode, architecture())
         existing = subprocess.run(["gh", "release", "view", tag, "--repo", repo, "--json", "isDraft"], capture_output=True, text=True)
         if existing.returncode == 0:
             if not json.loads(existing.stdout)["isDraft"]:
@@ -284,7 +325,7 @@ def github_release(tag: str, *, publish: bool, expected_sha: str = "", verified:
             trust = "Ad-hoc signed; not Developer ID signed or notarized. macOS may require Open Anyway in Privacy & Security. " if mode == "ad-hoc" else "Developer ID signed and notarized. "
             command("gh", "release", "create", tag, "--repo", repo, "--verify-tag", "--draft", "--title", tag,
                     "--notes", trust + "Experimental native bilingual reader. See the bundled manifest, checksums and repository validation status.")
-        command("gh", "release", "upload", tag, "--repo", repo, "--clobber", *(str(folder / n) for n in assets(tag)))
+        command("gh", "release", "upload", tag, "--repo", repo, "--clobber", *(str(folder / n) for n in assets(tag, architecture())))
     print("release: published" if publish else "release: draft assets uploaded")
 
 
@@ -294,6 +335,7 @@ def main() -> int:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--sha256", default="")
     parser.add_argument("--verified", action="append", choices=REQUIRED_CHECKS, default=[])
+    parser.add_argument("--tested-macos", default="", help="Exact macOS 26 or 27 version used for local installation and upgrade acceptance")
     args = parser.parse_args()
     try:
         if args.operation == "preflight":
@@ -302,7 +344,7 @@ def main() -> int:
         elif args.operation == "build":
             build_release(args.tag)
         else:
-            github_release(args.tag, publish=args.operation == "publish", expected_sha=args.sha256, verified=args.verified)
+            github_release(args.tag, publish=args.operation == "publish", expected_sha=args.sha256, verified=args.verified, tested_macos=args.tested_macos)
     except (ReleaseError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         print(f"release: {error if isinstance(error, ReleaseError) else 'invalid configuration or tool response'}", file=sys.stderr)
         return 1

@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+export BIPARA_TARGET_ARCH="${BIPARA_TARGET_ARCH:-$(uname -m)}"
 if [ "${1:-}" != --development ]; then
   exec python3 "$ROOT/script/release.py" build "$@"
 fi
@@ -59,7 +60,7 @@ DERIVED="$ROOT/build/native-release"
 # new nested worker ("nested code is modified or invalid").
 rm -rf "$DERIVED"
 xcodebuild -project Bipara.xcodeproj -scheme Bipara -configuration Release \
-  -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED" build
+  -destination "platform=macOS,arch=$BIPARA_TARGET_ARCH" "ARCHS=$BIPARA_TARGET_ARCH" -derivedDataPath "$DERIVED" build
 
 APP_PATH="$DERIVED/Build/Products/Release/Bipara.app"
 verify_bundle "$APP_PATH"
@@ -68,7 +69,7 @@ step "Assemble DMG staging"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
   "$APP_PATH/Contents/Info.plist")"
 STAGING="$ROOT/build/dmg-staging"
-DMG="$ROOT/build/dist/Bipara-$VERSION-arm64.dmg"
+DMG="$ROOT/build/dist/Bipara-$VERSION-$BIPARA_TARGET_ARCH.dmg"
 rm -rf "$STAGING"
 mkdir -p "$STAGING" "$ROOT/build/dist"
 /usr/bin/ditto "$APP_PATH" "$STAGING/Bipara.app"

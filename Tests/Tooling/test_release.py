@@ -18,6 +18,9 @@ spec.loader.exec_module(release)
 
 class ReleaseTests(unittest.TestCase):
     def setUp(self):
+        env = patch.dict(release.os.environ, {"BIPARA_TARGET_ARCH": "arm64"})
+        env.start()
+        self.addCleanup(env.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.git("init", "-q")
@@ -81,9 +84,19 @@ class ReleaseTests(unittest.TestCase):
 
     def test_publish_refuses_missing_installation_evidence_before_network(self):
         with patch.object(release, "source", return_value=("0.1.0", "1", self.commit)), patch.object(release, "distribution", return_value="ad-hoc"), patch.object(release, "command") as network:
-            with self.assertRaises(release.ReleaseError):
-                release.github_release("v0.1.0", publish=True, expected_sha="a" * 64, verified=["clean-install"])
+            for checks, os_version in ((["local-install"], "27.0.1"), (["upgrade"], "26.0"),
+                                       (["clean-install", "upgrade", "minimum-os"], "27.0.1"),
+                                       (list(release.REQUIRED_CHECKS), ""), (list(release.REQUIRED_CHECKS), "15.8"),
+                                       (list(release.REQUIRED_CHECKS), "28.0"), (list(release.REQUIRED_CHECKS), "27.0.1\ninjected")):
+                with self.subTest(checks=checks, os_version=os_version), self.assertRaises(release.ReleaseError):
+                    release.github_release("v0.1.0", publish=True, expected_sha="a" * 64, verified=checks, tested_macos=os_version)
             network.assert_not_called()
+
+    def test_release_accepts_major_minor_deployment_configuration(self):
+        with patch.object(release, "ROOT", self.root):
+            for value in ("26.0", "26.0.1"):
+                (self.root / "Config/Version.xcconfig").write_text(f"BIPARA_RELEASE_MINIMUM_MACOS = {value}\n")
+                self.assertEqual(release.release_minimum_macos(), value)
 
     def test_distribution_policy_and_manifest_cannot_silently_change_mode(self):
         self.assertEqual(release.distribution(self.root, "refs/tags/v0.1.0"), "ad-hoc")
@@ -93,6 +106,41 @@ class ReleaseTests(unittest.TestCase):
         (self.root / "Config/Distribution.json").write_text('{"mode":"unknown"}')
         with self.assertRaises(release.ReleaseError):
             release.distribution(self.root)
+
+    def test_dual_architecture_assets_verify_both_packages(self):
+        folder = self.prepare_assets()
+        names = release.assets("v0.1.0", "x86_64")
+        (folder / names[0]).write_bytes(b"intel disk image")
+        manifest = json.loads((folder / "release-manifest.json").read_text())
+        manifest.update(architecture="x86_64", dmg_sha256=release.digest(folder / names[0]))
+        (folder / names[2]).write_text(json.dumps(manifest))
+        (folder / names[1]).write_text("".join(f"{release.digest(folder / n)}  {n}\n" for n in (names[0], names[2])))
+        release.verify_assets(folder, "v0.1.0", self.commit, "ad-hoc")
+        (folder / names[0]).write_bytes(b"tampered intel disk image")
+        with self.assertRaisesRegex(release.ReleaseError, "DMG checksum"):
+            release.verify_assets(folder, "v0.1.0", self.commit, "ad-hoc")
+
+    def test_intel_binary_checks_use_the_intel_slice(self):
+        binary = self.root / "intel"
+        binary.write_bytes(b"\xcf\xfa\xed\xfe")
+        with patch.dict(release.os.environ, {"BIPARA_TARGET_ARCH": "x86_64"}), patch.object(release, "command", return_value="    minos 26.0") as call:
+            release.verify_minimum_macos(binary, "26.0")
+            self.assertEqual(call.call_args.args[3], "x86_64")
+
+    def test_native_architecture_default_and_unsupported_target(self):
+        with patch.dict(release.os.environ, {}, clear=True), patch.object(release.platform, "machine", return_value="x86_64"):
+            self.assertEqual(release.architecture(), "x86_64")
+        with self.assertRaises(release.ReleaseError):
+            release.assets("v0.1.0", "unsupported")
+
+    def test_publish_rejects_acceptance_below_tagged_minimum(self):
+        with patch.object(release, "source", return_value=("0.1.0", "1", self.commit)), patch.object(release, "distribution", return_value="ad-hoc"), \
+             patch.object(release, "command", return_value="BIPARA_RELEASE_MINIMUM_MACOS = 27.0.1\n") as call, \
+             patch.dict(release.os.environ, {"GITHUB_REPOSITORY": "example/project"}):
+            for tested in ("26.0", "27.0"):
+                with self.assertRaisesRegex(release.ReleaseError, "below the tagged"):
+                    release.github_release("v0.1.0", publish=True, expected_sha="a" * 64, verified=list(release.REQUIRED_CHECKS), tested_macos=tested)
+            self.assertTrue(all(args.args[:2] == ("git", "show") for args in call.call_args_list))
 
     def test_tool_failure_does_not_print_sensitive_output(self):
         secret = "synthetic-private-material"
@@ -126,12 +174,16 @@ class ReleaseTests(unittest.TestCase):
     def test_release_rejects_native_dependencies_above_the_deployment_target(self):
         binary = self.root / "fixture.so"
         binary.write_bytes(b"\xcf\xfa\xed\xfe")
-        with patch.object(release, "command", return_value="cmd LC_BUILD_VERSION\n    minos 27.0.2"):
-            with self.assertRaisesRegex(release.ReleaseError, r"exceeds macOS 27\.0\.1"):
-                release.verify_minimum_macos(binary, "27.0.1")
-        for build in ("cmd LC_BUILD_VERSION\n    minos 27.0.1", "cmd LC_VERSION_MIN_MACOSX\n  cmdsize 16\n  version 11.0"):
+        for target in ("26.0.1", "26.1", "27.0"):
+            with patch.object(release, "command", return_value=f"cmd LC_BUILD_VERSION\n    minos {target}"):
+                with self.assertRaisesRegex(release.ReleaseError, r"exceeds macOS 26\.0"):
+                    release.verify_minimum_macos(binary, "26.0")
+        for build in ("cmd LC_BUILD_VERSION\n    minos 26.0", "cmd LC_BUILD_VERSION\n    minos 26.0.0", "cmd LC_VERSION_MIN_MACOSX\n  cmdsize 16\n  version 11.0"):
             with patch.object(release, "command", return_value=build):
-                release.verify_minimum_macos(binary, "27.0.1")
+                release.verify_minimum_macos(binary, "26.0")
+        with patch.object(release, "command", return_value="cmd LC_BUILD_VERSION\n    sdk 27.2"):
+            with self.assertRaises(release.ReleaseError):
+                release.verify_minimum_macos(binary, "26.0")
 
     def test_notarized_policy_still_requires_ticket_checks(self):
         folder = self.prepare_assets()
@@ -144,6 +196,8 @@ class ReleaseTests(unittest.TestCase):
 
         def fake_command(*args, **kwargs):
             calls.append(args)
+            if args[:2] == ("git", "show"):
+                return "BIPARA_RELEASE_MINIMUM_MACOS = 26.0\n"
             if args[:3] == ("gh", "release", "view"):
                 return json.dumps({"isDraft": True, "assets": [{"name": name} for name in release.assets("v0.1.0")]})
             if args[:3] == ("gh", "release", "download"):
@@ -152,36 +206,54 @@ class ReleaseTests(unittest.TestCase):
             return ""
 
         with patch.object(release, "source", return_value=("0.1.0", "1", self.commit)), patch.object(release, "distribution", return_value="developer-id"), patch.object(release, "command", side_effect=fake_command), patch.dict(release.os.environ, {"GITHUB_REPOSITORY": "example/project"}), contextlib.redirect_stdout(io.StringIO()):
-            release.github_release("v0.1.0", publish=True, expected_sha=release.digest(folder / release.assets("v0.1.0")[0]), verified=list(release.REQUIRED_CHECKS))
+            release.github_release("v0.1.0", publish=True, expected_sha=release.digest(folder / release.assets("v0.1.0")[0]), verified=list(release.REQUIRED_CHECKS), tested_macos="26.0")
         self.assertTrue(any(args[:3] == ("xcrun", "stapler", "validate") for args in calls))
         self.assertTrue(any(args[0] == "spctl" for args in calls))
 
     def test_publish_binds_installation_declarations_to_downloaded_bytes(self):
         folder = self.prepare_assets()
         calls = []
+        minimum = "26.0"
 
         def fake_command(*args, **kwargs):
             calls.append(args)
+            if args[:2] == ("git", "show"):
+                self.assertEqual(args[2], "refs/tags/v0.1.0:Config/Version.xcconfig")
+                return f"BIPARA_RELEASE_MINIMUM_MACOS = {minimum}\n"
             if args[:3] == ("gh", "release", "view"):
-                return json.dumps({"isDraft": True, "assets": [{"name": name} for name in release.assets("v0.1.0")]})
+                return json.dumps({"isDraft": True, "assets": [{"name": name} for name in release.assets("v0.1.0")], "body": "Existing trust and release notes."})
             if args[:3] == ("gh", "release", "download"):
                 target = Path(args[-1])
                 for item in folder.iterdir():
                     shutil.copyfile(item, target / item.name)
+            if args[:3] == ("gh", "release", "edit"):
+                notes = Path(args[args.index("--notes-file") + 1]).read_text()
+                self.assertIn("Existing trust and release notes.", notes)
+                if minimum == "26.0":
+                    self.assertIn("macOS 26 and 27 on Apple Silicon", notes)
+                else:
+                    self.assertIn("package minimum: macOS 27.0.1", notes)
+                    self.assertNotIn("macOS 26 and 27", notes)
+                self.assertIn("validated on macOS 27.0.1", notes)
+                self.assertIn("not clean-machine or cross-version qualification", notes)
+                self.assertIn(release.digest(folder / release.assets("v0.1.0")[0]), notes)
             return ""
 
         with patch.object(release, "source", return_value=("0.1.0", "1", self.commit)), patch.object(release, "distribution", return_value="ad-hoc"), \
              patch.object(release, "command", side_effect=fake_command), \
              patch.dict(release.os.environ, {"GITHUB_REPOSITORY": "example/project"}):
             with self.assertRaises(release.ReleaseError):
-                release.github_release("v0.1.0", publish=True, expected_sha="0" * 64, verified=list(release.REQUIRED_CHECKS))
+                release.github_release("v0.1.0", publish=True, expected_sha="0" * 64, verified=list(release.REQUIRED_CHECKS), tested_macos="27.0.1")
             self.assertFalse(any(args[:3] == ("gh", "release", "edit") for args in calls))
             sha = release.digest(folder / release.assets("v0.1.0")[0])
             with contextlib.redirect_stdout(io.StringIO()):
-                release.github_release("v0.1.0", publish=True, expected_sha=sha, verified=list(release.REQUIRED_CHECKS))
+                release.github_release("v0.1.0", publish=True, expected_sha=sha, verified=list(release.REQUIRED_CHECKS), tested_macos="27.0.1")
             self.assertFalse(any(args[0] in {"xcrun", "spctl", "security"} for args in calls))
             self.assertTrue(any(args[:2] == ("hdiutil", "verify") for args in calls))
             self.assertEqual(sum(args[:3] == ("gh", "release", "edit") for args in calls), 1)
+            minimum = "27.0.1"
+            with contextlib.redirect_stdout(io.StringIO()):
+                release.github_release("v0.1.0", publish=True, expected_sha=sha, verified=list(release.REQUIRED_CHECKS), tested_macos="27.0.1")
 
 
 if __name__ == "__main__":

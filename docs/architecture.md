@@ -10,9 +10,9 @@
 | Providers | OpenAI Responses and Anthropic Messages through one worker boundary, independent of vendor labels/model catalogs, with editable connections and four effort levels. Retain old Chat Completions profiles for existing configurations/jobs. |
 | Framework | LangChain first; explicitly authored LangGraph orchestration deferred |
 | UI | Native reading, Settings and multiple document tabs; English-default interface; System-default appearance with Light/Dark overrides |
-| Implementation baseline | Swift 6, arm64 and CPython 3.13; the first public installer requires macOS 27.0.1 or later |
+| Implementation baseline | Swift 6, arm64/x86_64 and CPython 3.13; compatibility targets are macOS 26/27 on Apple Silicon and macOS 26 on compatible Intel Macs, with minimum deployment version 26.0 and local-machine acceptance |
 | Validation | Native app and packaged worker run on the development machine; M0 feasibility passed, M1 native acceptance partial; see [current evidence](validation.md) |
-| Distribution | MIT; tagged formal DMGs; Intel/mobile and App Store qualification remain separate |
+| Distribution | MIT; tagged formal DMGs; separate arm64/x86_64 installers; mobile and App Store qualification remain separate |
 
 The bundled process trades additional packaging/signing work for a narrow provider boundary. iOS/iPadOS will need a separately evaluated execution layer. Packaging feasibility and distribution qualification are separate.
 
@@ -58,7 +58,7 @@ M0 in the development plan checks the pipe worker as a **packaged app component*
 
 A test-only direct-call baseline compares equivalent model requests with LangChain in M4. Do not ship both paths. If measured complexity is high **and** benefit is limited, apply the owner's [complexity rule](design-principles.md#complexity-decisions) before continuing beyond the already approved scope; do not infer that every hard implementation detail needs new permission.
 
-The runtime must not install packages or require Python from the end user's system. Packaging failures cannot justify an unapproved server, daemon, additional language, or embedded-interpreter rewrite. Real calls, clean-machine behavior, signing/notarization and native UI remain distinct evidence gates.
+The runtime must not install packages or require Python from the end user's system. Packaging failures cannot justify an unapproved server, daemon, additional language, or embedded-interpreter rewrite. Real calls, local installation/upgrade, signing/notarization and native UI remain distinct evidence gates. Local acceptance does not establish clean-machine or cross-version behavior.
 
 ## Future boundaries
 
