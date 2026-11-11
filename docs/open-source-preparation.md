@@ -2,7 +2,7 @@
 
 ## Delivery contract
 
-Bipara is an LLM-powered native macOS translation and bilingual reading app. It uses the MIT license and initially targets Apple Silicon. Source publication and formal installer qualification are separate gates. Every formal version requires a protected `vMAJOR.MINOR.PATCH` tag and an installable GitHub Release DMG built from that tag. Experimental maturity is disclosed independently of whether an installation package is provided.
+Bipara is an LLM-powered native macOS translation and bilingual reading app. It uses the MIT license and targets Apple silicon on macOS 26/27 plus compatible Intel Macs on macOS 26. Intel installers receive build/integrity checks without maintainer runtime acceptance. Source publication and formal installer qualification are separate gates. Every formal version requires a protected `vMAJOR.MINOR.PATCH` tag and an installable GitHub Release DMG built from that tag. Experimental maturity is disclosed independently of whether an installation package is provided.
 
 ## Source publication gates
 
@@ -28,7 +28,7 @@ Issue templates and [support guidance](../SUPPORT.md) provide contributor entry 
 | Providers | Bounded real-provider checks for semantic quality, compatibility, latency and cost |
 | Runtime and licenses | Qualified bundled Python build, verified dependency provenance and complete required notices |
 | Packaging | Version/tag consistency, valid nested code signatures and an explicit tagged distribution policy; initial ad-hoc packages disclose missing Developer ID/notarization |
-| Installation | Clean installation, upgrade and minimum-OS acceptance against the exact final DMG checksum |
+| Installation | Local installation and upgrade acceptance against the exact final DMG checksum, with the tested macOS version and untested-system limits disclosed; static checks of all bundled binary deployment targets |
 | Delivery | Protected tag build produces a draft; publication verifies the exact assets and installation declarations |
 
 Follow [the release procedure](releasing.md) for commands and package acceptance. Default offline tests do not establish real-provider, native UI or distribution qualification. Keep full execution logs and captures out of tracked documentation; record concise outcomes and limitations in the validation status.

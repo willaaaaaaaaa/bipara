@@ -15,7 +15,7 @@ Provide a native macOS translation and bilingual reading app powered by large la
 | R3 | Provide a side-by-side layout with source on the left and translation on the right. |
 | R4 | Provide a paragraph-based layout showing source and translated paragraphs together in a single alternating reading flow. |
 | R5 | Hovering over source text or selecting words/phrases should reveal corresponding translated content. Exact granularity and fallback behavior need validation. |
-| R6 | Deliver a native macOS app first and preserve the possibility of later iPad/iPhone versions. |
+| R6 | Deliver a native macOS app first, targeting macOS 26 and 27 on Apple Silicon, plus macOS 26 on compatible Intel Macs with minimum deployment version 26.0. Acceptance covers the maintainer's local OS only; users verify compatibility on other target systems. Preserve the possibility of later iPad/iPhone versions. |
 | R7 | Run business logic locally with the app, without a separately deployed local or cloud server. |
 | R8 | Use one custom model form with Name, Protocol, Model ID, Reasoning Effort, API Base URL and API key, in that order. New text fields start empty for manual entry; protocol offers OpenAI Responses and Anthropic Messages, and effort offers Off, Low, Medium and High. Remove presets, vendor/catalog controls and advanced settings; preserve existing configurations/jobs. |
 | R9 | Trial LangChain first; consider explicit LangGraph orchestration later if a concrete need appears. |

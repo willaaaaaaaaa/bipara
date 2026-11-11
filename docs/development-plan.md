@@ -13,7 +13,7 @@ Each document owns its topic. Resolve material contract conflicts before changin
 | M2 | Multiplexed IPC, task fairness, cancellation/draining, restart and stale-result isolation |
 | M3 | Offline provider/prompt composition, output validation and message/privacy canaries |
 | M4 | Bounded opt-in real-provider semantic, compatibility, latency and cost evidence |
-| M5 | Distribution under the tagged policy (initially ad-hoc without notarization), minimum OS, clean-machine installation, upgrades and accessibility |
+| M5 | Distribution under the tagged policy (initially ad-hoc without notarization), binary deployment-target checks, local installation and upgrades with the tested OS recorded, and accessibility |
 
 Acceptance is cumulative but reported per check and tested revision. Fixtures do not qualify real models, and copied development bundles do not qualify a clean Mac. Use [current validation status](validation.md) and [open-source preparation](open-source-preparation.md) for remaining release work.
 

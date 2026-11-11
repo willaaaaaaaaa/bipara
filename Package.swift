@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Bipara",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS("26.0")],
     products: [
         .library(name: "BiparaCore", targets: ["BiparaCore"]),
         .library(name: "BiparaWorker", targets: ["BiparaWorker"]),

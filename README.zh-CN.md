@@ -12,11 +12,11 @@ Bipara 是一款由大语言模型（LLM）驱动的原生 macOS 翻译与双语
 
 源码构建请按下方开发说明操作。源码就绪需要公共内容、历史与身份审查，以及离线回归检查；当前结果和阻碍见[验证状态](docs/validation.md)。
 
-每个公开安装版本必须有受保护的版本 tag 和可安装 arm64 DMG，并针对该包的精确校验和完成干净安装、升级和最低系统验收。首版采用 ad-hoc 签名，未经 Apple 公证，也没有经过验证的 Developer ID 身份；macOS 可能要求针对本应用选择“仍要打开”。详见[安装与信任说明](docs/releasing.md#install-and-publish)。目前尚无通过验收的下载包。
+每个公开安装版本必须有受保护的版本 tag 和可安装 arm64 DMG，并针对该包的精确校验和在维护者本机完成安装和升级验收。发布说明记录实际测试的 macOS 版本；本机结果不代表干净机器或跨系统验收。首版采用 ad-hoc 签名，未经 Apple 公证，也没有经过验证的 Developer ID 身份；macOS 可能要求针对本应用选择“仍要打开”。详见[安装与信任说明](docs/releasing.md#install-and-publish)。目前尚无通过验收的下载包。
 
 在 Settings 中添加模型配置，填写实际模型、API Base URL 和密钥，选择 Active Model。粘贴文本或打开 UTF-8 txt 文件后翻译；切换阅读布局无需重新翻译。可保存为 bipara 文档，或显式导出、复制文本。发送文档前请阅读 [隐私说明](PRIVACY.md)。
 
-首个公开安装包面向 Apple Silicon，需要 macOS 27.0.1 或更高版本。已验证的环境和安装证据见验收状态。VoiceOver、纯键盘流程、增强对比度和减少动态效果仍需完整原生验收。
+Bipara 面向 Apple Silicon 上的 macOS 26 和 27，以及兼容 Intel Mac 上的 macOS 26，最低部署版本为 macOS 26.0。两种芯片使用独立安装包；macOS 27 不支持 Intel，无法运行 macOS 26 的旧款 Intel Mac 不在支持范围。Intel 安装包不要求维护者运行验收。验收仅在维护者本机系统上进行；其他目标系统未经维护者实测，用户需自行确认其设备上的兼容性。实际测试环境和安装证据见验收状态及各版本发布说明。VoiceOver、纯键盘流程、增强对比度和减少动态效果仍需完整原生验收。
 
 ## 开发
 

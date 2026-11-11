@@ -3,6 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+export BIPARA_TARGET_ARCH="${BIPARA_TARGET_ARCH:-$(uname -m)}"
 if [ -f script/env.local.sh ]; then . script/env.local.sh; fi
 MODE="${1:---verify}"
 APP_PATH="$ROOT/build/native/Build/Products/Debug/Bipara.app"
@@ -25,7 +26,7 @@ if [ -f "$PID_FILE" ]; then
 fi
 "$ROOT/script/build_worker.sh"
 xcodebuild -project Bipara.xcodeproj -scheme Bipara -configuration Debug \
-  -destination 'platform=macOS,arch=arm64' -derivedDataPath build/native build
+  -destination "platform=macOS,arch=$BIPARA_TARGET_ARCH" "ARCHS=$BIPARA_TARGET_ARCH" -derivedDataPath build/native build
 [ -x "$APP_PATH/Contents/MacOS/Bipara" ] || fail "fresh app executable missing"
 HELPER="$APP_PATH/Contents/Helpers/BiparaWorker.app"
 [ -x "$HELPER/Contents/MacOS/BiparaWorker" ] || fail "embedded worker missing"

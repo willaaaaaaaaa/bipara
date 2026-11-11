@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
+import platform
 import shutil
 import sys
 import tarfile
@@ -63,8 +65,12 @@ def verify_extracted(archive: Path, prefix: Path) -> None:
 
 
 def prepare() -> Path:
-    manifest = json.loads((ROOT / "licenses/python-runtime/manifest.json").read_text())
-    cache = ROOT / "build/release-runtime"
+    arch = os.environ.get("BIPARA_TARGET_ARCH", platform.machine())
+    if arch not in {"arm64", "x86_64"}:
+        raise ValueError("unsupported target architecture")
+    name = "manifest.json" if arch == "arm64" else "manifest-x86_64.json"
+    manifest = json.loads((ROOT / "licenses/python-runtime" / name).read_text())
+    cache = ROOT / ("build/release-runtime" if arch == "arm64" else "build/release-runtime-x86_64")
     archive = cache / "cpython.tar.gz"
     download_verified(manifest["runtime_url"], manifest["archive_sha256"], archive)
     runtime = cache / "python"
