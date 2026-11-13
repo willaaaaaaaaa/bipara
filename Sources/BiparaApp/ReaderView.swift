@@ -6,6 +6,20 @@ public struct WorkspaceView: View {
     @ObservedObject private var workspace: WorkspaceStore
     @ObservedObject private var settings: SettingsStore
     @Environment(\.openWindow) private var openWindow
+    @State private var projectedMarkdown: ProjectedMarkdown?
+
+    private struct ProjectionKey: Equatable {
+        let session: UUID
+        let revision: Int
+        let translationCount: Int
+        let jobID: UUID?
+        let mode: MarkdownReadingMode
+    }
+
+    private struct ProjectedMarkdown {
+        let key: ProjectionKey
+        let value: MarkdownReadingProjection
+    }
 
     public init(runtime: AppRuntime) { self.runtime = runtime; workspace = runtime.workspace; settings = runtime.settings }
     private func t(_ key:String) -> String { runtime.text(key) }
@@ -17,15 +31,7 @@ public struct WorkspaceView: View {
                 if runtime.editing.contains(tab.sessionID) { input(tab).id(tab.sessionID) }
                 else {
                     readingKey(tab)
-                    NativeReadingSurface(sessionID:tab.sessionID,document:tab.document,layout:tab.layout,typography:settings.record.typography,
-                        presentation:runtime.reading[tab.sessionID] ?? .init(),language:settings.record.interfaceLanguage,
-                        readingWidth:settings.record.readingWidth,correspondenceColor:settings.record.correspondenceColor,jobState:tab.job.state,
-                        onSelect:{runtime.selected($0,session:tab.sessionID)},onHover:{runtime.hover($0,session:tab.sessionID)},
-                        onAnchor:{ anchor in
-                            if runtime.reading[tab.sessionID]?.anchors[tab.layout] != anchor {
-                                runtime.reading[tab.sessionID,default:.init()].anchors[tab.layout] = anchor
-                            }
-                        }).frame(maxWidth:.infinity,maxHeight:.infinity)
+                    documentReader(tab)
                     status(tab)
                 }
             } else {
@@ -40,6 +46,7 @@ public struct WorkspaceView: View {
                 }.frame(maxWidth:.infinity,maxHeight:.infinity)
             }
         }
+        .background(Color(nsColor: .textBackgroundColor))
         .frame(minWidth:800,minHeight:560)
         .toolbar {
             ToolbarItem(placement:.navigation) { Button(action:runtime.newTab){Label(t("New Translation"),systemImage:"plus")}.accessibilityIdentifier("new.tab") }
@@ -47,17 +54,31 @@ public struct WorkspaceView: View {
                 if let tab = workspace.activeTab {
                     Picker(t("Reading layout"),selection:Binding(get:{tab.layout},set:{runtime.setLayout($0)})) {
                         Image(systemName:"rectangle.split.2x1").accessibilityLabel(t("Side by side")).tag(LayoutMode.sideBySide)
-                        Image(systemName:"rectangle.split.1x2").accessibilityLabel(t("Paragraphs")).tag(LayoutMode.paragraphs)
-                    }.pickerStyle(.segmented).frame(width:86).help(t("Side by side / Paragraphs")).accessibilityIdentifier("reading.layout").disabled(runtime.editing.contains(tab.sessionID))
+                        Image(systemName: "rectangle.split.1x2").accessibilityLabel(t(tab.document.isMarkdown ? "Sections" : "Paragraphs")).tag(LayoutMode.paragraphs)
+                    }.pickerStyle(.segmented).frame(width: 86).help(t(tab.document.isMarkdown ? "Side by side / Sections" : "Side by side / Paragraphs"))
+                        .accessibilityIdentifier("reading.layout").disabled(runtime.editing.contains(tab.sessionID))
+                    if tab.document.isMarkdown && tab.document.canUseMarkdownPlan && !runtime.editing.contains(tab.sessionID) {
+                        Picker(t("Reading mode"), selection: Binding(
+                            get: { tab.document.readingMode },
+                            set: { runtime.changeReadingMode($0, session: tab.sessionID) }
+                        )) {
+                            Text(t("Rendered")).tag(MarkdownReadingMode.rendered)
+                            Text(t("Source")).tag(MarkdownReadingMode.source)
+                        }
+                        .pickerStyle(.segmented)
+                        .accessibilityIdentifier("reading.mode")
+                    }
                     activeModelMenu
                     Button(primaryTitle(tab),action:runtime.primaryAction)
-                        .disabled(runtime.closing.contains(tab.sessionID) || (![.queued,.running].contains(tab.job.state) && (runtime.composing.contains(tab.sessionID) || tab.draftText.isWhitespaceOnly || tab.draftText.isEmpty)))
+                        .disabled(runtime.closing.contains(tab.sessionID) || (tab.hasNoProseToTranslate && !runtime.editing.contains(tab.sessionID)) || (![.queued,.running].contains(tab.job.state) && (runtime.composing.contains(tab.sessionID) || tab.draftText.isWhitespaceOnly || tab.draftText.isEmpty)))
                         .accessibilityIdentifier("translation.primary")
                     Menu {
                         Button(t("Edit Original")){runtime.editing.insert(tab.sessionID)}
                         Button(t("Copy Original")){runtime.copy(original:true)}
-                        Button(t("Copy Translation")){runtime.copy(original:false)}.disabled(tab.job.state != .completed)
-                        Button(t("Retranslate")){Task{await runtime.translate(tab.sessionID,retranslate:true)}}.disabled([.queued,.running].contains(tab.job.state))
+                        Button(t("Copy Translation")) { runtime.copy(original: false) }.disabled(!tab.canCopyTranslation)
+                        formatPicker(tab)
+                        Button(t("Retranslate")) { Task { await runtime.translate(tab.sessionID, retranslate: true) } }
+                            .disabled([.queued, .running].contains(tab.job.state) || tab.hasNoProseToTranslate)
                     } label:{Image(systemName:"ellipsis.circle")}.accessibilityLabel(t("Document actions"))
                 }
             }
@@ -158,30 +179,103 @@ public struct WorkspaceView: View {
         }.frame(height:34)
     }
 
+    @ViewBuilder
+    private func documentReader(_ tab: TabState) -> some View {
+        let document = tab.document
+        let key = ProjectionKey(session: tab.sessionID, revision: document.sourceRevision, translationCount: document.translations.count,
+                                jobID: document.jobSnapshot?.jobID, mode: document.readingMode)
+        let projection = projectedMarkdown.flatMap { value in
+            value.key.session == key.session && value.key.revision == key.revision ? value.value : nil
+        }
+        Group {
+            if !document.isMarkdown || projection != nil {
+                NativeReadingSurface(sessionID: tab.sessionID, document: document, layout: tab.layout, typography: settings.record.typography,
+                    presentation: runtime.reading[tab.sessionID] ?? .init(), language: settings.record.interfaceLanguage,
+                    readingWidth: settings.record.readingWidth, correspondenceColor: settings.record.correspondenceColor, jobState: tab.job.state,
+                    markdown: projection,
+                    onSelect: { runtime.selected($0, session: tab.sessionID) }, onHover: { runtime.hover($0, session: tab.sessionID) },
+                    onAnchor: { anchor in
+                        if runtime.reading[tab.sessionID]?.anchors[tab.layout] != anchor {
+                            runtime.reading[tab.sessionID, default: .init()].anchors[tab.layout] = anchor
+                        }
+                    })
+                    .id(tab.sessionID)
+            } else {
+                ProgressView().accessibilityLabel(t("Preparing Markdown"))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: key) {
+            guard document.isMarkdown, projectedMarkdown?.key != key else { return }
+            let value = await Task.detached { document.markdownProjection() }.value
+            guard !Task.isCancelled, let value else { return }
+            projectedMarkdown = ProjectedMarkdown(key: key, value: value)
+        }
+    }
+
+    private func formatPicker(_ tab: TabState) -> some View {
+        Picker(t("Format"), selection: Binding(
+            get: { tab.draftFormat },
+            set: { runtime.changeFormat($0, session: tab.sessionID) }
+        )) {
+            Text(t("Auto")).tag(ContentFormat.auto)
+            Text(t("Markdown")).tag(ContentFormat.markdown)
+            Text(t("Plain Text")).tag(ContentFormat.plainText)
+        }
+        .accessibilityIdentifier("document.format")
+        .disabled(runtime.composing.contains(tab.sessionID))
+    }
+
     private func input(_ tab:TabState)->some View {
         VStack(alignment:.leading,spacing:16) {
             Text(t(tab.document.source.isEmpty ? "New Translation" : "Edit Original")).font(.title2.weight(.semibold))
             Text(t("Paste Chinese or English text to get started.")).foregroundStyle(.secondary)
             SourceEditorView(text:Binding(get:{workspace.tabs.first(where:{$0.sessionID==tab.sessionID})?.draftText ?? ""},set:{value in mutate(tab.sessionID){$0.draftText=value}}),
-                isComposing:Binding(get:{runtime.composing.contains(tab.sessionID)},set:{value in if value != runtime.composing.contains(tab.sessionID) {if value{runtime.composing.insert(tab.sessionID)}else{runtime.composing.remove(tab.sessionID)}}}), language:settings.record.interfaceLanguage)
+                isComposing:Binding(get:{runtime.composing.contains(tab.sessionID)},set:{value in if value != runtime.composing.contains(tab.sessionID) {if value{runtime.composing.insert(tab.sessionID)}else{runtime.composing.remove(tab.sessionID)}}}), language:settings.record.interfaceLanguage, typography:settings.record.typography)
             HStack {
-                Text(t("Your original is preserved exactly.")).font(.caption).foregroundStyle(.secondary)
+                formatPicker(tab)
+                if let detected = runtime.formatStatus(tab) {
+                    Text(t("Auto") + " · " + detected)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("document.detectedFormat")
+                }
                 Spacer()
                 if !tab.document.source.isEmpty {
-                    Button(t("Cancel")) {mutate(tab.sessionID){$0.draftText=$0.document.source;$0.draftDirection=$0.document.requestedDirection};runtime.editing.remove(tab.sessionID)}
-                    Button(t("Apply")){Task{do{try await runtime.apply(tab.sessionID)}catch{runtime.report(error,fallback:"The edited text could not be applied.")}}}.disabled(runtime.composing.contains(tab.sessionID))
+                    Button(t("Cancel")) { runtime.cancelEditing(tab.sessionID) }
                 }
+                Button(t("Apply")) {
+                    Task {
+                        do { try await runtime.apply(tab.sessionID) }
+                        catch { runtime.report(error, fallback: "The edited text could not be applied.") }
+                    }
+                }
+                .disabled(runtime.composing.contains(tab.sessionID) || (tab.draftText.isEmpty && tab.document.source.isEmpty))
                 Button(t("Translate")){Task{await runtime.translate(tab.sessionID)}}.buttonStyle(.borderedProminent)
                     .disabled(tab.draftText.isEmpty || tab.draftText.isWhitespaceOnly || runtime.composing.contains(tab.sessionID))
             }
-        }.padding(28).frame(maxWidth:.infinity,maxHeight:.infinity)
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: DraftDetectionKey(generation: tab.draftGeneration, composing: runtime.composing.contains(tab.sessionID))) {
+            await runtime.detectDraftFormat(tab.sessionID)
+        }
     }
+    private struct DraftDetectionKey: Equatable {
+        let generation: Int
+        let composing: Bool
+    }
+
     private func status(_ tab:TabState)->some View {
         let state=runtime.reading[tab.sessionID] ?? .init(), match=state.pinned ?? state.selection ?? state.hover
         return HStack(spacing:12) {
-            if state.analyzing {ProgressView().controlSize(.small);Text(t("Analyzing selection…"))}
+            if !tab.document.canUseMarkdownPlan {
+                Text(t("This Markdown plan is unavailable. Retranslate to rebuild it."))
+            } else if tab.document.isMarkdown && tab.document.units.isEmpty {
+                Text(t("No prose to translate"))
+            } else if state.analyzing {ProgressView().controlSize(.small);Text(t("Analyzing selection…"))}
             else if let match {
-                Text(t(!state.displayedPhraseRanges.isEmpty ? "Suggested phrase correspondence" : match.unitID == nil ? "Paragraph match" : tab.document.units.first(where:{$0.id==match.unitID})?.kind == .fragment ? "Fragment match" : "Sentence match"))
+                Text(t(matchTitle(match, tab: tab, hasPhrase: !state.displayedPhraseRanges.isEmpty)))
                 Button(t("Pin"),action:runtime.pin).disabled(!state.canPin)
                 if state.pinned != nil {Button(t("Clear pin"),action:runtime.clearPin)}
                 Button(t("Reveal counterpart"),action:runtime.reveal)
@@ -191,8 +285,16 @@ public struct WorkspaceView: View {
         }.font(.caption).controlSize(.small).padding(.horizontal,20).padding(.vertical,10).background(.bar)
             .accessibilityElement(children:.contain).accessibilityIdentifier("reading.status")
     }
+    private func matchTitle(_ match: ReadingSelection, tab: TabState, hasPhrase: Bool) -> String {
+        if hasPhrase { return "Suggested phrase correspondence" }
+        if tab.document.isMarkdown { return match.isSection ? "Section match" : "Block match" }
+        guard let unitID = match.unitID else { return "Paragraph match" }
+        return tab.document.units.first(where: { $0.id == unitID })?.kind == .fragment ? "Fragment match" : "Sentence match"
+    }
+
     private func primaryTitle(_ tab:TabState)->String {
-        t([JobState.running:"Cancel",.queued:"Cancel",.paused:"Resume",.failed:"Retry",.completed:"Retranslate"][tab.job.state] ?? "Translate")
+        if !tab.document.canUseMarkdownPlan { return t("Retranslate") }
+        return t([JobState.running:"Cancel",.queued:"Cancel",.paused:"Resume",.failed:"Retry",.completed:"Retranslate"][tab.job.state] ?? "Translate")
     }
     private func mutate(_ session:UUID,_ body:(inout TabState)->Void) {if let i=workspace.index(of:session){workspace.withTab(i,body)}}
 }

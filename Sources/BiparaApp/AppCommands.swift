@@ -24,8 +24,16 @@ public struct AppCommands: Commands {
         CommandGroup(replacing:.saveItem){
             Button(t("Save")){if readerFocused, let session=runtime.activeSession{Task{_ = await runtime.save(session)}}}.keyboardShortcut("s")
                 .disabled(workspace.activeTab==nil || !readerFocused || runtime.activeSession.map{runtime.composing.contains($0)}==true)
-            Button(t("Export Translation…")){runtime.export(bilingual:false)}.disabled(workspace.activeTab==nil || !readerFocused)
-            Button(t("Export Bilingual…")){runtime.export(bilingual:true)}.disabled(workspace.activeTab==nil || !readerFocused)
+            Button(t("Export Translation…")) { runtime.export(bilingual: false) }
+                .disabled(workspace.activeTab?.document.canUseMarkdownPlan != true || !readerFocused)
+            Button(t("Export Bilingual…")) { runtime.export(bilingual: true) }
+                .disabled(workspace.activeTab?.document.canUseMarkdownPlan != true || !readerFocused)
+            if workspace.activeTab?.document.isMarkdown == true {
+                Button(t("Export Translation as Markdown…")) { runtime.export(bilingual: false, markdown: true) }
+                    .disabled(workspace.activeTab?.document.canUseMarkdownPlan != true || !readerFocused)
+                Button(t("Export Bilingual as Markdown…")) { runtime.export(bilingual: true, markdown: true) }
+                    .disabled(workspace.activeTab?.document.canUseMarkdownPlan != true || !readerFocused)
+            }
         }
         // Exactly one localized app-menu Settings command with
         // Command-comma, opening or focusing the single settings window
@@ -38,9 +46,9 @@ public struct AppCommands: Commands {
         CommandMenu(t("Translation")){
             Button(t("Translate / Resume")){
                 if readerFocused, let tab=workspace.activeTab, ![.running,.queued].contains(tab.job.state){runtime.primaryAction()}
-            }.keyboardShortcut(.return,modifiers:.command).disabled(!readerFocused || workspace.activeTab==nil || workspace.activeTab.map{[.running,.queued].contains($0.job.state) || $0.draftText.isEmpty || $0.draftText.isWhitespaceOnly || runtime.composing.contains($0.sessionID) || runtime.closing.contains($0.sessionID)}==true)
+            }.keyboardShortcut(.return,modifiers:.command).disabled(!readerFocused || workspace.activeTab==nil || workspace.activeTab.map{[.running,.queued].contains($0.job.state) || (readingFocused && $0.hasNoProseToTranslate) || $0.draftText.isEmpty || $0.draftText.isWhitespaceOnly || runtime.composing.contains($0.sessionID) || runtime.closing.contains($0.sessionID)}==true)
             Button(t("Side by side")){runtime.setLayout(.sideBySide)}.keyboardShortcut("1").disabled(!readingFocused)
-            Button(t("Paragraphs")){runtime.setLayout(.paragraphs)}.keyboardShortcut("2").disabled(!readingFocused)
+            Button(t(workspace.activeTab?.document.isMarkdown == true ? "Sections" : "Paragraphs")){runtime.setLayout(.paragraphs)}.keyboardShortcut("2").disabled(!readingFocused)
             Divider()
             Button(t("Reveal counterpart"),action:runtime.reveal).disabled(!readerFocused || workspace.activeTab==nil)
             Button(t("Clear pin"),action:runtime.clearPin).disabled(!readerFocused || workspace.activeTab==nil)

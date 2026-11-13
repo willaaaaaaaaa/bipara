@@ -244,6 +244,7 @@ public struct GatewayError: Error, Sendable, Equatable {
         case invalidJSON = "invalid_json"
         case translationShape = "translation_shape"
         case unitMismatch = "unit_mismatch"
+        case markdownStructureMismatch = "markdown_structure_mismatch"
         case invalidTranslationText = "invalid_translation_text"
         case outputTooLarge = "output_too_large"
         case alignmentShape = "alignment_shape"

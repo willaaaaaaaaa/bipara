@@ -19,11 +19,13 @@ from .protocol import PROMPT_VERSIONS, decode_json_strict
 PROMPT_FILES = {
     "translation.v1": "translation.v1.txt",
     "translation.v2": "translation.v2.txt",
+    "translation.markdown.v1": "translation.markdown.v1.txt",
     "alignment.v1": "alignment.v1.txt",
 }
 SCHEMA_FILES = {
     "translation.v1": "translation-output.v1.schema.json",
     "translation.v2": "translation-output.v1.schema.json",
+    "translation.markdown.v1": "translation-output.v1.schema.json",
     "alignment.v1": "alignment-output.v1.schema.json",
 }
 ASSET_FILES = tuple(dict.fromkeys((*PROMPT_FILES.values(), *SCHEMA_FILES.values())))
@@ -87,7 +89,7 @@ def load_assets() -> Assets:
             recorded = manifest["files"] if isinstance(manifest, dict) else None
         except Exception as exc:
             raise AssetError("asset manifest is unreadable") from exc
-        if not isinstance(recorded, dict):
+        if not isinstance(recorded, dict) or set(recorded) != set(ASSET_FILES):
             raise AssetError("asset manifest is malformed")
         for filename, expected in recorded.items():
             if hashes.get(filename) != expected:

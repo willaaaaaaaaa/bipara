@@ -89,7 +89,7 @@ struct NativeReaderTests {
     @Test func revealShowsOffscreenPhraseInsideLongCounterpart() throws {
         let w=WorkspaceStore();try w.newTab(source:"The window is open.",direction:.enToZh)
         var doc=w.tabs[0].document
-        let target=String(repeating:"这是一句示例译文。",count:100)+"目标词"+String(repeating:"这是后面的示例译文。",count:150)
+        let target=String(repeating:"这是一句示例译文。",count:200)+"目标词"+String(repeating:"这是后面的示例译文。",count:50)
         #expect(target.utf8.count <= 8192);#expect(!target.contains(where:{$0.isNewline}))
         doc.translations=[.init(unitID:doc.units[0].id,text:target,returnedModel:nil,completedAt:Date())]
         let phrase=(target as NSString).range(of:"目标词"),reader=ParallelReader(),window=window(reader),session=UUID()

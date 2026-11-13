@@ -10,6 +10,7 @@
 | Providers | OpenAI Responses and Anthropic Messages through one worker boundary, independent of vendor labels/model catalogs, with editable connections and four effort levels. Retain old Chat Completions profiles for existing configurations/jobs. |
 | Framework | LangChain first; explicitly authored LangGraph orchestration deferred |
 | UI | Native reading, Settings and multiple document tabs; English-default interface; System-default appearance with Light/Dark overrides |
+| Markdown | Local detection, Swift-owned translation planning, rendered bilingual sections, and native selection. [Native design](design/technical-design.md#markdown-structure-and-rendering) |
 | Implementation baseline | Swift 6, arm64/x86_64 and CPython 3.13; compatibility targets are macOS 26/27 on Apple Silicon and macOS 26 on compatible Intel Macs, with minimum deployment version 26.0 and local-machine acceptance |
 | Validation | Native app and packaged worker run on the development machine; M0 feasibility passed, M1 native acceptance partial; see [current evidence](validation.md) |
 | Distribution | MIT; tagged formal DMGs; separate arm64/x86_64 installers; mobile and App Store qualification remain separate |
@@ -35,7 +36,9 @@ Swift owns source identity, segmentation, whole-document scheduling, task state,
 
 Global preferences are independent of document state. Jobs retain provider/model/prompt snapshots. Every async result is tied to its tab session, document revision, job/attempt and request. Both layouts read the same canonical text and correspondence data. Hover is local; only eligible committed selections may request additional analysis.
 
-The [model configuration contract](design/model-settings.md) freezes endpoint/effort and local credential bindings in runtime job snapshots. It uses the worker and LangChain boundary, preferences schema 2, pipe protocol 2 and portable document schema 2 with v1 reading compatibility. Supported profiles and prompt versions are explicit runtime contracts; see the linked specifications below.
+The [model configuration contract](design/model-settings.md) freezes endpoint/effort and local credential bindings in runtime job snapshots. It uses the worker and LangChain boundary, preferences schema 2, pipe protocol 2 and portable document schema 3 with v1/v2 reading compatibility. Supported profiles and prompt versions are explicit runtime contracts; see the linked specifications below.
+
+The app owns the Markdown document and advertises the Markdown prompt through the v2 worker handshake. See [document schema 3](design/document-format.md#schema-3-for-markdown) and the [worker prompt extension](design/worker-protocol.md#markdown-prompt-extension).
 
 ## Detailed contracts
 

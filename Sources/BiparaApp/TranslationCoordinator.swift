@@ -61,7 +61,9 @@ public final class TranslationCoordinator: ObservableObject {
         // other operation's field, cannot dispatch. Its translations stay
         // readable and exportable; the app offers an explicit Retranslate
         // (D4, N6).
-        guard WorkerContract.translationPromptVersions.contains(snapshot.translationPromptVersion),
+        guard tab.document.canUseMarkdownPlan,
+              WorkerContract.translationPromptVersions.contains(snapshot.translationPromptVersion),
+              tab.document.isMarkdown == (snapshot.translationPromptVersion == WorkerContract.markdownTranslationPromptVersion),
               WorkerContract.alignmentPromptVersions.contains(snapshot.alignmentPromptVersion) else {
             throw CoordinatorError.retiredPromptVersion
         }
@@ -70,7 +72,7 @@ public final class TranslationCoordinator: ObservableObject {
         switch original.resolvedDirection {
         case .enToZh: direction = (.en, .zh)
         case .zhToEn: direction = (.zh, .en)
-        case nil, .auto: direction = try Self.resolveDirection(original.requestedDirection, source: original.source)
+        case nil, .auto: direction = try Self.resolveDirection(original.requestedDirection, source: original.markdownPlan?.prose ?? original.source)
         }
         let resolved = JobSnapshot(
             jobID: snapshot.jobID, sourceRevision: original.sourceRevision,
@@ -83,7 +85,7 @@ public final class TranslationCoordinator: ObservableObject {
             alignmentPromptVersion: snapshot.alignmentPromptVersion, configurationRevision: snapshot.configurationRevision)
         let finished = Set(original.translations.map(\.unitID))
         let units = original.units.filter { !finished.contains($0.id) }
-        let plan = SourcePlan(source: original.source, paragraphs: original.paragraphs, units: units)
+        let plan = SourcePlan(source: original.source, paragraphs: original.paragraphs, units: units, markdownPlan: original.markdownPlan)
         let initialBatches = try SourcePlanner.formBatches(plan)
         guard !initialBatches.isEmpty else { return }
         let originalBatchCount = initialBatches.count
@@ -160,7 +162,7 @@ public final class TranslationCoordinator: ObservableObject {
                 guard failedUnits.count > 1 else { return false }
                 let midpoint = failedUnits.count / 2
                 let replacements = try? [failedUnits[..<midpoint], failedUnits[midpoint...]].flatMap { half in
-                    try SourcePlanner.formBatches(SourcePlan(source: plan.source, paragraphs: plan.paragraphs, units: Array(half)))
+                    try SourcePlanner.formBatches(SourcePlan(source: plan.source, paragraphs: plan.paragraphs, units: Array(half), markdownPlan: plan.markdownPlan))
                 }
                 guard let replacements, replacements.count == 2 else { return false }
                 let replacementIDs = [schedule.batches.count, schedule.batches.count + 1]
@@ -188,12 +190,18 @@ public final class TranslationCoordinator: ObservableObject {
                     abandoned = true
                     return
                 }
+                let requestUnits = batch.unitIDs.compactMap { id -> TranslateBatchUnit? in
+                    guard let unit = byID[id], let text = original.requestText(for: unit) else { return nil }
+                    return .init(unitID: id, kind: unit.kind, text: text)
+                }
+                guard requestUnits.count == batch.unitIDs.count else {
+                    failBatch(batchID, CoordinatorError.invalidBatch)
+                    return
+                }
                 var request = TranslateBatchRequest(
                     sourceLanguage: resolved.sourceLanguage, targetLanguage: resolved.targetLanguage,
                     contextBefore: batch.contextBefore, contextAfter: batch.contextAfter,
-                    units: batch.unitIDs.compactMap { byID[$0] }.map {
-                        .init(unitID: $0.id, kind: $0.kind, text: original.source.substring(utf16: $0.textRange) ?? "")
-                    }, ownerSessionID: session, promptVersion: resolved.translationPromptVersion
+                    units: requestUnits, ownerSessionID: session, promptVersion: resolved.translationPromptVersion
                 )
                 if replayBatchID != nil {
                     request.rateLimitReplayDeadline = ContinuousClock.now + WorkerContract.glmAutomaticWaitBudget
@@ -307,11 +315,19 @@ public final class TranslationCoordinator: ObservableObject {
         candidate.jobSnapshot = resolved
         candidate.resolvedDirection = resolved.sourceLanguage == .en ? .enToZh : .zhToEn
         let snapshotToValidate = candidate
-        let encodedSize = try await Task.detached { try DocumentCodec.encode(snapshotToValidate).count }.value
+        let encodedSize = try await Task.detached {
+            if let plan = snapshotToValidate.markdownPlan {
+                do { try plan.validateTranslations(snapshotToValidate.translations, language: resolved.targetLanguage, newUnitIDs: Set(requestedUnitIDs)) }
+                catch { throw CoordinatorError.invalidMarkdownStructure }
+            }
+            return try DocumentCodec.encode(snapshotToValidate).count
+        }.value
         guard encodedSize <= WorkerContract.documentFileByteLimit else { throw CoordinatorError.documentTooLarge }
         guard let i = currentIndex(session, original: original, attempt: attempt, workspace: workspace) else { return }
         workspace.withTab(i) { tab in
-            tab.document = candidate
+            tab.document.translations = candidate.translations
+            tab.document.jobSnapshot = candidate.jobSnapshot
+            tab.document.resolvedDirection = candidate.resolvedDirection
             tab.contentGeneration += 1
             _ = tab.job.apply(.batchSucceeded(batchID: batchID, unitIDs: result.translations.map(\.unitID)))
         }
@@ -334,7 +350,8 @@ public final class TranslationCoordinator: ObservableObject {
         guard workspace.tabs.indices.contains(tabIndex) else { return }
         let tab = workspace.tabs[tabIndex]
         let finished = Set(tab.document.translations.map(\.unitID))
-        let plan = SourcePlan(source: tab.document.source, paragraphs: tab.document.paragraphs, units: tab.document.units.filter { !finished.contains($0.id) })
+        let plan = SourcePlan(source: tab.document.source, paragraphs: tab.document.paragraphs,
+                              units: tab.document.units.filter { !finished.contains($0.id) }, markdownPlan: tab.document.markdownPlan)
         let batches = try SourcePlanner.formBatches(plan)
         workspace.withTab(tabIndex) { _ = $0.job.apply(.resume(batches: Array(batches.indices))) }
     }
@@ -352,5 +369,5 @@ public final class TranslationCoordinator: ObservableObject {
         throw CoordinatorError.manualDirectionRequired
     }
 
-    public enum CoordinatorError: Error { case emptyInput, manualDirectionRequired, invalidBatch, documentTooLarge, retiredPromptVersion }
+    public enum CoordinatorError: Error { case emptyInput, manualDirectionRequired, invalidBatch, invalidMarkdownStructure, documentTooLarge, retiredPromptVersion }
 }

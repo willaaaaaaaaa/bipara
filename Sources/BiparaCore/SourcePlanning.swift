@@ -40,15 +40,18 @@ public struct PlannedUnit: Equatable, Sendable, Codable {
 }
 
 /// The complete, lossless plan of one source revision.
-public struct SourcePlan: Equatable, Sendable, Codable {
+public struct SourcePlan: Equatable, Sendable {
     public var source: String
     public var paragraphs: [PlannedParagraph]
     public var units: [PlannedUnit]
 
-    public init(source: String, paragraphs: [PlannedParagraph], units: [PlannedUnit]) {
+    public var markdownPlan: MarkdownPlan?
+
+    public init(source: String, paragraphs: [PlannedParagraph], units: [PlannedUnit], markdownPlan: MarkdownPlan? = nil) {
         self.source = source
         self.paragraphs = paragraphs
         self.units = units
+        self.markdownPlan = markdownPlan
     }
 
     public var nonblankUnits: [PlannedUnit] { units.filter { !$0.isBlank } }
@@ -376,6 +379,7 @@ public enum SourcePlanner {
     /// Greedy ordered batches: at most 64 units and 8192 UTF-8 bytes of
     /// unit text, crossing paragraphs; blank units never batch.
     public static func formBatches(_ plan: SourcePlan) throws -> [TranslationBatch] {
+        if let markdown = plan.markdownPlan { return try markdownBatches(plan, markdown: markdown) }
         let units = plan.nonblankUnits
         var batches: [TranslationBatch] = []
         var current: [PlannedUnit] = []
@@ -409,6 +413,37 @@ public enum SourcePlanner {
         }
         closeBatch()
         return batches
+    }
+
+    private static func markdownBatches(_ plan: SourcePlan, markdown: MarkdownPlan) throws -> [TranslationBatch] {
+        var result: [TranslationBatch] = []
+        var units: [PlannedUnit] = []
+        var bytes = 0
+        func batch(_ units: [PlannedUnit]) throws -> TranslationBatch {
+            let before = clippedContext(source: plan.source, before: units[0].textRange.location, limit: WorkerContract.maxContextBytes)
+            let after = clippedContext(source: plan.source, after: units[units.count - 1].textRange.end ?? 0, limit: WorkerContract.maxContextBytes)
+            let rows = units.map { ["unit_id": $0.id.uuidString.lowercased(), "kind": $0.kind.rawValue, "text": markdown.requestText(for: $0) ?? ""] }
+            let object: [String: Any] = ["source_language": "en", "target_language": "zh", "context_before": before, "context_after": after, "units": rows]
+            guard try JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes]).count <= WorkerContract.maxInputJSONBytes else {
+                throw CoreError.unsupportedInput("A Markdown translation request exceeds the serialized byte limit.")
+            }
+            return TranslationBatch(unitIDs: units.map(\.id), contextBefore: before, contextAfter: after)
+        }
+        for unit in plan.nonblankUnits {
+            guard let text = markdown.requestText(for: unit), !text.isEmpty else { throw MarkdownPlan.invalidPlan }
+            let width = text.utf8.count
+            guard width <= WorkerContract.maxBatchTextBytes else { throw MarkdownPlan.invalidPlan }
+            if !units.isEmpty, (bytes + width > WorkerContract.maxBatchTextBytes
+                || units.count == WorkerContract.maxUnitsPerBatch || (try? batch(units + [unit])) == nil) {
+                result.append(try batch(units))
+                units.removeAll(keepingCapacity: true)
+                bytes = 0
+            }
+            units.append(unit)
+            bytes += width
+        }
+        if !units.isEmpty { result.append(try batch(units)) }
+        return result
     }
 
     /// Up to `limit` UTF-8 bytes of source context before `location`,

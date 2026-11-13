@@ -1,5 +1,5 @@
 {
-  "corpus_version": "2",
+  "corpus_version": "3",
   "provenance": "Original synthetic examples authored for Bipara; no private user text.",
   "cases": [
     {
@@ -710,6 +710,24 @@
       "input": {"reading_text": "我还了那本书。", "counterpart_text": "I gave the book back.", "selection": {"before": "我", "text": "还", "after": "了那本书。"}},
       "sample_output": {"status": "matched", "matches": [{"quote": "gave", "occurrence": 1}, {"quote": "back", "occurrence": 1}], "reason": "none"},
       "semantic_checks": ["Capture gave ... back as one meaning using two ordered nonoverlapping spans.", "Do not include the unrelated book object or replace existing English text."]
+    },
+    {
+      "id": "M01-inline-order-and-hard-break",
+      "op": "translate",
+      "prompt_version": "translation.markdown.v1",
+      "input": {"source_language": "en", "target_language": "zh", "context_before": "", "context_after": "", "units": [{"unit_id": "m01", "kind": "markdown_inline", "text": "Read the **setup guide** at [Documentation](https://example.org/docs).  \nKeep `cache_id` unchanged."}]},
+      "sample_output": {"translations": [{"unit_id": "m01", "text": "阅读**安装指南**，详见[文档](https://example.org/docs)。  \n保留 `cache_id` 不变。"}]},
+      "semantic_checks": ["Preserve both instructions, the emphasis/link order, and the hard break.", "Translate the visible link label and preserve its destination and the literal identifier."],
+      "literal_checks": [{"unit_id": "m01", "contains": "](https://example.org/docs)"}, {"unit_id": "m01", "contains": "`cache_id`"}, {"unit_id": "m01", "literal": "  \n", "count": 1}]
+    },
+    {
+      "id": "M02-reference-and-table-cell",
+      "op": "translate",
+      "prompt_version": "translation.markdown.v1",
+      "input": {"source_language": "zh", "target_language": "en", "context_before": "", "context_after": "[guide]: https://example.org/guide", "units": [{"unit_id": "m02a", "kind": "markdown_inline", "text": "阅读[指南][guide]。"}, {"unit_id": "m02b", "kind": "markdown_inline", "text": "状态 \\| 含义"}]},
+      "sample_output": {"translations": [{"unit_id": "m02a", "text": "Read the [guide][guide]."}, {"unit_id": "m02b", "text": "Status \\| Meaning"}]},
+      "semantic_checks": ["Translate the visible link label and keep the explicit reference ID.", "Preserve the escaped pipe inside one cell without introducing a table delimiter."],
+      "literal_checks": [{"unit_id": "m02a", "contains": "][guide]"}, {"unit_id": "m02b", "literal": "\\|", "count": 1}]
     }
   ]
 }

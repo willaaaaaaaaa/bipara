@@ -1,6 +1,6 @@
 # Product Requirements
 
-The tables below define current product behavior. See [validation status](validation.md) for evidence and limitations.
+The tables below define product behavior, including Markdown reading. See [validation status](validation.md) for evidence and limitations.
 
 ## Objective
 
@@ -53,6 +53,8 @@ PDF/Word parsing, OCR, webpage extraction, automatic session recovery, cloud syn
 
 ## Text and task integrity
 
+The following invariants also apply to the [Markdown extension](#markdown-reading).
+
 Long text may contain one oversized paragraph. Internal request splitting must preserve the original presentation and account for input, output, and correspondence length limits.
 
 Correspondence can be one-to-many, many-to-one, non-contiguous, or absent. Keep document revision and passage identity with each translation/mapping result. Source or translation edits invalidate affected mappings, and late responses must not overwrite newer revisions.
@@ -76,3 +78,19 @@ Model output is untrusted data. Validate its structure and resolve spans against
 | Portability | Shared logic isolated from macOS UI; mobile feasibility assessed separately from Mac acceptance |
 
 Use synthetic or redistributable evaluation texts. A mock provider test is not evidence of real-provider quality, latency, or availability. The detailed design specifies initial engineering bounds and evaluation targets; claim actual supported performance only after measuring the relevant prototype/app. See the [test plan](testing.md) for traceable checks and evidence boundaries.
+
+## Markdown reading
+
+The primary input is pasted text, often without a filename. Automatically recognize Markdown from the text itself using local code, render both languages, and compare sections while retaining native selection and correspondence. File extensions are optional import hints.
+
+| ID | Requirement |
+| --- | --- |
+| R24 | Default new documents to Auto format detection from pasted or typed text. Offer a per-document Auto / Markdown / Plain Text override; detection makes no model request and never changes source bytes. |
+| R25 | Render source and translation using the same resolved format. Support headings, paragraphs, emphasis, strikethrough, links, lists including task lists, blockquotes, code, thematic breaks and GFM tables; retain an explicit source view. |
+| R26 | Derive section identity and hierarchy from source headings, reuse them for the translation, and support side-by-side or alternating section comparison. Preserve inner block/phrase correspondence, reading position and progressive results. |
+| R27 | Translate natural language within the parsed structure, preserve protected literals and block structure, and treat source soft wraps as paragraph content. Preserve exact original text independently of rendering and translated Markdown serialization. |
+| R28 | Import UTF-8 `.md`/`.markdown` as well as `.txt`, copy/export Markdown, and persist format, structure and partial work in a versioned `.bipara` document. Read existing documents without automatic reinterpretation or retranslation. |
+
+The first implementation renders image placeholders with their alt text and preserves image references; it does not fetch image resources. Frontmatter is displayed as literal metadata. Translate top-level `title` and `description` single-line prose scalars while preserving keys, identifiers such as `name`, and unrelated fields. Plain, single-quoted and JSON-compatible double-quoted values are supported; encode changed values as safe YAML strings. Only headers composed of independent simple mapping lines are eligible; flow collections, multiline values, tags, anchors and other structural forms keep the whole header unchanged. Nested fields and unsupported scalar forms remain unchanged. Raw HTML is displayed literally and never executed. Formula rendering, Mermaid execution, footnotes, MDX, a rich-text Markdown editor, translation editing, outline sidebars and user-configurable chapter depth are outside this extension. Unsupported constructs remain readable as literal text; do not claim complete GitHub rendering parity.
+
+The [interaction contract](design/interaction.md#markdown-reading) owns controls and section presentation; the [native contract](design/technical-design.md#markdown-structure-and-rendering) owns detection, parsing and display mapping; the [model workflow](design/model-workflow.md#markdown-translation) owns bounded translation and reconstruction. [Document schema 3](design/document-format.md#schema-3-for-markdown) and the [worker extension](design/worker-protocol.md#markdown-prompt-extension) define the storage and transport contracts. MD-01–MD-12 in the [test plan](testing.md#markdown-acceptance) define completion evidence.

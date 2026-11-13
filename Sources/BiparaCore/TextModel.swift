@@ -163,6 +163,21 @@ public enum Language: String, Sendable, Codable {
 public enum UnitKind: String, Sendable, Codable {
     case sentence
     case fragment
+    case markdownInline = "markdown_inline"
+    case markdownFragment = "markdown_fragment"
+
+    public var isMarkdown: Bool { self == .markdownInline || self == .markdownFragment }
+}
+
+public enum ContentFormat: String, CaseIterable, Sendable, Codable {
+    case auto
+    case markdown
+    case plainText = "plain_text"
+}
+
+public enum MarkdownReadingMode: String, CaseIterable, Sendable, Codable {
+    case rendered
+    case source
 }
 
 public enum LayoutMode: String, Sendable, Codable {

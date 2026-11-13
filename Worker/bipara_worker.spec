@@ -24,6 +24,7 @@ prompts_dir = root / "prompts"
 asset_names = [
     "translation.v1.txt",
     "translation.v2.txt",
+    "translation.markdown.v1.txt",
     "alignment.v1.txt",
     "translation-output.v1.schema.json",
     "alignment-output.v1.schema.json",

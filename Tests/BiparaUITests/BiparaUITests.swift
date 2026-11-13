@@ -77,6 +77,47 @@ final class BiparaUITests: XCTestCase {
         XCTAssertTrue(app.buttons["settings.save"].waitForExistence(timeout:5))
         capture("settings-light")
     }
+    func testMarkdownDetectionTranslationAndReadingModes() throws {
+        launch()
+        app.buttons["new.tab"].click()
+        let editor = app.textViews["source.editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        settleInputContext()
+        editor.click()
+        editor.typeText("# Setup\n\nOpen the **window**.\n\n## Finish\n\nRead the guide.")
+        let detection = app.staticTexts["document.detectedFormat"]
+        let detected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Markdown", "Markdown"),
+            object: detection
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [detected], timeout: 5), .completed)
+        app.buttons["translation.primary"].click()
+
+        let source = app.textViews["reader.source"]
+        let target = app.textViews["reader.translation"]
+        XCTAssertTrue(source.waitForExistence(timeout: 8))
+        let translated = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "准备"), object: target)
+        XCTAssertEqual(XCTWaiter.wait(for: [translated], timeout: 8), .completed)
+        XCTAssertTrue((source.value as? String ?? "").contains("Open the"))
+        XCTAssertFalse((source.value as? String ?? "").contains("# Setup"))
+        capture("markdown-rendered")
+
+        app.radioButtons["Source"].click()
+        let markup = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "**window**"), object: source)
+        XCTAssertEqual(XCTWaiter.wait(for: [markup], timeout: 5), .completed)
+        app.radioButtons["Rendered"].click()
+        app.typeKey("2", modifierFlags: .command)
+        let section = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "准备"), object: source)
+        XCTAssertEqual(XCTWaiter.wait(for: [section], timeout: 5), .completed)
+        XCTAssertFalse(target.exists)
+        let sections = source.value as? String ?? ""
+        let firstOriginal = try XCTUnwrap(sections.range(of: "Setup"))
+        let firstTranslation = try XCTUnwrap(sections.range(of: "准备"))
+        let nextOriginal = try XCTUnwrap(sections.range(of: "Finish"))
+        XCTAssertLessThan(firstOriginal.lowerBound, firstTranslation.lowerBound)
+        XCTAssertLessThan(firstTranslation.lowerBound, nextOriginal.lowerBound)
+    }
+
     func testLocalizedNativeTextAccessibility() {
         launch(["--reading-refinements", "--reading-complete", "--language", "zh-Hans"])
         let source = app.textViews["reader.source"]

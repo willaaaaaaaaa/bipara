@@ -5,5 +5,6 @@
 *.icns binary
 *.pdf binary
 
-# Preserve the upstream license bytes, including its terminal blank line.
+# Preserve upstream attribution bytes, including terminal blank lines.
 licenses/python-runtime/LICENSE.libX11.txt whitespace=-blank-at-eof
+Sources/BiparaApp/ThirdPartyLicenses/swift-markdown-NOTICE.txt whitespace=-blank-at-eof

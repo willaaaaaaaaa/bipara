@@ -1,8 +1,8 @@
-# Local Document Format v2
+# Local Document Format
 
-The `.bipara` file is a single UTF-8 JSON object. This v2 design was approved 2026-11-01 and awaits implementation; read v1 compatibly and write v2 on an explicit save. This document owns its field names and validation; [technical design](technical-design.md) owns save/open/close behavior. This is user data stored outside the repository, not a configuration or secret store.
+A `.bipara` file is a single UTF-8 JSON object. Open reads versions 1–3 and explicit Save writes version 3. The [schema 3 extension](#schema-3-for-markdown) adds Markdown format and plan metadata to the shared records below.
 
-Required root keys: `format`, `schema_version`, `document_id`, `title`, `source`, `source_revision`, `direction`, `paragraphs`, `units`, `translations`, `job_snapshot`, `layout`, and `reading_anchor`. Nullable values are written explicitly as null. Unknown extra fields within a supported version may be ignored; a schema_version above 2 is rejected without rewriting the original. Save only the known canonical fields.
+Required root keys: `format`, `schema_version`, `document_id`, `title`, `source`, `source_revision`, `direction`, `paragraphs`, `units`, `translations`, `job_snapshot`, `layout`, and `reading_anchor`. Nullable values are written explicitly as null. Unknown extra fields within a supported version may be ignored; a schema_version above 3 is rejected without rewriting the original. Save only the known canonical fields.
 
 | Field | Type / meaning |
 | --- | --- |
@@ -27,7 +27,7 @@ Translation fields are `unit_id`, `text`, nullable `returned_model`, and `comple
 
 Open-profile snapshots additionally require `configuration_revision`, a nonsecret UUID identifying the exact saved request settings. Legacy snapshots omit it. Snapshot fields are `job_id`, `source_revision`, `source_language`, `target_language`, `provider`, `model`, `profile`, `effort`, `translation_prompt_version`, and `alignment_prompt_version`. Language codes are `zh`/`en`, distinct. Its source revision and direction must match the document. Completed-unit membership is derived from translations, not a second serialized list. A snapshot with an unavailable old prompt/profile still opens for reading, but Resume is disabled with an explicit Retranslate option; do not silently substitute a current prompt.
 
-V2 adds required snapshot `effort`, one of the canonical [configuration values](model-settings.md#effort-capabilities-and-wire-mapping), validated against its profile/model. A v1 file has no effort: derive Auto for `openai-json-schema-v1` and Off for `glm-json-v1`, preserving the original profile, IDs, revision, text, units and results. Unknown old profiles remain readable but unavailable for model calls; use Auto only as unspecified attribution, never infer a supported execution profile. Migration is in memory; opening does not rewrite the original or mark it dirty. An explicit later Save writes schema 2 with the derived effort. Unknown future schemas still fail without rewriting.
+V2 adds required snapshot `effort`, one of the canonical [configuration values](model-settings.md#effort-capabilities-and-wire-mapping), validated against its profile/model. A v1 file has no effort: derive Auto for `openai-json-schema-v1` and Off for `glm-json-v1`, preserving the original profile, IDs, revision, text, units and results. Unknown old profiles remain readable but unavailable for model calls; use Auto only as unspecified attribution, never infer a supported execution profile. Migration is in memory; opening does not rewrite the original or mark it dirty. An explicit later Save writes schema 3 with the derived effort. Unknown future schemas still fail without rewriting.
 
 The endpoint and local configuration identity are intentionally absent. Before Resume or uncached phrase analysis on an opened file, require the explicit session-local binding described in [model configuration](model-settings.md#runtime-snapshots-credentials-and-portable-documents), matching provider/model/profile/effort and the open-profile configuration revision, and disclosing the actual selected request host. The revision rotates on effective connection/generation edits, so a recreated lookalike entry cannot silently resume an old job. Request options, header values and credentials are never exported. Loading a file, binding a configuration or reading completed text makes no network call. A v1 file saved as v2 retains its legacy profile and effective effort; do not silently upgrade its request contract.
 
@@ -86,3 +86,22 @@ The input-draft save/apply/confirmation rules live in [native design](technical-
 No credentials, Keychain references, display aliases, local configuration IDs, local filesystem paths, endpoint overrides, global settings, active request identifiers, or phrase caches belong here. Save/Open must work offline without the worker. Source and translation are plain text; loading cannot execute HTML, scripts, shell fragments, or model tools.
 
 Source revisions must be nonnegative and less than the platform integer maximum. Editing an exhausted revision returns a local error rather than overflowing.
+
+## Schema 3 for Markdown
+
+Schema 3 adds the following root fields to the shared records above.
+
+| Field | Contract |
+| --- | --- |
+| `content_format` | Object containing `requested` (`auto`, `markdown` or `plain_text`), `resolved` (`markdown` or `plain_text`) and nullable `detector_version`. Explicit choices match the resolved format. Auto records the detector version. |
+| `reading_mode` | `rendered` or `source`. Plain text uses `source`. |
+| `markdown_plan_version` | `markdown-plan.v2` for new Markdown plans; supported v1 documents retain their instance version and original unit identities until explicit retranslation. Null for plain text. |
+| `paragraphs`, `units` | Plain-text records retain their old validation. Markdown stores the stable block and unit IDs and the exact source ranges used to rebuild its plan. Several fragments may share the range of one normalized inline payload. The payload itself is derived. |
+| `reading_anchor` | The shared `paragraph_id`, `side`, `fraction` anchor also accepts optional `section_id` and UTF-16 `offset` for Markdown. The paragraph ID identifies the logical Markdown block. |
+| `translations`, `job_snapshot` | A completed translation references a unit in the active plan. Markdown jobs record the Markdown prompt version. A document containing only copied literals has an empty result list and no job snapshot. |
+
+The decoder rebuilds a supported Markdown plan with the pinned parser and verifies ordered block ranges, unit ownership, unit kinds and references before restoring persisted UUIDs. It validates result text and assembled structure against that plan. The root source string contains every original byte, including syntax between blocks. The file does not serialize a library AST, a second plan, renderer state or credentials.
+
+Versions 1 and 2 open in Plain Text with their existing IDs and results, even when their source contains Markdown. Applying a different resolved format creates a new revision through the format-replacement confirmation. Auto documents reopen in their saved resolved format. Changing a format choice that resolves to the same supported format keeps the source revision.
+
+An unavailable Markdown plan version opens as literal source and literal stored results. The original file bytes are preserved on save until an explicit edit or replan replaces it. Resume, phrase analysis and structured export require a supported plan. Unsupported outer file schemas fail to open. File and input limits remain 20 MiB and 1 MiB respectively, and opening or saving a local document requires no worker.

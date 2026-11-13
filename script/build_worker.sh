@@ -74,7 +74,7 @@ for app in "${APPS[@]}"; do
     || fail "LSUIElement missing in $app"
   [ -f "$app/Contents/Frameworks/prompts/asset_manifest.json" ] \
     || fail "asset manifest missing in $app"
-  for asset in translation.v1.txt translation.v2.txt alignment.v1.txt \
+  for asset in translation.v1.txt translation.v2.txt translation.markdown.v1.txt alignment.v1.txt \
     translation-output.v1.schema.json alignment-output.v1.schema.json; do
     cmp -s "prompts/$asset" "$app/Contents/Frameworks/prompts/$asset" \
       || fail "bundled asset differs from canonical prompts/$asset"

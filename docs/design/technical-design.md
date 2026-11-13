@@ -96,6 +96,8 @@ File contains New Translation, Open, Save, Export Translation and Export Bilingu
 
 ## Settings and appearance
 
+The Markdown reader extends the existing text bridge under [Markdown structure and rendering](#markdown-structure-and-rendering); the settings below remain global reading preferences.
+
 Settings has a draft and explicit Save/Cancel. Closing a changed Settings window offers Save, Discard, or Cancel. Save validates all fields first; do not apply half a preferences draft after a Keychain failure. A small persistence transaction writes prepared Keychain changes first and commits one encoded preferences record last; keep previous values for compensation if a later write fails. Serialize new credential reads with that transaction so they cannot observe a half-applied draft. If compensation fails, report the affected credential state honestly and leave Settings open. Never claim Keychain plus UserDefaults provides an ACID transaction.
 
 | Setting | Default / allowed values | Effect |
@@ -109,9 +111,9 @@ Settings has a draft and explicit Save/Cancel. Closing a changed Settings window
 | Reading Width | Standard / Wide / Window; default Wide | Both layouts, shared across tabs |
 | Correspondence Color | Blue / Teal / Amber / Purple; default Amber | Adaptive local preview; native selection remains system-owned |
 | Don't ask to save on close | Off by default | Opt-in discard at document save review only; running-stop and Settings review remain |
-| Reading family | System / Serif; default System | System font or system serif with Chinese fallback |
-| Reading size | 14–28 points; default 17 | Both languages and both layouts |
-| Line height | Compact 1.45 / Comfortable 1.70 / Spacious 1.95; default Comfortable | Text layout only |
+| Reading family | Monospaced / System / Serif; default Monospaced | Menlo (system monospace fallback), system UI font or system serif, each with native Chinese fallback; shared by document reader and source editor |
+| Reading size | 12–28 points; default 12 | Both languages, layouts, Markdown modes and source editor |
+| Line height | Editor 1.50 / Compact 1.45 / Comfortable 1.70 / Spacious 1.95; default Editor | Fixed baseline distance: ceiling of point size × multiplier; 18 points at the default size |
 
 Use String Catalogs for English and Simplified Chinese, explicit app locale for localized SwiftUI and AppKit strings, and system accessibility sizing where applicable. Persist one versioned preferences record in UserDefaults, with schema/key migration defined in [model configuration](model-settings.md#preferences-and-keychain-migration). Reading layout is per-document and remains in the toolbar, not Settings.
 
@@ -125,7 +127,7 @@ Elapsed time is session-local `TranslationElapsed` on `TabState`. `WorkspaceStor
 
 ## Local files and close behavior
 
-Use explicit Save/Open of a `.bipara` UTF-8 JSON file. Write schema version 2 and read supported legacy files as defined in the document format. No automatic session recovery or cloud sync in v1. New unsaved work is protected by close/quit prompts unless the user explicitly enables Don't ask to save on close. That preference discards unsaved document changes without writing a file; it is not autosave or recovery. Support paste and UTF-8 `.txt` import (optional BOM); unsupported encodings produce an error, never silent replacement. File import is local; it does not call a model. Export plain translated text or bilingual text only after the user selects a destination; identify partial translations before export. Missing paragraphs are marked as untranslated in bilingual export and block translation-only export until the user explicitly chooses partial export.
+Use explicit Save/Open of a `.bipara` UTF-8 JSON file. Write schema version 3 and read supported legacy files as defined in the document format. No automatic session recovery or cloud sync in v1. New unsaved work is protected by close/quit prompts unless the user explicitly enables Don't ask to save on close. That preference discards unsaved document changes without writing a file; it is not autosave or recovery. Support paste and UTF-8 `.txt` import (optional BOM); unsupported encodings produce an error, never silent replacement. File import is local; it does not call a model. Export plain translated text or bilingual text only after the user selects a destination; identify partial translations before export. Missing paragraphs are marked as untranslated in bilingual export and block translation-only export until the user explicitly chooses partial export.
 
 The [document format](document-format.md) owns exact fields, nullability, range encoding, attribution and a complete example. Persist unit boundaries so OS tokenizer updates cannot reinterpret saved translations. Validate complete source coverage, nonoverlap, ID references, direction and attribution before opening. Do not persist active request IDs, credentials, Keychain identifiers, endpoint URLs, selection caches, errors with raw provider bodies, or global preferences.
 
@@ -150,3 +152,53 @@ Use a direct-distribution development build initially; Mac App Store sandbox qua
 For a stable local Debug identity, install an Apple Development signing certificate in Xcode and set `CODE_SIGN_IDENTITY = Apple Development` and `DEVELOPMENT_TEAM = YOUR_TEAM_ID` in the git-ignored `Config/BiparaDebug.local.xcconfig`. Use the same team and bundle identifier for successive builds. The Bipara Debug target reads this configuration in both Xcode and `script/build_and_run.sh`. Without the local file, Debug uses ad-hoc signing. Release and UI-test targets have separate signing settings.
 
 Measure bundle size, startup, RSS, process lifetime and copied-bundle operation. Preserve the local pipe-worker boundary when diagnosing failures. Public installers follow [releasing](../releasing.md): the initial policy is ad-hoc signing without Apple notarization, with explicit trust disclosure and installation qualification. The optional Developer ID policy retains notarization requirements.
+
+## Markdown structure and rendering
+
+Markdown uses local parsing and a native text projection within the Swift/pipe-worker architecture. The [interaction design](interaction.md#markdown-reading) owns product behavior; [model workflow](model-workflow.md#markdown-translation) owns translation payloads and the [document format](document-format.md#schema-3-for-markdown) owns persistence.
+
+### Parser and ownership
+
+Use the Swift project's [swift-markdown](https://github.com/swiftlang/swift-markdown) parser, which builds on `cmark-gfm`, behind a small Core-owned adapter. SwiftPM and the Xcode workspace lock Swift Markdown 0.8.0 and Swift cmark 0.9.0. Their upstream notices ship as resources in the [app package](../../Sources/BiparaApp/ThirdPartyLicenses). A bounded iterative cmark preflight enforces depth and node limits before the Swift adapter converts the tree. The supported syntax follows [CommonMark](https://spec.commonmark.org/0.31.2/) plus the selected [GFM extensions](https://github.github.com/gfm/); library acceptance does not imply complete GitHub rendering parity.
+
+Core owns format detection, immutable block/section values, source projections, translation planning and validation. App owns attributed text, TextKit geometry, hit testing, selection, menus and file panels. Worker owns only versioned bounded translation/alignment operations; it never parses or schedules the entire document. No browser runtime, JavaScript, web service or second document workflow is introduced.
+
+Parse the whole source, not independent source lines or chapters. Reference links may resolve outside a section. The adapter identifies a leading `---` frontmatter region only when a matching closing `---` or `...` exists; exclude it from heading/detection evidence. Planner v2 recognizes top-level `title` and `description` single-line prose scalars (plain, single-quoted or JSON-compatible double-quoted) and protects all remaining metadata. Only headers made of independent simple mapping lines are eligible; headers with flow collections, multiline values, tags, anchors or independent structural lines remain opaque. Preserve UTF-16 edit ranges and untouched source bytes; JSON string encoding safely quotes changed YAML values. Planner v1 retains its opaque-metadata path for saved document compatibility. An unclosed opening delimiter remains ordinary Markdown. Do not execute YAML tags or resolve external includes. Raw HTML is a literal protected node. Code, metadata and HTML cannot supply heading evidence.
+
+### Deterministic format detection
+
+Record detector version `markdown-detection.v1`. Parsing success alone never selects Markdown: ordinary prose is also valid Markdown. Run a bounded whole-source parse under the existing 1 MiB input limit; classify meaningful parser nodes after excluding code contents, frontmatter and raw HTML. This is an explainable local rule, not a model score.
+
+Apply these rules in order:
+
+1. An explicit Markdown or Plain Text choice determines the resolved format.
+2. Auto on an explicitly imported `.md`/`.markdown` file resolves to Markdown; `.txt` and unnamed pasted/typed input use the content rules below. The import hint belongs to that input revision, is cleared on full source replacement and is not a required filename stored in the document.
+3. Any strong signal resolves to Markdown: a nonempty closed fenced code block; a parsed table with at least two columns, a delimiter row and a data row; or a document-level heading accompanied by another nonempty structural block or another heading.
+4. Otherwise require two distinct signal families: a list with at least two nonempty items; a blockquote with at least two nonblank content lines; or inline formatting containing an explicit link/image or at least two emphasis/strong/strikethrough/code spans. Repeated occurrences of one family do not count as two families.
+5. Empty input and all other cases resolve to Plain Text. A single marker, thematic break, ordinary numbered line, standalone URL, lone heading, one bold phrase or incomplete fence is insufficient by itself. The user can always choose Markdown for these intentional snippets.
+
+These conservative thresholds prioritize avoiding false format changes and are fixture-defined initial behavior, not a measured accuracy claim. Preserve the original input regardless of the result. Parse failures/resource-limit failures retain the draft and offer Plain Text; do not silently change an existing job or execute a partially built Markdown plan. Detection finishes off the main actor, keyed by tab session and draft generation; only the current generation publishes status. Explicit actions await that generation instead of rerunning an unrelated parse. Apply a resolved format once to the canonical revision and reuse it for both languages.
+
+### Source structure and identities
+
+The pinned parser provides the syntax tree. Swift derives ordered top-level extents and identified reading blocks for headings, paragraphs, list items, quotes, cells, code and literals. Block records carry exact UTF-16 source and edit ranges plus their list or quote depth. The source string retains separators, delimiters and every original code unit. Each source heading starts a disjoint comparison section. The translation reuses its source identities, including when two headings have the same text.
+
+Parser byte columns are converted through the UTF-8 line table and checked at composed-character boundaries. Model payloads derive from source extents, with soft wraps normalized, hard breaks retained and container syntax kept in the document. The pinned parser identifies consumed reference definitions. Only definitions used by the current payload are supplied during its local inline parse. A source, direction or resolved-format change creates a new plan and invalidates requests from the earlier revision.
+
+### Native projection and geometry
+
+Extend `RenderedTextIndex` to produce attributed runs plus source/target logical-span maps, instead of assigning one constant offset per paragraph. The existing `NSViewRepresentable` hosts one selectable `NSTextView` per visible language stream. Markdown chooses TextKit 1 explicitly because its native table attributes require that layout engine. Plain text uses TextKit 2. Style headings, emphasis, list and quote indentation, monospace code and table cells through the native text system. Model/UI ownership does not move into the bridge. Do not create an individual view for every Markdown node.
+
+Each selectable run carries a block identity and, when it maps exactly, a unit identity and UTF-16 range in the unit's visible text. The display index attaches the corresponding native ranges. List markers, padding and placeholder chrome have no model-text range. Phrase analysis requires an exact range in one completed unit. A selection that crosses blocks or cannot be mapped uses the block or section fallback.
+
+Native tables retain selectable, copyable cells in the same text stream. Cells wrap within the pane. When columns would become too narrow to read, stack the same cells vertically and keep their logical row and column identities. Wrap long code lines visually in the first version; preserve original line breaks in copy/export.
+
+The renderer measures intrinsic paired block heights without padding, keeping a table together, then pads the shorter block with a separate spacer. Section identities remain available for selection; generated spacers are not translated or copied. Latin and CJK text use a shared line-height grid. Both columns share a document height and an immediate vertical scroll offset, including explicit reveal actions. Cached block geometry supplies logical anchors for reflow and mode restoration; publish anchors after a short idle interval rather than hit-testing text and updating observable state on every drag event. SwiftUI applies the current immutable projection on the main actor. Document parsing, result validation and phrase payload construction run off the main actor. Hover and the elapsed-time display use cached layout. Initial full planning and structural limits must be measured with the existing maximum source and long-document fixtures; no speedup is claimed by this design.
+
+Markdown anchors use block ID, section ID, side and a logical reading-text offset, with a local fraction fallback for nontext blocks. Capture before insertion/reflow and restore after layout; fall back to the matching group until target content exists. Mode/layout changes project the same logical anchor into the new display. Preserve a pin only while its mapped unit/target identity still exists; fall back explicitly when a selection cannot be projected. Retain the existing scroll reentrancy guard and bounded correction after legacy scroller layout.
+
+### Local resources and failures
+
+Rendering and detection are offline. Never load image URLs, relative files, fonts, CSS or scripts from a document. Link activation is the explicit user action described in the interaction contract. Stored code, HTML and malformed markup remain inert data. If a block cannot be projected, render its literal text with its existing block identity. Unsupported saved plan versions use the literal document view.
+
+Keep the existing source/file byte limits and saveable-commit checks. Add an initial 100,000 parsed-node and 128-container-depth admission limit, checked before recursive projection or scheduling; reject an over-limit Markdown plan with an actionable local error and retain the draft. Bound traversal iteratively where possible. These are engineering limits to validate, not measured capacity promises. Plain-text override remains available under its existing limits.

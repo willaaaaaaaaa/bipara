@@ -25,13 +25,16 @@ if [ -f "$PID_FILE" ]; then
   fi
 fi
 "$ROOT/script/build_worker.sh"
+# Keep the build architecture independent of Xcode's local Mac destination (which can report arm64e).
 xcodebuild -project Bipara.xcodeproj -scheme Bipara -configuration Debug \
-  -destination "platform=macOS,arch=$BIPARA_TARGET_ARCH" "ARCHS=$BIPARA_TARGET_ARCH" -derivedDataPath build/native build
+  -destination 'generic/platform=macOS' "ARCHS=$BIPARA_TARGET_ARCH" ONLY_ACTIVE_ARCH=NO \
+  -derivedDataPath build/native build
 [ -x "$APP_PATH/Contents/MacOS/Bipara" ] || fail "fresh app executable missing"
 HELPER="$APP_PATH/Contents/Helpers/BiparaWorker.app"
 [ -x "$HELPER/Contents/MacOS/BiparaWorker" ] || fail "embedded worker missing"
 cmp -s prompts/translation.v1.txt "$HELPER/Contents/Frameworks/prompts/translation.v1.txt" || fail "canonical prompt mismatch"
 cmp -s prompts/translation.v2.txt "$HELPER/Contents/Frameworks/prompts/translation.v2.txt" || fail "canonical prompt mismatch"
+cmp -s prompts/translation.markdown.v1.txt "$HELPER/Contents/Frameworks/prompts/translation.markdown.v1.txt" || fail "canonical prompt mismatch"
 /usr/bin/codesign --verify --deep --strict "$APP_PATH"
 if [ "$MODE" = --debug ]; then exec lldb "$APP_PATH/Contents/MacOS/Bipara"; fi
 /usr/bin/open -n "$APP_PATH"

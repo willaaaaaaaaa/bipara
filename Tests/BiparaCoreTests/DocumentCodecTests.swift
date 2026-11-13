@@ -132,7 +132,7 @@ struct DocumentCodecTests {
 
         // Newer schema version.
         var newer = String(data: try encode(base), encoding: .utf8)!
-        newer = newer.replacingOccurrences(of: "\"schema_version\":2", with: "\"schema_version\":3")
+        newer = newer.replacingOccurrences(of: "\"schema_version\":3", with: "\"schema_version\":4")
         #expect(throws: CoreError.self) { try DocumentCodec.decode(Data(newer.utf8)) }
 
         // Duplicate paragraph IDs (needs a multi-paragraph document).
@@ -303,7 +303,7 @@ struct DocumentCodecTests {
     /// `effort` field, mirroring what the previous app version wrote.
     private func v1Data(from document: BiparaDocument) throws -> Data {
         var text = String(data: try DocumentCodec.encode(document), encoding: .utf8)!
-        text = text.replacingOccurrences(of: "\"schema_version\":2", with: "\"schema_version\":1")
+        text = text.replacingOccurrences(of: "\"schema_version\":3", with: "\"schema_version\":1")
         if let range = text.range(of: #""effort":"[a-z]+","#, options: .regularExpression) {
             text = text.replacingCharacters(in: range, with: "")
         }
@@ -323,7 +323,7 @@ struct DocumentCodecTests {
         // schema 2 with the derived effort.
         let saved = try DocumentCodec.decode(try DocumentCodec.encode(decoded))
         #expect(saved.jobSnapshot?.effort == .auto)
-        #expect(String(data: try DocumentCodec.encode(decoded), encoding: .utf8)!.contains("\"schema_version\":2"))
+        #expect(String(data: try DocumentCodec.encode(decoded), encoding: .utf8)!.contains("\"schema_version\":3"))
     }
 
     @Test func v1GLMSnapshotDerivesOff() throws {

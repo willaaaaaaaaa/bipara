@@ -63,7 +63,8 @@ LEGACY_PROFILE_BASE_URL = {
 }
 LEGACY_PROFILE_EFFORT = {"openai-json-schema-v1": "auto", "glm-json-v1": "off"}
 TRANSLATE_PROMPT_VERSION = "translation.v2"
-TRANSLATE_PROMPT_VERSIONS = ("translation.v1", TRANSLATE_PROMPT_VERSION)
+MARKDOWN_TRANSLATE_PROMPT_VERSION = "translation.markdown.v1"
+TRANSLATE_PROMPT_VERSIONS = ("translation.v1", TRANSLATE_PROMPT_VERSION, MARKDOWN_TRANSLATE_PROMPT_VERSION)
 ALIGN_PROMPT_VERSION = "alignment.v1"
 PROMPT_VERSIONS = (*TRANSLATE_PROMPT_VERSIONS, ALIGN_PROMPT_VERSION)
 # Accepted design revision (owner, 2026-11-05): 2 -> 4 so phrase alignment
@@ -81,6 +82,7 @@ MAX_BASE_URL_BYTES = 2048
 # document plans into fewer batches.
 LANGUAGES = ("en", "zh")
 UNIT_KINDS = ("sentence", "fragment")
+MARKDOWN_UNIT_KINDS = ("markdown_inline", "markdown_fragment")
 MAX_UNITS_PER_BATCH = 64
 MAX_BATCH_TEXT_BYTES = 8192
 MAX_CONTEXT_BYTES = 512
@@ -92,6 +94,7 @@ MAX_ALIGN_TEXT_BYTES = 8192  # reading_text + counterpart_text combined
 
 # Model-output bounds from the model workflow contract.
 MAX_TRANSLATION_BYTES = 8192
+MAX_MARKDOWN_TRANSLATION_BYTES = 32768
 MAX_DECODED_CONTENT_BYTES = 131072
 MAX_MATCHES = 8
 
@@ -355,8 +358,16 @@ def _parse_base_url(raw: Any, *, operation_url: bool = False) -> str:
     return raw
 
 
-def _parse_translate_input(raw: Any) -> TranslateInput:
+def has_markdown_line_shape(text: str) -> bool:
+    """Reject CR and empty lines before Swift checks semantic hard breaks."""
+
+    return "\r" not in text and all(line.strip() for line in text.split("\n"))
+
+
+def _parse_translate_input(raw: Any, prompt_version: str) -> TranslateInput:
     obj = _exact_object(raw, TRANSLATE_INPUT_KEYS, "translate input")
+    markdown = prompt_version == MARKDOWN_TRANSLATE_PROMPT_VERSION
+    allowed_kinds = MARKDOWN_UNIT_KINDS if markdown else UNIT_KINDS
     source_language = obj["source_language"]
     target_language = obj["target_language"]
     if source_language not in LANGUAGES or target_language not in LANGUAGES:
@@ -383,12 +394,15 @@ def _parse_translate_input(raw: Any) -> TranslateInput:
             raise RequestError("unit_id values must be unique within a request")
         seen_ids.add(unit_id)
         kind = unit["kind"]
-        if kind not in UNIT_KINDS:
-            raise RequestError("kind must be sentence or fragment")
+        if kind not in allowed_kinds:
+            raise RequestError("unit kind is incompatible with the translation prompt")
         text = unit["text"]
         if not isinstance(text, str) or not text or text != text.strip():
             raise RequestError("unit text must be a nonempty string trimmed at its outer boundaries")
-        if "\n" in text or "\r" in text:
+        if markdown:
+            if not has_markdown_line_shape(text):
+                raise RequestError("Markdown unit text must not contain CR or blank lines")
+        elif "\n" in text or "\r" in text:
             raise RequestError("unit text must not contain line breaks")
         total_text_bytes += request_utf8_len(text, "unit text")
         units.append(TranslateUnit(unit_id=unit_id, kind=kind, text=text))
@@ -498,8 +512,10 @@ def parse_request(env: Any) -> Request:
         )
         if prompt_version not in expected_versions:
             raise RequestError(f"prompt_version must be one of {expected_versions}")
-        input_parser = _parse_translate_input if op == "translate" else _parse_align_input
-        parsed_input = input_parser(env.get("input"))
+        if op == "translate":
+            parsed_input = _parse_translate_input(env.get("input"), prompt_version)
+        else:
+            parsed_input = _parse_align_input(env.get("input"))
     except RequestError:
         raise
     except (TypeError, AttributeError) as exc:

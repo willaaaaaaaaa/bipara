@@ -59,10 +59,15 @@ public struct ReadingAnchor: Equatable, Sendable {
     public var side: ReadingSide
     public var fraction: Double
 
-    public init(paragraphID: UUID, side: ReadingSide, fraction: Double) {
+    public var offset: Int?
+    public var sectionID: UUID?
+
+    public init(paragraphID: UUID, side: ReadingSide, fraction: Double, offset: Int? = nil, sectionID: UUID? = nil) {
         self.paragraphID = paragraphID
         self.side = side
         self.fraction = fraction
+        self.offset = offset
+        self.sectionID = sectionID
     }
 }
 
@@ -81,6 +86,12 @@ public struct BiparaDocument: Equatable, Sendable {
     public var jobSnapshot: JobSnapshot?
     public var layout: LayoutMode
     public var readingAnchor: ReadingAnchor?
+    public var requestedFormat: ContentFormat = .plainText
+    public var readingMode: MarkdownReadingMode = .source
+    public var markdownResolved = false
+    public var markdownPlan: MarkdownPlan?
+    var markdownPlanVersion: String?
+    var unsupportedMarkdownFile: Data?
 
     public init(
         documentID: UUID, title: String, source: String, sourceRevision: Int,
@@ -115,13 +126,14 @@ public enum DocumentCodec {
     /// Written schema version. Version 1 files are read through the
     /// in-memory snapshot migration (derived Auto/Off effort) but never
     /// rewritten on open.
-    public static let schemaVersion = 2
-    public static let readableSchemaVersions: ClosedRange<Int> = 1...2
+    public static let schemaVersion = 3
+    public static let readableSchemaVersions: ClosedRange<Int> = 1...3
     public static let maxTitleCharacters = 256
 
     // MARK: Encoding
 
     public static func encode(_ document: BiparaDocument) throws -> Data {
+        if let original = document.unsupportedMarkdownFile { return original }
         let dto = DocumentDTO(document)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -165,8 +177,8 @@ public enum DocumentCodec {
             } ?? .auto
             snapshotDTO.effort = derived
         }
-        if dto.schemaVersion == 2, let snapshotDTO = dto.jobSnapshot, snapshotDTO.effort == nil {
-            throw CoreError.invalidDocument("a v2 job snapshot requires an effort value")
+        if dto.schemaVersion >= 2, let snapshotDTO = dto.jobSnapshot, snapshotDTO.effort == nil {
+            throw CoreError.invalidDocument("a job snapshot requires an effort value")
         }
         var document = BiparaDocument(
             documentID: dto.documentID,
@@ -182,8 +194,34 @@ public enum DocumentCodec {
             layout: dto.layout,
             readingAnchor: dto.readingAnchor?.value
         )
+        if dto.schemaVersion == 3 {
+            guard let format = dto.contentFormat, let mode = dto.readingMode,
+                  format.resolved != .auto,
+                  format.requested == .auto || format.requested == format.resolved,
+                  (format.resolved == .markdown) == (dto.markdownPlanVersion?.isEmpty == false),
+                  dto.markdownPlanVersion != "",
+                  (format.requested == .auto) == (format.detectorVersion?.isEmpty == false),
+                  format.resolved == .markdown || mode == .source else {
+                throw CoreError.invalidDocument("invalid document content format")
+            }
+            document.requestedFormat = format.requested
+            document.readingMode = mode
+            document.markdownResolved = format.resolved == .markdown
+            document.markdownPlanVersion = dto.markdownPlanVersion
+            if document.isMarkdown, let version = dto.markdownPlanVersion, MarkdownPlan.supportedVersions.contains(version) {
+                guard let parsed = try MarkdownPlan.prepare(document.source, format: .markdown, plannerVersion: version) else {
+                    throw MarkdownPlan.invalidPlan
+                }
+                document.markdownPlan = try parsed.restored(paragraphs: document.paragraphs, units: document.units)
+            }
+        }
+        let unsupportedPlan = document.isMarkdown && document.markdownPlan == nil
+        if !unsupportedPlan, dto.units.contains(where: { UnitKind(rawValue: $0.kind) == nil }) {
+            throw CoreError.invalidDocument("unknown translation unit kind")
+        }
+        if unsupportedPlan { document.unsupportedMarkdownFile = data }
         try validate(&document)
-        if let snapshot = document.jobSnapshot, dto.schemaVersion == 2 {
+        if let snapshot = document.jobSnapshot, dto.schemaVersion >= 2 {
             try validateSnapshotCapabilities(snapshot)
         }
         return document
@@ -242,6 +280,113 @@ public enum DocumentCodec {
             throw CoreError.invalidDocument("a job snapshot requires a resolved direction")
         }
 
+        let unitsByID = Dictionary(document.units.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        if document.isMarkdown {
+            let total = TextRange(location: 0, length: document.source.utf16.count)
+            let paragraphIDs = Set(document.paragraphs.map(\.id))
+            guard unitsByID.count == document.units.count,
+                  paragraphIDs.count == document.paragraphs.count,
+                  document.paragraphs.allSatisfy({ $0.sourceRange.isWithin(total) && document.source.hasValidRange($0.sourceRange) }),
+                  document.units.allSatisfy({ unit in
+                      unit.kind.isMarkdown && !unit.isBlank && paragraphIDs.contains(unit.paragraphID)
+                          && unit.textRange.isWithin(unit.sourceRange)
+                          && document.source.hasValidRange(unit.sourceRange) && document.source.hasValidRange(unit.textRange)
+                  }) else {
+                throw MarkdownPlan.invalidPlan
+            }
+            if let plan = document.markdownPlan {
+                guard plan.paragraphs == document.paragraphs, plan.units == document.units,
+                      TextIdentity.equal(plan.source, document.source) else { throw MarkdownPlan.invalidPlan }
+                try plan.validateTranslations(document.translations, language: document.jobSnapshot?.targetLanguage ?? .zh)
+            }
+        } else {
+            try validatePlainPlan(document, unitsByID: unitsByID)
+        }
+
+        // Translations: source order, unique, referenced, validated text.
+        var translatedIDs = Set<UUID>()
+        var previousTranslationLocation = -1
+        let unitOrder = Dictionary(document.units.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for translation in document.translations {
+            guard translatedIDs.insert(translation.unitID).inserted else {
+                throw CoreError.invalidDocument("duplicate translation")
+            }
+            guard let unit = unitsByID[translation.unitID] else {
+                throw CoreError.invalidDocument("translation references an unknown unit")
+            }
+            guard !unit.isBlank else {
+                throw CoreError.invalidDocument("blank unit is translated")
+            }
+            let location = unitOrder[unit.id, default: -1]
+            guard location > previousTranslationLocation else {
+                throw CoreError.invalidDocument("translations are not in source order")
+            }
+            previousTranslationLocation = location
+            let text = translation.text
+            // Model-result rules: nonempty (independently of trimming,
+            // since "".isContractTrimmed is true), trimmed, no line breaks,
+            // and within the per-string byte bound.
+            if text.isEmpty
+                || !text.isContractTrimmed
+                || (!document.isMarkdown && (text.contains("\n") || text.contains("\r")))
+                || TextIdentity.utf8Length(text) > (document.isMarkdown ? WorkerContract.maxMarkdownTranslationBytes : WorkerContract.maxTranslationBytes) {
+                throw CoreError.invalidDocument("translation text violates model-output bounds")
+            }
+        }
+        if !document.translations.isEmpty, document.jobSnapshot == nil {
+            throw CoreError.invalidDocument("translations without a job snapshot")
+        }
+
+        // Job snapshot coherence. Prompt versions, profiles, provider IDs,
+        // and model IDs are kept literal: snapshots from older app versions
+        // still open for reading, and Resume gating is app policy.
+        if let snapshot = document.jobSnapshot {
+            guard document.isMarkdown || snapshot.translationPromptVersion != WorkerContract.markdownTranslationPromptVersion else {
+                throw CoreError.invalidDocument("Markdown prompt requires a Markdown document")
+            }
+            guard snapshot.sourceLanguage != snapshot.targetLanguage else {
+                throw CoreError.invalidDocument("snapshot languages must differ")
+            }
+            guard snapshot.sourceRevision == document.sourceRevision else {
+                throw CoreError.invalidDocument("snapshot revision does not match the document")
+            }
+            if let resolved = document.resolvedDirection {
+                let expected: [Language]
+                switch resolved {
+                case .zhToEn: expected = [.zh, .en]
+                case .enToZh: expected = [.en, .zh]
+                case .auto: expected = []
+                }
+                if expected == [.zh, .en] {
+                    guard snapshot.sourceLanguage == .zh, snapshot.targetLanguage == .en else {
+                        throw CoreError.invalidDocument("snapshot languages contradict the direction")
+                    }
+                } else if expected == [.en, .zh] {
+                    guard snapshot.sourceLanguage == .en, snapshot.targetLanguage == .zh else {
+                        throw CoreError.invalidDocument("snapshot languages contradict the direction")
+                    }
+                }
+            }
+            // Deliberately no prompt/profile validity gate here: a snapshot
+            // with an unavailable old prompt/profile still opens for
+            // reading; Resume gating is app policy, not codec policy.
+        }
+
+        // Reading anchor: an invalid optional anchor resets, not rejects.
+        if let anchor = document.readingAnchor {
+            if anchor.fraction.isFinite, anchor.fraction >= 0, anchor.fraction <= 1,
+               anchor.offset.map({ $0 >= 0 && $0 <= WorkerContract.maxSourceUTF8Bytes }) ?? true,
+               document.paragraphs.contains(where: { $0.id == anchor.paragraphID }) {
+                // keep
+            } else if let first = document.paragraphs.first {
+                document.readingAnchor = ReadingAnchor(paragraphID: first.id, side: .source, fraction: 0)
+            } else {
+                document.readingAnchor = nil
+            }
+        }
+    }
+
+    private static func validatePlainPlan(_ document: BiparaDocument, unitsByID: [UUID: PlannedUnit]) throws {
         // Paragraph partition covers the exact source with valid ranges.
         try SourcePlanner.validateParagraphPartition(document.paragraphs, totalLength: document.source.utf16.count)
         var paragraphIDs = Set<UUID>()
@@ -265,7 +410,6 @@ public enum DocumentCodec {
         var unitIDs = Set<UUID>()
         var previousUnitEnd = -1
         let paragraphByID = Dictionary(uniqueKeysWithValues: document.paragraphs.map { ($0.id, $0) })
-        let unitsByID = Dictionary(document.units.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let unitIDSetsByParagraph = Dictionary(
             document.paragraphs.map { ($0.id, Set($0.unitIDs)) },
             uniquingKeysWith: { first, _ in first }
@@ -275,7 +419,7 @@ public enum DocumentCodec {
             orderedUnitsByParagraph[unit.paragraphID, default: []].append(unit)
         }
         for unit in document.units {
-            guard unitIDs.insert(unit.id).inserted else {
+            guard !unit.kind.isMarkdown, unitIDs.insert(unit.id).inserted else {
                 throw CoreError.invalidDocument("duplicate unit ID")
             }
             guard let paragraph = paragraphByID[unit.paragraphID] else {
@@ -361,86 +505,21 @@ public enum DocumentCodec {
             }
         }
 
-        // Translations: source order, unique, referenced, validated text.
-        var translatedIDs = Set<UUID>()
-        var previousTranslationLocation = -1
-        for translation in document.translations {
-            guard translatedIDs.insert(translation.unitID).inserted else {
-                throw CoreError.invalidDocument("duplicate translation")
-            }
-            guard let unit = unitsByID[translation.unitID] else {
-                throw CoreError.invalidDocument("translation references an unknown unit")
-            }
-            guard !unit.isBlank else {
-                throw CoreError.invalidDocument("blank unit is translated")
-            }
-            let location = unit.textRange.location
-            guard location > previousTranslationLocation else {
-                throw CoreError.invalidDocument("translations are not in source order")
-            }
-            previousTranslationLocation = location
-            let text = translation.text
-            // Model-result rules: nonempty (independently of trimming,
-            // since "".isContractTrimmed is true), trimmed, no line breaks,
-            // and within the per-string byte bound.
-            if text.isEmpty
-                || !text.isContractTrimmed
-                || text.contains("\n") || text.contains("\r")
-                || TextIdentity.utf8Length(text) > WorkerContract.maxTranslationBytes {
-                throw CoreError.invalidDocument("translation text violates model-output bounds")
-            }
-        }
-        if !document.translations.isEmpty, document.jobSnapshot == nil {
-            throw CoreError.invalidDocument("translations without a job snapshot")
-        }
-
-        // Job snapshot coherence. Prompt versions, profiles, provider IDs,
-        // and model IDs are kept literal: snapshots from older app versions
-        // still open for reading, and Resume gating is app policy.
-        if let snapshot = document.jobSnapshot {
-            guard snapshot.sourceLanguage != snapshot.targetLanguage else {
-                throw CoreError.invalidDocument("snapshot languages must differ")
-            }
-            guard snapshot.sourceRevision == document.sourceRevision else {
-                throw CoreError.invalidDocument("snapshot revision does not match the document")
-            }
-            if let resolved = document.resolvedDirection {
-                let expected: [Language]
-                switch resolved {
-                case .zhToEn: expected = [.zh, .en]
-                case .enToZh: expected = [.en, .zh]
-                case .auto: expected = []
-                }
-                if expected == [.zh, .en] {
-                    guard snapshot.sourceLanguage == .zh, snapshot.targetLanguage == .en else {
-                        throw CoreError.invalidDocument("snapshot languages contradict the direction")
-                    }
-                } else if expected == [.en, .zh] {
-                    guard snapshot.sourceLanguage == .en, snapshot.targetLanguage == .zh else {
-                        throw CoreError.invalidDocument("snapshot languages contradict the direction")
-                    }
-                }
-            }
-            // Deliberately no prompt/profile validity gate here: a snapshot
-            // with an unavailable old prompt/profile still opens for
-            // reading; Resume gating is app policy, not codec policy.
-        }
-
-        // Reading anchor: an invalid optional anchor resets, not rejects.
-        if let anchor = document.readingAnchor {
-            if anchor.fraction.isFinite, anchor.fraction >= 0, anchor.fraction <= 1,
-               document.paragraphs.contains(where: { $0.id == anchor.paragraphID }) {
-                // keep
-            } else if let first = document.paragraphs.first {
-                document.readingAnchor = ReadingAnchor(paragraphID: first.id, side: .source, fraction: 0)
-            } else {
-                document.readingAnchor = nil
-            }
-        }
     }
 }
 
 // MARK: - Wire DTOs (exact field names of format v1)
+
+private struct DocumentContentFormatDTO: Codable {
+    let requested: ContentFormat
+    let resolved: ContentFormat
+    let detectorVersion: String?
+
+    enum CodingKeys: String, CodingKey {
+        case requested, resolved
+        case detectorVersion = "detector_version"
+    }
+}
 
 private struct DocumentDTO: Codable {
     var format: String
@@ -456,6 +535,9 @@ private struct DocumentDTO: Codable {
     var jobSnapshot: JobSnapshotDTO?
     var layout: LayoutMode
     var readingAnchor: ReadingAnchorDTO?
+    var contentFormat: DocumentContentFormatDTO?
+    var readingMode: MarkdownReadingMode?
+    var markdownPlanVersion: String?
 
     enum CodingKeys: String, CodingKey {
         case format
@@ -471,11 +553,18 @@ private struct DocumentDTO: Codable {
         case jobSnapshot = "job_snapshot"
         case layout
         case readingAnchor = "reading_anchor"
+        case contentFormat = "content_format"
+        case readingMode = "reading_mode"
+        case markdownPlanVersion = "markdown_plan_version"
     }
 
     init(_ document: BiparaDocument) {
         format = DocumentCodec.formatName
         schemaVersion = DocumentCodec.schemaVersion
+        contentFormat = .init(requested: document.requestedFormat, resolved: document.isMarkdown ? .markdown : .plainText,
+                              detectorVersion: document.requestedFormat == .auto ? MarkdownPlan.detectorVersion : nil)
+        readingMode = document.isMarkdown ? document.readingMode : .source
+        markdownPlanVersion = document.markdownPlan?.planVersion ?? document.markdownPlanVersion
         documentID = document.documentID
         title = document.title
         source = document.source
@@ -514,6 +603,12 @@ private struct DocumentDTO: Codable {
         jobSnapshot = try container.decodeIfPresent(JobSnapshotDTO.self, forKey: .jobSnapshot)
         layout = try container.decode(LayoutMode.self, forKey: .layout)
         readingAnchor = try container.decodeIfPresent(ReadingAnchorDTO.self, forKey: .readingAnchor)
+        if schemaVersion == 3, !container.contains(.markdownPlanVersion) {
+            throw CoreError.invalidDocument("missing Markdown plan version")
+        }
+        contentFormat = try container.decodeIfPresent(DocumentContentFormatDTO.self, forKey: .contentFormat)
+        readingMode = try container.decodeIfPresent(MarkdownReadingMode.self, forKey: .readingMode)
+        markdownPlanVersion = try container.decodeIfPresent(String.self, forKey: .markdownPlanVersion)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -534,6 +629,9 @@ private struct DocumentDTO: Codable {
             try container.encodeNil(forKey: .jobSnapshot)
         }
         try container.encode(layout, forKey: .layout)
+        try container.encode(contentFormat, forKey: .contentFormat)
+        try container.encode(readingMode, forKey: .readingMode)
+        try container.encode(markdownPlanVersion, forKey: .markdownPlanVersion)
         if let readingAnchor {
             try container.encode(readingAnchor, forKey: .readingAnchor)
         } else {
@@ -627,7 +725,7 @@ private struct UnitDTO: Codable {
     var paragraphID: UUID
     var sourceRange: RangeDTO
     var textRange: RangeDTO
-    var kind: UnitKind
+    var kind: String
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -642,7 +740,7 @@ private struct UnitDTO: Codable {
         paragraphID = unit.paragraphID
         sourceRange = RangeDTO(unit.sourceRange)
         textRange = RangeDTO(unit.textRange)
-        kind = unit.kind
+        kind = unit.kind.rawValue
     }
 
     var value: PlannedUnit {
@@ -651,7 +749,7 @@ private struct UnitDTO: Codable {
             paragraphID: paragraphID,
             sourceRange: sourceRange.value,
             textRange: textRange.value,
-            kind: kind
+            kind: UnitKind(rawValue: kind) ?? .markdownInline
         )
     }
 }
@@ -801,20 +899,25 @@ private struct ReadingAnchorDTO: Codable {
     var paragraphID: UUID
     var side: ReadingSide
     var fraction: Double
+    var offset: Int?
+    var sectionID: UUID?
 
     enum CodingKeys: String, CodingKey {
         case paragraphID = "paragraph_id"
         case side
-        case fraction
+        case fraction, offset
+        case sectionID = "section_id"
     }
 
     init(_ anchor: ReadingAnchor) {
         paragraphID = anchor.paragraphID
         side = anchor.side
         fraction = anchor.fraction
+        offset = anchor.offset
+        sectionID = anchor.sectionID
     }
 
     var value: ReadingAnchor {
-        ReadingAnchor(paragraphID: paragraphID, side: side, fraction: fraction)
+        ReadingAnchor(paragraphID: paragraphID, side: side, fraction: fraction, offset: offset, sectionID: sectionID)
     }
 }

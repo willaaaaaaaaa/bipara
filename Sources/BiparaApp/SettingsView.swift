@@ -146,16 +146,18 @@ public struct SettingsView: View {
                         }
                     }.accessibilityIdentifier("settings.reading.highlight")
                     Picker(t("Font family"), selection: typography(\.family)) {
+                        Text(t("Monospaced")).tag(ReadingTypography.Family.monospaced)
                         Text(t("System")).tag(ReadingTypography.Family.system)
                         Text(t("Serif")).tag(ReadingTypography.Family.serif)
                     }
                     Picker(t("Line height"), selection: typography(\.lineHeight)) {
+                        Text(t("Editor")).tag(ReadingTypography.LineHeight.editor)
                         Text(t("Compact")).tag(ReadingTypography.LineHeight.compact)
                         Text(t("Comfortable")).tag(ReadingTypography.LineHeight.comfortable)
                         Text(t("Spacious")).tag(ReadingTypography.LineHeight.spacious)
                     }
                     LabeledContent(t("Reading size")) {
-                        Slider(value: typography(\.size), in: 14...28, step: 1)
+                        Slider(value: typography(\.size), in: 12...28, step: 1)
                             .accessibilityLabel(t("Reading size"))
                             .accessibilityIdentifier("settings.reading.size")
                         Text("\(Int(store.draft.typography.size)) pt").monospacedDigit().frame(width: 44)

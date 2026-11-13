@@ -1,6 +1,306 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Editor": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "编辑器"
+          }
+        }
+      }
+    },
+    "Monospaced": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等宽"
+          }
+        }
+      }
+    },
+    "Section match": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "章节对应"
+          }
+        }
+      }
+    },
+    "Format": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "格式"
+          }
+        }
+      }
+    },
+    "Markdown": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Markdown"
+          }
+        }
+      }
+    },
+    "Plain Text": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "纯文本"
+          }
+        }
+      }
+    },
+    "Sections": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "章节对照"
+          }
+        }
+      }
+    },
+    "Side by side / Sections": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "左右对照 / 章节对照"
+          }
+        }
+      }
+    },
+    "Reading mode": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "阅读模式"
+          }
+        }
+      }
+    },
+    "Rendered": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "渲染"
+          }
+        }
+      }
+    },
+    "Source": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "源码"
+          }
+        }
+      }
+    },
+    "Preparing Markdown": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在准备 Markdown"
+          }
+        }
+      }
+    },
+    "Block match": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "段块对应"
+          }
+        }
+      }
+    },
+    "No prose to translate": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有需要翻译的正文"
+          }
+        }
+      }
+    },
+    "This Markdown plan is unavailable. Retranslate to rebuild it.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前版本无法使用此 Markdown 计划。重新翻译可重建计划。"
+          }
+        }
+      }
+    },
+    "Apply the new document format?": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用新的文档格式？"
+          }
+        }
+      }
+    },
+    "Changing the resolved format stops translation and clears the current results.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更改文档格式会停止翻译并清除当前译文。"
+          }
+        }
+      }
+    },
+    "Rebuilding the Markdown plan clears the current results.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重建 Markdown 计划会清除当前译文。"
+          }
+        }
+      }
+    },
+    "Apply Format": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用格式"
+          }
+        }
+      }
+    },
+    "The selected format could not be applied.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法应用所选格式。"
+          }
+        }
+      }
+    },
+    "The Markdown cannot be planned within the supported limits. Edit the original or choose Plain Text.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Markdown 超出支持范围。请编辑原文或选择纯文本。"
+          }
+        }
+      }
+    },
+    "The model changed the Markdown structure. Completed translations were kept.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型改变了 Markdown 结构。已完成的译文已保留。"
+          }
+        }
+      }
+    },
+    "Export completed blocks only?": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅导出已完成的结构块？"
+          }
+        }
+      }
+    },
+    "This translation is incomplete. Partial export omits unfinished blocks, lists and tables.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "翻译尚未完成。部分导出会省略未完成的结构块、列表和表格。"
+          }
+        }
+      }
+    },
+    "There are no completed blocks to export yet.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚无可导出的已完成结构块。"
+          }
+        }
+      }
+    },
+    "Export Translation as Markdown…": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将译文导出为 Markdown…"
+          }
+        }
+      }
+    },
+    "Export Bilingual as Markdown…": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将双语对照导出为 Markdown…"
+          }
+        }
+      }
+    },
+    "Column": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "列"
+          }
+        }
+      }
+    },
+    "Open Link": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开链接"
+          }
+        }
+      }
+    },
+    "Each original section is followed by its translation.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每个原文章节后面跟随对应译文。"
+          }
+        }
+      }
+    },
     "Some settings are invalid. Check the model and reading settings, then save again.": {
       "localizations": {
         "zh-Hans": {

@@ -15,12 +15,12 @@ import json
 import pytest
 
 import bipara_worker.models as models
-from bipara_worker.assets import load_assets
+from bipara_worker.assets import load_assets, load_cases
 from bipara_worker.errors import WorkerError
 from bipara_worker.models import make_langchain_operation
 from bipara_worker.protocol import parse_request
 
-from conftest import align_request_a01, translate_request_t01
+from conftest import align_request_a01, translate_request_markdown, translate_request_t01
 
 
 class FakeMessage:
@@ -103,6 +103,31 @@ async def test_translate_operation_executes_real_branch(monkeypatch, prompt_vers
     assert human.content == json.dumps(
         translate_request_t01()["input"], ensure_ascii=False, separators=(",", ":")
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_text", [None, "甲\n乙\n丙"])
+async def test_markdown_operation_uses_versioned_prompt_and_source_line_bound(monkeypatch, invalid_text):
+    envelope = translate_request_markdown()
+    case = next(case for case in load_cases()["cases"] if case["id"] == "M01-inline-order-and-hard-break")
+    output = {"translations": [{
+        "unit_id": envelope["input"]["units"][0]["unit_id"],
+        "text": invalid_text or case["sample_output"]["translations"][0]["text"],
+    }]}
+    fake = FakeModel(reply=FakeMessage(content=json.dumps(output, ensure_ascii=False)))
+    operation = make_operation(monkeypatch, fake)
+    if invalid_text is None:
+        data, meta = await operation(parse_request(envelope))
+        assert data == output
+        assert meta["prompt_version"] == "translation.markdown.v1"
+    else:
+        with pytest.raises(WorkerError) as exc:
+            await operation(parse_request(envelope))
+        assert exc.value.code == "invalid_output"
+    system, human = fake.calls[0]
+    assert system.content == load_assets().prompts["translation.markdown.v1"]
+    assert json.loads(human.content) == envelope["input"]
+    assert len(fake.calls) == 1
 
 
 @pytest.mark.asyncio

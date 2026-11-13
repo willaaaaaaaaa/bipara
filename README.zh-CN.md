@@ -4,6 +4,8 @@
 
 Bipara 是一款由大语言模型（LLM）驱动的原生 macOS 翻译与双语对照阅读应用，专注于中英长文，支持左右对照、交替段落、词句对应和独立多文档标签。
 
+**Markdown 阅读。** 直接粘贴文本即可在本地自动识别 Markdown 格式。原文和译文都会渲染，可左右对照或按章节交替阅读。也可以手动指定格式、查看源码、导入 UTF-8 `.md` 文件或导出 Markdown。详见[阅读说明](docs/design/interaction.md#markdown-reading)和[验证状态](docs/validation.md#markdown-validation)。
+
 应用使用 Swift 管理原生界面、文档和任务，内置 Python worker 通过 LangChain 调用模型。最终用户无需安装 Python 或运行服务器。模型连接支持 OpenAI Responses 和 Anthropic Messages，统一通过自定义表单填写名称、接口协议、模型 ID、推理力度、API Base URL 和 API 密钥。用户自行选择兼容的模型和参数；调用需要网络、符合资格的账户，并可能产生服务商费用。
 
 Bipara 目前处于实验阶段。真实服务商的语义质量、延迟和费用尚未完整验收，原生 UI 与无障碍验收也未完成。

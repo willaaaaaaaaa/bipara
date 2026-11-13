@@ -40,7 +40,7 @@ private struct GatedWorker {
             (ROOT/'overlap').write_text(str(overlap))
         sys.stdin.readline();mark('hello')
         if MODE=='delayedReady':wait('allow-ready')
-        ready={'v':True if MODE=='boolVersion' else 2,'type':'ready','worker_version':'gate','max_inflight':4,'prompt_versions':['translation.v1','translation.v2','alignment.v1']}
+        ready={'v':True if MODE=='boolVersion' else 2,'type':'ready','worker_version':'gate','max_inflight':4,'prompt_versions':['translation.v1','translation.v2','translation.markdown.v1','alignment.v1']}
         if MODE=='overlong':
             ready['padding']='';ready['padding']='x'*(1048576-len(json.dumps(ready,separators=(',',':'))))
         send(ready)

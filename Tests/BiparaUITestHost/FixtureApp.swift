@@ -25,9 +25,20 @@ actor FixtureGateway:ModelGateway {
     func translateBatch(_ request:TranslateBatchRequest,configuration:ModelConfiguration)async throws->TranslateBatchResult {
         try await Task.sleep(for:translationDelay)
         if !translationFailures.isEmpty { throw translationFailures.removeFirst() }
-        return .init(translations:request.units.map{unit in
-            .init(unitID:unit.unitID,text:request.targetLanguage == .zh ? (unit.text.contains("window") ? "窗户开着。" : "这是一段用于界面验证的译文。") : "This is an example translation.")
-        },meta:meta(configuration,prompt:request.promptVersion))
+        return .init(translations: request.units.map { unit in
+            let text: String
+            if request.promptVersion == WorkerContract.markdownTranslationPromptVersion {
+                text = unit.text
+                    .replacingOccurrences(of: "Setup", with: "准备")
+                    .replacingOccurrences(of: "Open the", with: "打开")
+                    .replacingOccurrences(of: "window", with: "窗户")
+            } else {
+                text = request.targetLanguage == .zh
+                    ? (unit.text.contains("window") ? "窗户开着。" : "这是一段用于界面验证的译文。")
+                    : "This is an example translation."
+            }
+            return .init(unitID: unit.unitID, text: text)
+        }, meta: meta(configuration, prompt: request.promptVersion))
     }
     func alignSelection(_ request:AlignSelectionRequest,configuration:ModelConfiguration)async throws->AlignSelectionResult {
         try await Task.sleep(for:.milliseconds(40))

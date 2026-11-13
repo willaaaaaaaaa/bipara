@@ -12,7 +12,7 @@ import asyncio
 from typing import Any
 
 from bipara_worker.errors import WorkerError
-from bipara_worker.protocol import AlignInput, Request, TranslateInput
+from bipara_worker.protocol import AlignInput, MARKDOWN_TRANSLATE_PROMPT_VERSION, Request, TranslateInput
 from bipara_worker.validation import validate_alignment_output, validate_translation_output
 
 
@@ -24,8 +24,9 @@ def build_case_indexes(cases: dict[str, Any]) -> tuple[dict[tuple[Any, ...], str
             source = case["input"]["source_language"]
             target = case["input"]["target_language"]
             outputs = case["sample_output"]["translations"]
+            markdown = case.get("prompt_version") == MARKDOWN_TRANSLATE_PROMPT_VERSION
             for unit, output in zip(case["input"]["units"], outputs):
-                translations[(source, target, unit["text"])] = output["text"]
+                translations[(markdown, source, target, unit["text"])] = output["text"]
         else:
             inp = case["input"]
             alignments[(inp["reading_text"], inp["counterpart_text"], inp["selection"]["text"])] = (
@@ -61,10 +62,11 @@ def make_fixture_operation(
         if delay > 0:
             await asyncio.sleep(delay)
         if isinstance(request.input, TranslateInput):
+            markdown = request.prompt_version == MARKDOWN_TRANSLATE_PROMPT_VERSION
             texts = []
             for unit in request.input.units:
                 sample = translations.get(
-                    (request.input.source_language, request.input.target_language, unit.text)
+                    (markdown, request.input.source_language, request.input.target_language, unit.text)
                 )
                 if sample is None:
                     # Deterministic, obviously synthetic fallback for
@@ -78,7 +80,8 @@ def make_fixture_operation(
                 ]
             }
             data = validate_translation_output(
-                raw, [unit.unit_id for unit in request.input.units]
+                raw, [unit.unit_id for unit in request.input.units],
+                source_line_feeds=[unit.text.count("\n") for unit in request.input.units] if markdown else None,
             )
         elif isinstance(request.input, AlignInput):
             raw = alignments.get(
