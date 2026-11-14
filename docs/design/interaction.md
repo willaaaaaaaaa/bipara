@@ -1,6 +1,6 @@
 # Reading Interaction Design
 
-This document defines current Settings, reading and document-tab behavior. See [validation status](../validation.md) for tested scope and [requirements](../requirements.md) for product requirements.
+This document defines Settings, reading and document-tab behavior, including Markdown. See [validation status](../validation.md) for tested scope and [requirements](../requirements.md) for product requirements.
 
 Model management follows the [configuration contract](model-settings.md): translation direction is a Settings preference, while the active model is shared with the toolbar.
 
@@ -53,6 +53,8 @@ Translation displays completed paragraphs as they arrive. Cancel stops remaining
 
 ## Settings
 
+The document-format control belongs to each document, as specified in [Markdown reading](#markdown-reading); it is separate from the global translation-language direction below.
+
 Provide a dedicated native Settings window. Organize low-frequency preferences into three small sections:
 
 | Section | Initial controls |
@@ -74,7 +76,7 @@ The [model configuration design](model-settings.md) owns the six-field custom ed
 
 ## Typography and native presentation
 
-Default to the system UI font and appropriate Chinese system fallback. Use the native design's 17-point initial reading size and adjustable line spacing; evaluate the supported size range in both layouts. Offer reading-size adjustments in Settings, readable column widths, light/dark appearances, and reduced-motion support. Offer the approved system and serif reading typefaces.
+Document text defaults to Menlo at 12 points with native Chinese fallback (PingFang SC on the supported local system), normal weight, no optional ligatures and an 18-point baseline grid. Apply the same typography to the original and translation, plain-text reading, both Markdown modes and the source editor. Settings offers Monospaced, System and Serif, a 12–28-point size range, and adjustable line spacing. Existing saved typography remains unchanged until explicitly edited; fresh preferences use the editor defaults. Retain native system fonts for interface controls, readable column widths, light/dark appearances and reduced-motion support. Typography does not import an editor color theme: keep the existing source/translation palette and a neutral semantic text background across the main workspace, including the input screen. The source editor retains native semantic text colors for existing, typed and pasted content, including after typography or appearance changes.
 
 The [app icon](icons/README.md) represents parallel text. Use the icon's correspondence motif sparingly; the reading window should remain visually quiet. Final icon sizing and platform masking need separate validation.
 
@@ -91,6 +93,54 @@ Keep the native About panel. Display the release version and build number, for e
 ## Implementation references
 
 Use the [development plan](../development-plan.md), [model workflow](model-workflow.md), [prompts](../../prompts/README.md) and [test plan](../testing.md).
+
+## Markdown reading
+
+These rules extend R24–R28 and supersede paragraph-only presentation only for documents resolved as Markdown. Plain-text documents retain their existing layouts and behavior. The format detector and parser contract live in [native design](technical-design.md#markdown-structure-and-rendering).
+
+### Paste, detect and override
+
+The normal path is New Translation → paste text → local detection → Translate → rendered bilingual reading. Paste consumes the explicit clipboard text once; there is no clipboard watcher, filename requirement, AI classification, additional permission dialog or separate detection step. The editor remains a native plain-text source editor. Format detection updates a compact status/control, not the editable text or caret. Apply can open the rendered source reader before translation, without a model call; pasting alone never unexpectedly replaces the editor or moves its caret.
+
+| Control | Values and behavior |
+| --- | --- |
+| Format / 格式 | Auto / 自动, Markdown, Plain Text / 纯文本; default Auto for new documents. Located beside the input actions and available from the reader action menu. |
+| Resolved-format status | Auto · Markdown or Auto · Plain Text; accessible name explains the resolved format. Show no numerical confidence score or repeated suggestion banner. |
+| Reading mode | Rendered / 渲染, Source / 源码 for Markdown; Rendered is the default. Both source and translation switch together. Source is read-only; Edit Original opens the source editor. |
+| Layout | Side by side / 左右对照, Sections / 章节对照 for Markdown. The latter uses the existing alternating-layout choice, labeled Paragraphs for plain text. Command-1/2 keeps its existing meaning. |
+
+Run detection 300 ms after the last committed editor change, including paste. Suspend it during IME marked text. Apply, Save and Translate wait for a current-generation result; an obsolete parse cannot choose the format or replace a newer preview. The source plan stays tied to its revision during translation. The Rendered and Source controls remain available. Interface-language changes do not change document format or translation direction.
+
+Manual format selection wins over content detection. Remember the choice in the document, not as a global setting. Returning to Auto reruns detection for the current source. Changing the requested choice without changing its resolved format preserves units and results. A change of resolved format changes planning: if work/results exist, explain that applying it stops that job and clears its translation, and offer Apply Format / Cancel. This is the existing replacement boundary, not a new confirmation on every paste. Apply does not automatically start translation. Source/Rendered switching, layout, width and appearance are presentation-only and make zero model calls.
+
+### Sections and comparison
+
+Rendered and Source modes share the selected reading typeface on both language sides, defaulting to Menlo at 12 points with an 18-point baseline grid and native Chinese fallback. Rendered mode retains heading sizes, emphasis, list layout and link styling. Literal metadata and unsupported literal blocks use the normal text background without added paragraph spacing between their lines; only actual code receives code shading. Presentation styles never alter source bytes or require retranslation.
+
+Parse the whole source before building sections, including document-wide reference definitions. Every document-level ATX or Setext heading starts a section; headings inside lists, blockquotes, code or literal HTML do not. Preserve hierarchy through heading levels. Skipped heading levels keep their original level. Duplicate titles get distinct IDs. A heading owns the following blocks up to the next document-level heading of any level. Its child sections remain separate presentation groups; never duplicate their contents in a parent group. Leading content before the first heading forms one untitled introduction group.
+
+This makes a document title followed by `##` sections a short title/introduction group followed by the actual section pairs, rather than one enormous pair containing the whole article. Hierarchy remains visible through heading size and spacing. Do not add artificial headings to exported text. Without headings, compare complete top-level structural blocks; keep a whole list or table together instead of pairing each source line. An empty document has no groups.
+
+| Left/source group | Right/translation group |
+| --- | --- |
+| Document title and introduction | Translated title and introduction |
+| First section heading, prose and list | Same section ID, translated heading, prose and list |
+| Nested subsection heading and its own content | Same subsection ID and translated content |
+| Next section | Corresponding next section |
+
+Side by side aligns corresponding block starts using the larger intrinsic height, keeping each table together. Language-length differences leave space after the shorter corresponding block rather than accumulating a whole chapter of blank space. Both panes scroll at the same vertical offset, including when dragging either scrollbar or revealing a counterpart. Logical block/section anchors restore the reading position after reflow or a mode change; they do not remap the other pane during a drag. Hover never jumps the viewport. Sections mode presents one source group followed by its translation, retaining the existing side key, distinct text styles and translation rule. Source mode keeps the same logical grouping with literal Markdown text, so it can diagnose formatting without requesting another translation.
+
+Display completed blocks within an unfinished section; do not wait for a whole chapter. Completed paragraphs within list items appear progressively. Table headers and rows appear as complete rows with the correct column count. Keep unfinished indicators in the gutter/status area, not in selectable or exported text. A missing target block uses its source anchor. Preserve pins and the current logical block when earlier results arrive.
+
+### Selection, links, copy and export
+
+Native Copy on an explicit selection copies the visible selected text. Copy Original and Copy Translation copy canonical source/assembled target Markdown, regardless of reading mode; full Copy Translation remains disabled until all required prose units complete. A document with only local-copy blocks is immediately eligible without a translation job; show No prose to translate instead of 0/0 progress or invented model attribution. File export offers Markdown (`.md`) or Plain Text (`.txt`) for Markdown documents. The latter contains visible content without markup; the former preserves structure and protected literals. A disabled full export and the existing explicit partial-export choice distinguish incomplete work.
+
+Bilingual Markdown export serializes each source group followed by its translation, separated by application-generated language labels outside code/list/table blocks. Put the effective reference definitions before bilingual groups so the combined output resolves them with the original document's precedence. Translation-only Markdown export retains the original reference labels/definitions. Partial translation-only export includes only complete top-level blocks or section-owned blocks, omits incomplete lists/tables, preserves required reference definitions, and discloses omitted groups before saving. Bilingual partial export marks a missing translation outside the structural block. These labels never enter stored source or translations.
+
+Links use an explicit Open Link context-menu action so ordinary selection does not navigate. Open HTTP/HTTPS destinations externally on request. Relative paths and other schemes remain available for inspection and copy. Fragment links use the source heading identity to reveal its corresponding heading on either side when uniquely resolvable; ambiguous or missing anchors do not guess a destination. Keep fragment destinations unchanged in Markdown export. Other renderers may derive different anchors from translated headings, so exported intra-document anchor navigation is not guaranteed in the first version; source/translated heading comparison inside Bipara remains identity-based. Images remain placeholders with accessible alt text and no automatic network or filesystem read. Task-list checkboxes are read-only.
+
+Mapped prose retains phrase analysis under existing limits. Selection across blocks, protected literals or ambiguous display mappings immediately falls back to Block or Section correspondence without a model request. Code has literal block correspondence, not a claimed natural-language phrase translation. Formatting markers, generated bullets, placeholder captions and layout padding have no eligible model selection. Preserve keyboard selection across paragraphs and table cells, app-owned accessibility labels, maximum reading size, light/dark themes and both scroller styles.
 
 ## Validation boundary
 

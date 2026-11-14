@@ -9,9 +9,18 @@ let package = Package(
         .library(name: "BiparaWorker", targets: ["BiparaWorker"]),
         .library(name: "BiparaAppKit", targets: ["BiparaAppKit"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.8.0"),
+        .package(url: "https://github.com/swiftlang/swift-cmark.git", exact: "0.9.0"),
+    ],
     targets: [
         .target(
             name: "BiparaCore",
+            dependencies: [
+                .product(name: "Markdown", package: "swift-markdown"),
+                .product(name: "cmark-gfm", package: "swift-cmark"),
+                .product(name: "cmark-gfm-extensions", package: "swift-cmark"),
+            ],
             path: "Sources/BiparaCore",
             exclude: ["README.md"]
         ),
@@ -30,7 +39,7 @@ let package = Package(
             dependencies: ["BiparaCore", "BiparaWorker"],
             path: "Sources/BiparaApp",
             exclude: ["BiparaApp.swift", "README.md", "Resources"],
-            resources: [.process("Localization")]
+            resources: [.process("Localization"), .copy("ThirdPartyLicenses")]
         ),
         .testTarget(
             name: "BiparaCoreTests",

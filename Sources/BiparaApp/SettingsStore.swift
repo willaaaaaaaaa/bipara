@@ -28,22 +28,24 @@ public enum CorrespondenceColor: String, Codable, Sendable, CaseIterable {
 /// Reading typography shared across all tabs.
 public struct ReadingTypography: Codable, Sendable, Equatable {
     public enum Family: String, Codable, Sendable, CaseIterable {
+        case monospaced
         case system
         case serif
     }
 
     public enum LineHeight: String, Codable, Sendable, CaseIterable {
+        case editor = "1.50"
         case compact = "1.45"
         case comfortable = "1.70"
         case spacious = "1.95"
     }
 
     public var family: Family
-    /// Reading text size in points; 14...28, default 17.
+    /// Reading text size in points; 12...28, default 12.
     public var size: Double
     public var lineHeight: LineHeight
 
-    public init(family: Family = .system, size: Double = 17, lineHeight: LineHeight = .comfortable) {
+    public init(family: Family = .monospaced, size: Double = 12, lineHeight: LineHeight = .editor) {
         self.family = family
         self.size = size
         self.lineHeight = lineHeight
@@ -457,7 +459,7 @@ public final class SettingsStore: ObservableObject {
         guard draft.schemaVersion == schemaVersion else {
             throw SettingsError.invalidField("schema version")
         }
-        guard (14.0...28.0).contains(draft.typography.size) else {
+        guard (12.0...28.0).contains(draft.typography.size) else {
             throw SettingsError.invalidField("reading size")
         }
         var seenNameEffort = Set<String>()

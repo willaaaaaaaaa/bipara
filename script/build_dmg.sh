@@ -32,7 +32,7 @@ verify_bundle() {
   local helper="$app/Contents/Helpers/BiparaWorker.app"
   [ -x "$app/Contents/MacOS/Bipara" ] || fail "app executable missing: $app"
   [ -x "$helper/Contents/MacOS/BiparaWorker" ] || fail "embedded worker missing: $app"
-  for asset in translation.v1.txt translation.v2.txt alignment.v1.txt \
+  for asset in translation.v1.txt translation.v2.txt translation.markdown.v1.txt alignment.v1.txt \
     translation-output.v1.schema.json alignment-output.v1.schema.json; do
     cmp -s "prompts/$asset" "$helper/Contents/Frameworks/prompts/$asset" \
       || fail "bundled asset differs from canonical prompts/$asset"

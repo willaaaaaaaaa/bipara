@@ -1,6 +1,6 @@
 # Swift–Python Worker Protocol v2
 
-This document defines the current v2 transport contract. App and bundled worker upgrade together; reject protocol v1 at handshake before transmitting a credential. New jobs use `translation.v2`; retained `translation.v1` remains supported. Alignment and output schemas remain v1. [Model workflow](model-workflow.md) owns model inputs/validation; [prompt assets](../../prompts/README.md) own model output schemas. This protocol is local process IPC, not a network service or public API.
+This document defines the current v2 transport contract. App and bundled worker upgrade together; reject protocol v1 at handshake before transmitting a credential. New plain-text jobs use `translation.v2`. Markdown jobs use `translation.markdown.v1` and retained jobs use their recorded prompt. Alignment and output schemas remain v1. [Model workflow](model-workflow.md) owns model inputs/validation; [prompt assets](../../prompts/README.md) own model output schemas. This protocol is local process IPC, not a network service or public API.
 
 ## Transport and lifecycle
 
@@ -19,7 +19,7 @@ After spawn, the app sends hello. No credential is sent until ready validates. S
 ```
 
 ```json
-{"v":2,"type":"ready","worker_version":"0.1.0","max_inflight":4,"prompt_versions":["translation.v1","translation.v2","alignment.v1"]}
+{"v":2,"type":"ready","worker_version":"0.1.0","max_inflight":4,"prompt_versions":["translation.v1","translation.v2","translation.markdown.v1","alignment.v1"]}
 ```
 
 `v` is integer 2 in every frame. `worker_version` is the actual packaged version string, not a success signal. All required prompt versions and `max_inflight: 4` must match this app's contract. Accept exactly one ready event after hello. An incompatible handshake may emit `fatal` and exit. Python does not write ready before successfully loading/validating its assets.
@@ -166,3 +166,27 @@ Other fatal codes are `invalid_frame`, `missing_asset`, and `worker_failed`. The
 Turn every JSON example here into a shared fixture consumed by Swift Codable and Python models. Add negative cases for split UTF-8 reads, embedded newlines, duplicate keys/IDs, wrong versions, unknown fields/kinds, oversize frames, corrupt JSON, stdout pollution, out-of-order completion, duplicate terminal events, cancellation races, hung worker, EOF, and no-credentials-before-ready. Tests must launch the real worker in a fixture-only mode without network access; fixture mode is unavailable in a release bundle.
 
 A fake provider proves transport, not provider compatibility. Both live-provider and copied-bundle checks remain required by the [test plan](../testing.md).
+
+## Markdown prompt extension
+
+The v2 worker dispatches Markdown translation when the prompt ID is `translation.markdown.v1`. The app and worker ship together and advertise the asset in the ready handshake. A worker missing the required prompt fails readiness before credentials or HTTP; there is no fallback to `translation.v2` for a Markdown plan.
+
+The Markdown input has the same top-level keys as Translate: `source_language`, `target_language`, `context_before`, `context_after`, `units`. Each unit still contains exactly `unit_id`, `kind`, `text`; its kind is `markdown_inline` for a whole inline payload or `markdown_fragment` for an oversized payload fragment. These kinds are valid only with the Markdown prompt. Context carries at most 512 UTF-8 bytes on either side; each nonempty trimmed text and the sum of unit texts are at most 8,192 bytes, with 1–64 units and a 32 KiB serialized input. LF represents semantic hard breaks only; canonical input contains no CR or blank lines. Swift supplies locally normalized inline syntax and retains all node IDs, native offsets, section paths and source maps in its request registry.
+
+```json
+{
+  "source_language": "en",
+  "target_language": "zh",
+  "context_before": "",
+  "context_after": "",
+  "units": [
+    {"unit_id": "22222222-2222-4222-8222-222222222222", "kind": "markdown_inline", "text": "Read the **setup guide** at [Documentation](https://example.org/docs)."}
+  ]
+}
+```
+
+The output uses `translation-output.v1.schema.json`. An admissible example is `{"translations":[{"unit_id":"22222222-2222-4222-8222-222222222222","text":"阅读**安装指南**，详见[文档](https://example.org/docs)。"}]}`. Semantic quality and admissible structural order both require fixture coverage; an output that moves the link before the emphasis violates the selected inline-structure contract even if it is otherwise grammatical.
+
+Python enforces 32 KiB per translated unit, 128 KiB decoded reply, strict output shape and ID coverage, no outer whitespace, CR or blank lines, and no more LF characters than supplied semantic hard breaks. Swift validates the complete inline/block structure, exact hard-break count and protected literals before commit as specified by [model workflow](model-workflow.md#model-contract-and-structural-validation). Swift reports `markdown_structure_mismatch` locally when the staged translation fails structural validation. A worker-side string-shape failure remains `invalid_output`; transport, draining, credential isolation and rate-limit rules are unchanged.
+
+Alignment continues to use `alignment.v1` and its existing wire schema. The app projects visible text before making that request; native ranges or AST objects never cross the pipe. Swift and Python fixtures cover prompt-kind matching, hard breaks, budgets and retained jobs.

@@ -82,7 +82,7 @@ enum WorkerDoubles {
 
         if MODE == "protocolOne":
             send({"v": 1, "type": "ready", "worker_version": "double",
-                  "max_inflight": 4, "prompt_versions": ["translation.v1", "translation.v2", "alignment.v1"]})
+                  "max_inflight": 4, "prompt_versions": ["translation.v1", "translation.v2", "translation.markdown.v1", "alignment.v1"]})
             sys.stdin.read()
             sys.exit(0)
 
@@ -99,13 +99,13 @@ enum WorkerDoubles {
                         received(req)
             threading.Thread(target=drain, daemon=True).start()
             send({"v": 2, "type": "ready", "worker_version": "double",
-                  "max_inflight": 4, "prompt_versions": ["translation.v1", "translation.v2", "alignment.v1"]})
+                  "max_inflight": 4, "prompt_versions": ["translation.v1", "translation.v2", "translation.markdown.v1", "alignment.v1"]})
             while True:
                 time.sleep(1)
 
         send({"v": 2, "type": "ready", "worker_version": "double",
               "max_inflight": 1 if MODE == "badHandshake" else 4,
-              "prompt_versions": ["translation.v1", "translation.v2", "alignment.v1"]})
+              "prompt_versions": ["translation.v1", "translation.v2", "translation.markdown.v1", "alignment.v1"]})
 
         if MODE == "dieAfterReady" and launches == 1:
             sys.exit(1)

@@ -39,15 +39,19 @@ public final class PythonModelGateway: ModelGateway, @unchecked Sendable {
             "context_before": request.contextBefore, "context_after": request.contextAfter,
             "units": request.units.map { ["unit_id": $0.unitID.uuidString.lowercased(), "kind": $0.kind.rawValue, "text": $0.text] },
         ]
+        let markdown = request.promptVersion == WorkerContract.markdownTranslationPromptVersion
         guard WorkerContract.translationPromptVersions.contains(request.promptVersion),
               request.sourceLanguage != request.targetLanguage,
               (1...WorkerContract.maxUnitsPerBatch).contains(request.units.count),
               Set(request.units.map(\.unitID)).count == request.units.count,
-              request.units.allSatisfy({ !$0.text.isEmpty && $0.text.isContractTrimmed && $0.text.utf8.count <= WorkerContract.maxSentenceUTF8Bytes }),
+              request.units.allSatisfy({ unit in
+                  unit.kind.isMarkdown == markdown && !unit.text.isEmpty && unit.text.isContractTrimmed
+                      && unit.text.utf8.count <= (markdown ? WorkerContract.maxBatchTextBytes : WorkerContract.maxSentenceUTF8Bytes)
+              }),
               request.units.reduce(0, { $0 + $1.text.utf8.count }) <= WorkerContract.maxBatchTextBytes,
               request.contextBefore.utf8.count <= WorkerContract.maxContextBytes,
               request.contextAfter.utf8.count <= WorkerContract.maxContextBytes,
-              try JSONSerialization.data(withJSONObject: input).count <= WorkerContract.maxInputJSONBytes else { throw GatewayError(code: .invalidRequest, isLocal: true) }
+              try JSONSerialization.data(withJSONObject: input, options: markdown ? [.withoutEscapingSlashes] : []).count <= WorkerContract.maxInputJSONBytes else { throw GatewayError(code: .invalidRequest, isLocal: true) }
         let payload = try Self.wirePayload(try await manager.perform(
             owner: request.ownerSessionID, route: GLMRoute(configuration),
             isTranslation: true, replayDeadline: request.rateLimitReplayDeadline
@@ -132,8 +136,9 @@ public final class PythonModelGateway: ModelGateway, @unchecked Sendable {
         _ payload: WirePayload,
         requestedUnits: [TranslateBatchUnit], configuration: ModelConfiguration, promptVersion: String
     ) throws -> TranslateBatchResult {
+        let markdown = promptVersion == WorkerContract.markdownTranslationPromptVersion
         guard Set(payload.data.keys) == ["translations"],
-              try JSONSerialization.data(withJSONObject: payload.data).count <= WorkerContract.maxDecodedContentBytes else {
+              try JSONSerialization.data(withJSONObject: payload.data, options: markdown ? [.withoutEscapingSlashes] : []).count <= WorkerContract.maxDecodedContentBytes else {
             throw GatewayError(code: .invalidOutput)
         }
         let rows = try jsonKey(payload.data, "translations") { value in
@@ -150,9 +155,13 @@ public final class PythonModelGateway: ModelGateway, @unchecked Sendable {
                 throw GatewayError(code: .invalidOutput)
             }
             let text = try jsonKey(row, "text") { try asString($0) }
-            guard Set(row.keys) == ["unit_id", "text"], !text.isEmpty,
-                  text.utf8.count <= WorkerContract.maxTranslationBytes,
-                  !text.contains(where: { $0.isNewline }),
+            let validLines = markdown
+                ? !text.unicodeScalars.contains { $0.value == 13 }
+                    && text.unicodeScalars.filter { $0.value == 10 }.count <= unit.text.unicodeScalars.filter { $0.value == 10 }.count
+                    && text.split(separator: "\n", omittingEmptySubsequences: false).allSatisfy { !$0.isEmpty && !String($0).isWhitespaceOnly }
+                : !text.contains(where: { $0.isNewline })
+            guard Set(row.keys) == ["unit_id", "text"], !text.isEmpty, validLines,
+                  text.utf8.count <= (markdown ? WorkerContract.maxMarkdownTranslationBytes : WorkerContract.maxTranslationBytes),
                   text.unicodeScalars.first.map({ !isContractWhitespace($0) }) == true,
                   text.unicodeScalars.last.map({ !isContractWhitespace($0) }) == true else {
                 throw GatewayError(code: .invalidOutput)

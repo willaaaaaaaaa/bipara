@@ -26,6 +26,7 @@ from conftest import (
     WorkerClient,
     align_request_a01,
     sanitized_env,
+    translate_request_markdown,
     translate_request_t01,
 )
 
@@ -61,7 +62,7 @@ def _handshake(client: WorkerClient) -> dict:
     assert ready["type"] == "ready"
     assert ready["v"] == 2
     assert ready["max_inflight"] == 4
-    assert ready["prompt_versions"] == ["translation.v1", "translation.v2", "alignment.v1"]
+    assert ready["prompt_versions"] == ["translation.v1", "translation.v2", "translation.markdown.v1", "alignment.v1"]
     return ready
 
 
@@ -170,6 +171,29 @@ class TestReleaseBundle:
 
 
 class TestFixtureBundle:
+    def test_markdown_hard_break_survives_packaged_pipes(self, fixture_executable, tmp_path):
+        from bipara_worker.assets import load_cases
+
+        client = WorkerClient(
+            [str(fixture_executable)], env=sanitized_env(tmp_path), cwd=tmp_path
+        )
+        try:
+            _handshake(client)
+            request = translate_request_markdown()
+            client.send(request)
+            result = client.recv(timeout=10.0)
+            expected = next(case for case in load_cases()["cases"]
+                            if case["id"] == "M01-inline-order-and-hard-break")
+            assert result["type"] == "result"
+            assert result["id"] == request["id"]
+            assert result["meta"]["prompt_version"] == request["prompt_version"]
+            assert result["data"]["translations"] == [{
+                "unit_id": request["input"]["units"][0]["unit_id"],
+                "text": expected["sample_output"]["translations"][0]["text"],
+            }]
+        finally:
+            client.shutdown()
+
     def test_one_framed_fixture_reply(self, fixture_executable, tmp_path):
         client = WorkerClient(
             [str(fixture_executable)], env=sanitized_env(tmp_path), cwd=tmp_path

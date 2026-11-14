@@ -13,6 +13,7 @@ public actor DocumentFileService {
         case readFailed(String)
         case incompleteTranslation
         case noCompletedParagraphs
+        case unavailableMarkdownPlan
     }
 
     private var activeSavesByDestination: [URL: UUID] = [:]
@@ -127,7 +128,7 @@ public actor DocumentFileService {
         }
     }
 
-    /// Plain-text import: local UTF-8 `.txt` with optional BOM; a wrong
+    /// Local UTF-8 text or Markdown import with optional BOM; a wrong
     /// encoding is an error, never a silent replacement.
     public nonisolated func importText(_ url: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
@@ -154,7 +155,14 @@ public actor DocumentFileService {
 
     /// Bilingual export: every paragraph; missing translations are marked
     /// as untranslated.
-    public nonisolated func exportBilingual(_ document: BiparaDocument) throws -> String {
+    public nonisolated func exportBilingual(_ document: BiparaDocument, markdown: Bool = false) throws -> String {
+        if document.isMarkdown {
+            guard document.canUseMarkdownPlan,
+                  let value = document.markdownExport(bilingual: true, plain: !markdown, allowPartial: true) else {
+                throw FileError.unavailableMarkdownPlan
+            }
+            return value
+        }
         let plan = SourcePlan(source: document.source, paragraphs: document.paragraphs, units: document.units)
         let translated = Dictionary(uniqueKeysWithValues: document.translations.map { ($0.unitID, $0.text) })
         return document.paragraphs.map { paragraph in
@@ -164,7 +172,16 @@ public actor DocumentFileService {
             return original + "\n" + target
         }.joined(separator: "\n\n")
     }
-    public nonisolated func exportTranslation(_ document:BiparaDocument,allowPartial:Bool = false) throws -> String {
+    public nonisolated func exportTranslation(
+        _ document: BiparaDocument, allowPartial: Bool = false, markdown: Bool = false
+    ) throws -> String {
+        if document.isMarkdown {
+            guard document.canUseMarkdownPlan else { throw FileError.unavailableMarkdownPlan }
+            if let value = document.markdownExport(bilingual: false, plain: !markdown, allowPartial: allowPartial) {
+                return value
+            }
+            throw allowPartial ? FileError.noCompletedParagraphs : FileError.incompleteTranslation
+        }
         let plan=SourcePlan(source:document.source,paragraphs:document.paragraphs,units:document.units)
         let translations=Dictionary(uniqueKeysWithValues:document.translations.map{($0.unitID,$0.text)})
         let language=document.jobSnapshot?.targetLanguage ?? .zh

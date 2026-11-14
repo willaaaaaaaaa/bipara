@@ -30,9 +30,23 @@ public final class AppRuntime: ObservableObject {
     /// Test seam for scripted alert answers (consent, confirmations);
     /// production leaves it nil and the native NSAlert path runs.
     public var alertHandler: (@MainActor (String, String, [String]) async -> Int)?
+    private struct DraftPlanKey: Equatable {
+        let revision: Int
+        let generation: Int
+        let direction: Direction
+    }
+
+    private struct DraftPlanning {
+        let key: DraftPlanKey
+        let task: Task<WorkspaceStore.PreparedDocument, Error>
+    }
+
+    private var draftPlanning: [UUID: DraftPlanning] = [:]
+    @Published private var detectedFormats: [UUID: (generation: Int, format: ContentFormat)] = [:]
     private var saveTasks: [UUID: (UUID, Task<Bool, Never>)] = [:]
     private var analysis: [UUID: Task<Void, Never>] = [:]
     private var cache: [UUID: SelectionCache] = [:]
+    private var copyTask: Task<Void, Never>?
     private var disclosures: [String: Task<Bool, Never>] = [:]
     private let defaults: UserDefaults
     private var settingsObservation: AnyCancellable?
@@ -98,28 +112,155 @@ public final class AppRuntime: ObservableObject {
         workspace.withTab(i) { $0.layout = layout; $0.document.layout = layout }
     }
 
-    public func apply(_ session: UUID) async throws {
-        guard let i = workspace.index(of: session), !composing.contains(session) else { throw ActionError.composing }
-        guard workspace.tabs[i].isDraftDirty else { editing.remove(session);return }
-        let draft = workspace.tabs[i].draftText, direction = workspace.tabs[i].draftDirection
-        let original = workspace.tabs[i].document
-        let prepared = try await Task.detached { try WorkspaceStore.prepareDocument(source:draft,direction:direction,replacing:original) }.value
-        guard let current = workspace.index(of: session), TextIdentity.equal(workspace.tabs[current].draftText, draft),
-               workspace.tabs[current].draftDirection == direction, workspace.tabs[current].document.documentID == original.documentID,
-               workspace.tabs[current].document.sourceRevision == original.sourceRevision,
-               workspace.tabs[current].document.layout == original.layout, !composing.contains(session) else { throw ActionError.draftChanged }
-        coordinator.cancel(tabIndex: current, workspace: workspace)
-        try workspace.applyDraft(at: current, prepared: prepared)
-        analysis[session]?.cancel(); reading[session] = ReadingPresentation(); cache[session] = nil
-        workspace.withTab(current) { $0.runtimeBinding = nil }
-        if !draft.isEmpty { editing.remove(session) }
+    private func preparedDraft(_ tab: TabState, direction: Direction) async throws -> WorkspaceStore.PreparedDocument {
+        let key = DraftPlanKey(revision: tab.document.sourceRevision, generation: tab.draftGeneration, direction: direction)
+        if let existing = draftPlanning[tab.sessionID], existing.key == key {
+            return try await existing.task.value
+        }
+        draftPlanning[tab.sessionID]?.task.cancel()
+        let task = Task.detached {
+            try Task.checkCancellation()
+            let sameSource = TextIdentity.equal(tab.draftText, tab.document.source)
+            let preserveSavedAuto = tab.document.requestedFormat == .auto && tab.document.isMarkdown && sameSource
+            return try WorkspaceStore.prepareDocument(
+                source: tab.draftText, direction: direction, replacing: tab.document,
+                format: tab.draftFormat, markdownHint: (tab.markdownImportHint && sameSource) || preserveSavedAuto
+            )
+        }
+        draftPlanning[tab.sessionID] = DraftPlanning(key: key, task: task)
+        return try await task.value
+    }
+
+    private func currentDraft(_ tab: TabState) -> Int? {
+        guard let index = workspace.index(of: tab.sessionID), !composing.contains(tab.sessionID),
+              workspace.tabs[index].draftGeneration == tab.draftGeneration,
+              workspace.tabs[index].document.sourceRevision == tab.document.sourceRevision else { return nil }
+        return index
+    }
+
+    func formatStatus(_ tab: TabState) -> String? {
+        guard tab.draftFormat == .auto else { return nil }
+        if !tab.isDraftDirty { return text(tab.document.isMarkdown ? "Markdown" : "Plain Text") }
+        guard let detection = detectedFormats[tab.sessionID], detection.generation == tab.draftGeneration else { return nil }
+        return text(detection.format == .markdown ? "Markdown" : "Plain Text")
+    }
+
+    func detectDraftFormat(_ session: UUID) async {
+        guard let index = workspace.index(of: session), !composing.contains(session) else { return }
+        let tab = workspace.tabs[index]
+        guard tab.isDraftDirty, tab.draftFormat == .auto else { return }
+        do {
+            try await Task.sleep(for: .milliseconds(300))
+            guard currentDraft(tab) != nil else { return }
+            let prepared = try await preparedDraft(tab, direction: tab.draftDirection)
+            try Task.checkCancellation()
+            guard currentDraft(tab) != nil else { return }
+            detectedFormats[session] = (tab.draftGeneration, prepared.document.isMarkdown ? .markdown : .plainText)
+        } catch {
+            // Apply and Translate surface planning errors on explicit actions.
+        }
+    }
+
+    func cancelEditing(_ session: UUID) {
+        guard let index = workspace.index(of: session) else { return }
+        workspace.withTab(index) {
+            $0.draftText = $0.document.source
+            $0.draftDirection = $0.document.requestedDirection
+            $0.draftFormat = $0.document.requestedFormat
+        }
+        draftPlanning.removeValue(forKey: session)?.task.cancel()
+        detectedFormats[session] = nil
+        editing.remove(session)
+    }
+
+    func changeFormat(_ format: ContentFormat, session: UUID) {
+        guard let index = workspace.index(of: session) else { return }
+        workspace.withTab(index) { $0.draftFormat = format }
+        guard !editing.contains(session) else { return }
+        let tab = workspace.tabs[index]
+        Task {
+            guard currentDraft(tab) != nil else { return }
+            do {
+                if try await apply(session) { return }
+            } catch is CancellationError {
+            } catch {
+                report(error, fallback: "The selected format could not be applied.")
+            }
+            guard let current = currentDraft(tab) else { return }
+            workspace.withTab(current) { $0.draftFormat = $0.document.requestedFormat }
+        }
+    }
+
+    func changeReadingMode(_ mode: MarkdownReadingMode, session: UUID) {
+        guard let index = workspace.index(of: session) else { return }
+        let document = workspace.tabs[index].document
+        guard document.isMarkdown, document.canUseMarkdownPlan, document.readingMode != mode else { return }
+        workspace.withTab(index) { $0.document.readingMode = mode }
+        analysis.removeValue(forKey: session)?.cancel()
+        reading[session]?.selectionGeneration += 1
+        reading[session]?.selection = nil
+        reading[session]?.hover = nil
+        reading[session]?.phraseRanges = []
+        reading[session]?.analyzing = false
+    }
+
+    @discardableResult
+    public func apply(_ session: UUID) async throws -> Bool {
+        try await apply(session, saving: false)
+    }
+
+    private func apply(_ session: UUID, saving: Bool) async throws -> Bool {
+        guard let index = workspace.index(of: session), !composing.contains(session) else { throw ActionError.composing }
+        let tab = workspace.tabs[index]
+        guard tab.isDraftDirty else { editing.remove(session); return true }
+        let prepared = try await preparedDraft(tab, direction: tab.draftDirection)
+        guard let current = currentDraft(tab) else { throw ActionError.draftChanged }
+        let proposed = prepared.document
+        let preservesRevision = WorkspaceStore.preservesRevision(tab, proposed: proposed)
+        let currentTab = workspace.tabs[current]
+        let hasWork = currentTab.job.snapshot != nil || currentTab.document.jobSnapshot != nil || !currentTab.document.translations.isEmpty
+        let rebuildingPlan = !tab.document.canUseMarkdownPlan
+        if !preservesRevision, rebuildingPlan || (hasWork && proposed.isMarkdown != tab.document.isMarkdown) {
+            guard await confirmFormatReplacement(rebuildingPlan: rebuildingPlan) else { return false }
+        } else if saving, !preservesRevision, !workspace.tabs[current].document.translations.isEmpty {
+            guard await alert("Apply changes and save?", detail: "Applying the edited original clears its existing translations.",
+                              buttons: ["Apply Changes and Save", "Cancel"]) == 0 else { return false }
+        }
+        guard let current = currentDraft(tab) else { throw ActionError.draftChanged }
+        try commitDraft(prepared, at: current)
+        if !tab.draftText.isEmpty { editing.remove(session) }
+        return true
+    }
+
+    private func confirmFormatReplacement(rebuildingPlan: Bool) async -> Bool {
+        await alert("Apply the new document format?",
+                    detail: rebuildingPlan
+                        ? "Rebuilding the Markdown plan clears the current results."
+                        : "Changing the resolved format stops translation and clears the current results.",
+                    buttons: ["Apply Format", "Cancel"]) == 0
+    }
+
+    private func commitDraft(_ prepared: WorkspaceStore.PreparedDocument, at index: Int, forceReplan: Bool = false) throws {
+        let tab = workspace.tabs[index]
+        let session = tab.sessionID
+        let replacesRevision = forceReplan || !WorkspaceStore.preservesRevision(tab, proposed: prepared.document)
+        if replacesRevision { coordinator.cancel(tabIndex: index, workspace: workspace) }
+        try workspace.applyDraft(at: index, prepared: prepared, forceReplan: forceReplan)
+        draftPlanning.removeValue(forKey: session)?.task.cancel()
+        detectedFormats[session] = nil
+        guard replacesRevision else { return }
+        analysis.removeValue(forKey: session)?.cancel()
+        reading[session] = ReadingPresentation()
+        cache[session] = nil
+        workspace.withTab(index) { $0.runtimeBinding = nil }
     }
 
     public func primaryAction() {
         guard let i = workspace.activeTabIndex else { return }
         let tab = workspace.tabs[i]
         if [.queued,.running].contains(tab.job.state) { coordinator.cancel(tabIndex: i, workspace: workspace); return }
-        Task { await translate(tab.sessionID) }
+        if tab.hasNoProseToTranslate { return }
+        Task { await translate(tab.sessionID, retranslate: !tab.document.canUseMarkdownPlan) }
     }
 
     /// Credential resolver for the coordinator: resolves the frozen
@@ -143,18 +284,51 @@ public final class AppRuntime: ObservableObject {
             guard let i = workspace.index(of: session), !composing.contains(session),
                   !workspace.tabs[i].draftText.isEmpty, !workspace.tabs[i].draftText.isWhitespaceOnly else { return }
             let preferences = settings.record
-            let initial = workspace.tabs[i]
-            let initialSnapshot = initial.job.snapshot ?? initial.document.jobSnapshot
-            let fresh = retranslate || initial.isDraftDirty || initialSnapshot == nil
-                || (initial.job.state == .completed && overrideBinding == nil)
-            let requestedDirection = preferences.translationDirection
-            let direction = fresh
-                ? try TranslationCoordinator.resolveDirection(requestedDirection, source: initial.draftText)
-                : nil
-            let tab = initial
+            let tab = workspace.tabs[i]
+            let retained = tab.job.snapshot ?? tab.document.jobSnapshot
+            let forceReplan = retranslate && tab.document.isMarkdown
+                && tab.document.markdownPlan?.planVersion != MarkdownPlan.version
+            var prepared: WorkspaceStore.PreparedDocument?
+            if tab.isDraftDirty || forceReplan {
+                prepared = try await preparedDraft(tab, direction: tab.draftDirection)
+            }
+            var proposed = prepared?.document ?? tab.document
             let replacement = retranslate || (!tab.isDraftDirty && tab.job.state == .completed && overrideBinding == nil)
-            let retained = initialSnapshot
+            let fresh = replacement || retained == nil || !WorkspaceStore.preservesRevision(tab, proposed: proposed)
 
+            if fresh, proposed.requestedDirection != preferences.translationDirection, !proposed.isMarkdown || !proposed.units.isEmpty {
+                if var candidate = prepared?.document {
+                    candidate.requestedDirection = preferences.translationDirection
+                    prepared = WorkspaceStore.PreparedDocument(document: candidate)
+                } else {
+                    prepared = try await preparedDraft(tab, direction: preferences.translationDirection)
+                }
+                proposed = prepared?.document ?? tab.document
+            }
+            guard let preparedIndex = currentDraft(tab), !closing.contains(session) else { return }
+            guard proposed.canUseMarkdownPlan else { throw TranslationCoordinator.CoordinatorError.retiredPromptVersion }
+            let currentTab = workspace.tabs[preparedIndex]
+            let hasWork = currentTab.job.snapshot != nil || currentTab.document.jobSnapshot != nil || !currentTab.document.translations.isEmpty
+            let rebuildingPlan = !currentTab.document.canUseMarkdownPlan
+            let formatReplacement = (tab.isDraftDirty && rebuildingPlan)
+                || (hasWork && proposed.isMarkdown != currentTab.document.isMarkdown)
+
+            guard workspace.tabs[preparedIndex].job.attemptGeneration == tab.job.attemptGeneration else { return }
+            if proposed.isMarkdown && proposed.units.isEmpty {
+                if formatReplacement || (forceReplan && hasWork) {
+                    guard await confirmFormatReplacement(rebuildingPlan: rebuildingPlan) else { return }
+                }
+                guard let current = currentDraft(tab), !closing.contains(session),
+                      workspace.tabs[current].contentGeneration == tab.contentGeneration,
+                      workspace.tabs[current].job.attemptGeneration == tab.job.attemptGeneration else { return }
+                if let prepared { try commitDraft(prepared, at: current, forceReplan: forceReplan) }
+                editing.remove(session)
+                return
+            }
+            let direction = fresh
+                ? try TranslationCoordinator.resolveDirection(
+                    proposed.requestedDirection, source: proposed.markdownPlan?.prose ?? proposed.source)
+                : nil
             var snapshot: JobSnapshot
             var binding: RuntimeModelBinding?
             if let overrideBinding, let retainedSnapshot = retained, !fresh {
@@ -171,7 +345,7 @@ public final class AppRuntime: ObservableObject {
                     sourceLanguage: direction.0, targetLanguage: direction.1,
                     provider: configuration.provider, model: configuration.modelID,
                     profile: configuration.profile, effort: configuration.effort,
-                    translationPromptVersion: WorkerContract.currentTranslationPromptVersion, alignmentPromptVersion: "alignment.v1",
+                    translationPromptVersion: proposed.translationPromptVersion, alignmentPromptVersion: "alignment.v1",
                     configurationRevision: configuration.revision)
                 binding = configuration.runtimeBinding
             } else {
@@ -208,34 +382,26 @@ public final class AppRuntime: ObservableObject {
 
             guard await consent(provider: frozen.provider, origin: CanonicalBaseURL.origin(of: frozen.requestOptions?.endpointURL ?? frozen.baseURL)) else { return }
             try Task.checkCancellation()
-            if replacement {
-                guard await alert("Replace existing translations?", detail: "Retranslating clears the current translations and correspondence.", buttons: ["Retranslate","Cancel"]) == 0 else { return }
-            }
-            let prepared: WorkspaceStore.PreparedDocument?
-            if fresh, tab.isDraftDirty || requestedDirection != tab.document.requestedDirection {
-                let source = tab.draftText, document = tab.document
-                prepared = try await Task.detached {
-                    try WorkspaceStore.prepareDocument(source: source, direction: requestedDirection, replacing: document)
-                }.value
-            } else {
-                prepared = nil
+            if formatReplacement {
+                guard await confirmFormatReplacement(rebuildingPlan: rebuildingPlan) else { return }
+            } else if replacement {
+                guard await alert("Replace existing translations?", detail: "Retranslating clears the current translations and correspondence.",
+                                  buttons: ["Retranslate", "Cancel"]) == 0 else { return }
             }
             try Task.checkCancellation()
-            guard let current = workspace.index(of: session), !closing.contains(session), !composing.contains(session),
+            guard let current = currentDraft(tab), !closing.contains(session),
                   workspace.tabs[current].contentGeneration == tab.contentGeneration,
-                  workspace.tabs[current].document.sourceRevision == tab.document.sourceRevision,
                   workspace.tabs[current].job.snapshot == tab.job.snapshot,
-                  workspace.tabs[current].job.attemptGeneration == tab.job.attemptGeneration,
-                  TextIdentity.equal(workspace.tabs[current].draftText, tab.draftText),
-                  workspace.tabs[current].draftDirection == tab.draftDirection,
-                  prepared == nil || workspace.tabs[current].document.layout == tab.document.layout else { return }
+                  workspace.tabs[current].job.attemptGeneration == tab.job.attemptGeneration else { return }
             if fresh { _ = try dispatchCredential(frozen) }
-            if replacement || prepared != nil { discardTranslations(session) }
             if let prepared {
-                workspace.withTab(current) { $0.draftDirection = requestedDirection }
-                try workspace.applyDraft(at: current, prepared: prepared)
-                reading[session] = ReadingPresentation()
+                let replacesRevision = forceReplan || !WorkspaceStore.preservesRevision(workspace.tabs[current], proposed: prepared.document)
+                workspace.withTab(current) { $0.draftDirection = prepared.document.requestedDirection }
+                try commitDraft(prepared, at: current, forceReplan: forceReplan)
+                if replacement && !replacesRevision { discardTranslations(session) }
                 snapshot.sourceRevision = workspace.tabs[current].document.sourceRevision
+            } else if replacement {
+                discardTranslations(session)
             }
             workspace.withTab(current) { $0.runtimeBinding = frozen }
             if cache[session] == nil { cache[session] = .init() }
@@ -342,7 +508,8 @@ public final class AppRuntime: ObservableObject {
             return
         }
         bindingRequest = nil
-        guard let i = workspace.index(of: request.session) else { return }
+        guard let i = workspace.index(of: request.session),
+              workspace.tabs[i].document.jobSnapshot == request.snapshot else { return }
         // Explicit rebinding clears cached model analysis for the session.
         if workspace.tabs[i].runtimeBinding != nil { cache[request.session] = nil }
         workspace.withTab(i) { $0.runtimeBinding = configuration.runtimeBinding }
@@ -399,10 +566,7 @@ public final class AppRuntime: ObservableObject {
         do {
             guard let i = workspace.index(of: session), !composing.contains(session) else { return false }
             if workspace.tabs[i].isDraftDirty {
-                if !workspace.tabs[i].document.translations.isEmpty {
-                    guard await alert("Apply changes and save?", detail: "Applying the edited original clears its existing translations.", buttons: ["Apply Changes and Save","Cancel"]) == 0 else { return false }
-                }
-                try await apply(session)
+                guard try await apply(session, saving: true) else { return false }
             }
             guard let i = workspace.index(of: session) else { return false }
             var url = destination ?? workspace.tabs[i].saveURL
@@ -433,17 +597,30 @@ public final class AppRuntime: ObservableObject {
 
     public func openPanel() {
         Task {
-            let panel = NSOpenPanel(); panel.allowedContentTypes = [.plainText, UTType(filenameExtension:"bipara") ?? .json]; panel.allowsMultipleSelection = true
+            let panel = NSOpenPanel()
+            panel.allowedContentTypes = [.plainText, Self.markdownType, UTType(filenameExtension: "bipara") ?? .json]
+            if let longMarkdownType = UTType(filenameExtension: "markdown"), !panel.allowedContentTypes.contains(longMarkdownType) {
+                panel.allowedContentTypes.append(longMarkdownType)
+            }
+            panel.allowsMultipleSelection = true
             guard await present(panel) == .OK else { return }
             for url in panel.urls { await open(url) }
         }
     }
+    private static var markdownType: UTType { UTType(filenameExtension: "md") ?? .plainText }
+
     public func open(_ url: URL) async {
         do {
-            if url.pathExtension.lowercased() == "txt" {
+            let ext = url.pathExtension.lowercased()
+            let markdownHint = ["md", "markdown"].contains(ext)
+            if ext == "txt" || markdownHint {
                 let files = files
-                let prepared = try await Task.detached { try WorkspaceStore.prepareDocument(source:files.importText(url),direction:.auto) }.value
-                let i = workspace.newTab(prepared:prepared); editing.insert(workspace.tabs[i].sessionID)
+                let prepared = try await Task.detached {
+                    try WorkspaceStore.prepareDocument(source: files.importText(url), direction: .auto, markdownHint: markdownHint)
+                }.value
+                let i = workspace.newTab(prepared: prepared)
+                workspace.withTab(i) { $0.markdownImportHint = markdownHint }
+                editing.insert(workspace.tabs[i].sessionID)
                 let title = DocumentTitle.derive(from: url.deletingPathExtension().lastPathComponent)
                 if title != "Untitled" { workspace.withTab(i) { $0.document.title = title; $0.automaticTitle = false } }
             } else {
@@ -479,6 +656,8 @@ public final class AppRuntime: ObservableObject {
         }
         guard let i = workspace.index(of: session) else { return true }
         let url = workspace.tabs[i].saveURL
+        draftPlanning.removeValue(forKey: session)?.task.cancel()
+        detectedFormats[session] = nil
         workspace.closeTab(at: i); analysis.removeValue(forKey:session)?.cancel(); reading[session] = nil; cache[session] = nil; editing.remove(session)
         if let url { await files.releaseDestination(url, ownerSessionID: session) }
         return true
@@ -503,32 +682,64 @@ public final class AppRuntime: ObservableObject {
         return false
     }
 
-    public func export(bilingual: Bool) {
+    public func export(bilingual: Bool, markdown: Bool = false) {
         guard let tab = workspace.activeTab else { return }
         Task {
             do {
                 let text: String
-                if bilingual { text = try files.exportBilingual(tab.document) }
-                else {
-                    do { text = try files.exportTranslation(tab.document) }
-                    catch DocumentFileService.FileError.incompleteTranslation {
-                        guard await alert("Export completed paragraphs only?",detail:"This translation is incomplete. Partial export omits every unfinished paragraph.",buttons:["Export Partial","Cancel"]) == 0 else { return }
-                        text = try files.exportTranslation(tab.document,allowPartial:true)
+                let document = tab.document
+                let files = files
+                if bilingual {
+                    text = try await Task.detached { try files.exportBilingual(document, markdown: markdown) }.value
+                } else {
+                    do {
+                        text = try await Task.detached { try files.exportTranslation(document, markdown: markdown) }.value
+                    } catch DocumentFileService.FileError.incompleteTranslation {
+                        let detail = document.isMarkdown
+                            ? "This translation is incomplete. Partial export omits unfinished blocks, lists and tables."
+                            : "This translation is incomplete. Partial export omits every unfinished paragraph."
+                        guard await alert(document.isMarkdown ? "Export completed blocks only?" : "Export completed paragraphs only?",
+                                          detail: detail, buttons: ["Export Partial", "Cancel"]) == 0 else { return }
+                        text = try await Task.detached {
+                            try files.exportTranslation(document, allowPartial: true, markdown: markdown)
+                        }.value
                     }
                 }
-                let panel = NSSavePanel(); panel.allowedContentTypes = [.plainText]; panel.nameFieldStringValue = tab.document.title + ".txt"
+                let panel = NSSavePanel()
+                panel.allowedContentTypes = [markdown ? Self.markdownType : .plainText]
+                panel.nameFieldStringValue = tab.document.title + (markdown ? ".md" : ".txt")
                 guard await present(panel) == .OK, let url = panel.url else { return }
-                try await Task.detached { try text.write(to: url, atomically:true, encoding:.utf8) }.value
-            } catch DocumentFileService.FileError.noCompletedParagraphs { errorMessage="There are no completed paragraphs to export yet." }
-            catch { errorMessage = "The export could not be written." }
+                try await Task.detached { try text.write(to: url, atomically: true, encoding: .utf8) }.value
+            } catch DocumentFileService.FileError.noCompletedParagraphs {
+                errorMessage = tab.document.isMarkdown ? "There are no completed blocks to export yet." : "There are no completed paragraphs to export yet."
+            } catch {
+                errorMessage = "The export could not be written."
+            }
         }
     }
+
     public func copy(original: Bool) {
-        guard let doc = workspace.activeTab?.document else { return }
-        let plan = SourcePlan(source:doc.source,paragraphs:doc.paragraphs,units:doc.units)
-        let translations = Dictionary(uniqueKeysWithValues:doc.translations.map{($0.unitID,$0.text)})
-        guard let value = original ? doc.source : ParagraphAssembler.assembleDocument(plan, translations:translations,targetLanguage:doc.jobSnapshot?.targetLanguage ?? .zh) else { return }
-        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(value,forType:.string)
+        guard let document = workspace.activeTab?.document else { return }
+        copyTask?.cancel()
+        if original {
+            writeClipboard(document.source)
+        } else if document.isMarkdown {
+            let previousClipboard = NSPasteboard.general.changeCount
+            copyTask = Task {
+                let files = files
+                let export = Task.detached { try files.exportTranslation(document, markdown: true) }
+                guard let value = try? await export.value, !Task.isCancelled,
+                      NSPasteboard.general.changeCount == previousClipboard else { return }
+                writeClipboard(value)
+            }
+        } else if let value = try? files.exportTranslation(document) {
+            writeClipboard(value)
+        }
+    }
+
+    private func writeClipboard(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
     }
 
     public func selected(_ selection: ReadingSelection?, session: UUID) {
@@ -546,40 +757,78 @@ public final class AppRuntime: ObservableObject {
     /// explicit analysis binding is confirmed (D3), so the pending
     /// selection re-runs under the new binding even though the selection
     /// value itself did not change.
+    private struct AnalysisInput: Sendable {
+        let source: String
+        let target: String
+        let request: AlignSelectionRequest
+    }
+
+    private nonisolated static func analysisInput(
+        document: BiparaDocument, unitID: UUID, selection: ReadingSelection
+    ) -> AnalysisInput? {
+        guard let source = document.visibleUnitText(unitID, side: .source),
+              let target = document.visibleUnitText(unitID, side: .translation),
+              source.utf8.count + target.utf8.count <= WorkerContract.maxAlignTextBytes else { return nil }
+        let reading = selection.side == .source ? source : target
+        let counterpart = selection.side == .source ? target : source
+        guard selection.range.length > 0,
+              let end = selection.range.end,
+              let selected = reading.substring(utf16: selection.range),
+              selected.utf8.count <= WorkerContract.maxAlignSelectionBytes else { return nil }
+        let before = (reading as NSString).substring(to: selection.range.location)
+        let after = (reading as NSString).substring(from: end)
+        let request = AlignSelectionRequest(readingText: reading, counterpartText: counterpart,
+                                           before: before, selectedText: selected, after: after)
+        return .init(source: source, target: target, request: request)
+    }
+
     private func scheduleAnalysis(for selection: ReadingSelection?, session: UUID) {
-        guard let selection, let unit = selection.unitID, let i = workspace.index(of:session),
-              let planned = workspace.tabs[i].document.units.first(where:{$0.id==unit}),
-              let snapshot = workspace.tabs[i].document.jobSnapshot,
-              let translated = workspace.tabs[i].document.translations.first(where:{$0.unitID==unit}),
-              let source = workspace.tabs[i].document.source.substring(utf16:planned.textRange) else { return }
-        let readingText = selection.side == .source ? source : translated.text
-        let counterpart = selection.side == .source ? translated.text : source
-        guard readingText.hasValidRange(selection.range), selection.range.length > 0,
-              let selectedText = readingText.substring(utf16:selection.range), selectedText.utf8.count <= 512,
-              readingText.utf8.count + counterpart.utf8.count <= WorkerContract.maxAlignTextBytes else { return }
-        // Retired prompt versions — or one operation's version in the
-        // other's field — cannot dispatch analysis either; the coarse
-        // fallback remains (D4, N6).
-        guard WorkerContract.alignmentPromptVersions.contains(snapshot.alignmentPromptVersion) else { return }
-        let binding = workspace.tabs[i].runtimeBinding
-        var key: SelectionCache.Key?
-        if let binding {
-            key = SelectionCache.Key(sourceRevision:workspace.tabs[i].document.sourceRevision,unit:unit,
-                source:Data(source.utf8),target:Data(translated.text.utf8),targetCompletedAt:translated.completedAt,
-                side:selection.side.rawValue,location:selection.range.location,length:selection.range.length,
-                provider:snapshot.provider,model:snapshot.model,profile:snapshot.profile,effort:snapshot.effort.rawValue,
-                bindingID:binding.configurationID,promptVersion:snapshot.alignmentPromptVersion)
-            if let cached = cache[session,default:.init()].value(for:key!) { reading[session]?.phraseRanges = cached; return }
-        }
-        let generation = reading[session]!.selectionGeneration, revision = workspace.tabs[i].document.sourceRevision
+        guard let selection, let unit = selection.unitID, let i = workspace.index(of: session) else { return }
+        let tab = workspace.tabs[i]
+        let document = tab.document
+        guard document.canUseMarkdownPlan, (!document.isMarkdown || document.readingMode == .rendered),
+              selection.range.length > 0,
+              let snapshot = document.jobSnapshot,
+              WorkerContract.alignmentPromptVersions.contains(snapshot.alignmentPromptVersion),
+              let translated = document.translations.first(where: { $0.unitID == unit }) else { return }
+        // Keep the existing immediate plain-text range/size preflight. Markdown
+        // projection can parse inline syntax, so do that off the UI actor.
+        let preflight = document.isMarkdown ? nil : Self.analysisInput(document: document, unitID: unit, selection: selection)
+        guard document.isMarkdown || preflight != nil else { return }
+        let generation = reading[session]!.selectionGeneration
+        let revision = document.sourceRevision
+        let binding = tab.runtimeBinding
         analysis[session]?.cancel()
         analysis[session] = Task {
             do {
-                try await Task.sleep(for:.milliseconds(350)); try Task.checkCancellation()
-                guard let current = workspace.index(of:session), workspace.tabs[current].document.sourceRevision == revision,
+                try await Task.sleep(for: .milliseconds(350))
+                try Task.checkCancellation()
+                let payload: AnalysisInput?
+                if let preflight { payload = preflight }
+                else {
+                    payload = await Task.detached {
+                        Self.analysisInput(document: document, unitID: unit, selection: selection)
+                    }.value
+                }
+                try Task.checkCancellation()
+                guard let payload, let current = workspace.index(of: session),
+                      workspace.tabs[current].document.sourceRevision == revision,
                       reading[session]?.selectionGeneration == generation,
-                      workspace.tabs[current].document.translations.first(where:{$0.unitID==unit}) == translated else { return }
-                if let binding {
+                      workspace.tabs[current].document.translations.first(where: { $0.unitID == unit }) == translated else { return }
+                let key = binding.map { bound in
+                    SelectionCache.Key(
+                        sourceRevision: revision, unit: unit, source: Data(payload.source.utf8), target: Data(payload.target.utf8),
+                        targetCompletedAt: translated.completedAt, side: selection.side.rawValue,
+                        location: selection.range.location, length: selection.range.length,
+                        provider: snapshot.provider, model: snapshot.model, profile: snapshot.profile, effort: snapshot.effort.rawValue,
+                        bindingID: bound.configurationID, promptVersion: snapshot.alignmentPromptVersion
+                    )
+                }
+                if let key, let cached = cache[session, default: .init()].value(for: key) {
+                    reading[session]?.phraseRanges = cached
+                    return
+                }
+                if let binding, let key {
                     // Already bound: resolve by frozen configuration
                     // identity and endpoint URL. Same-URL model/effort edits
                     // to the configuration do not disable analysis — the
@@ -598,9 +847,7 @@ public final class AppRuntime: ObservableObject {
                     do { credentials = try ModelCredentials.decode(settings.resolveCredential(binding)) }
                     catch { return } // deleted/changed endpoint during consent: retain the fallback, zero calls
                     reading[session]?.analyzing = true
-                    let before = (readingText as NSString).substring(to:selection.range.location)
-                    let after = (readingText as NSString).substring(from:selection.range.end!)
-                    let result = try await gateway.alignSelection(.init(readingText:readingText,counterpartText:counterpart,before:before,selectedText:selectedText,after:after),
+                    let result = try await gateway.alignSelection(payload.request,
                         configuration:.init(provider:snapshot.provider,model:snapshot.model,profile:snapshot.profile,
                                            baseURL:binding.baseURL,effort:snapshot.effort,apiKey:credentials.apiKey,
                                            configurationID:binding.configurationID, requestOptions: binding.requestOptions, secretHeaders: credentials.headers))
@@ -609,9 +856,9 @@ public final class AppRuntime: ObservableObject {
                           reading[session]?.selectionGeneration == generation,
                           workspace.tabs[current].document.translations.first(where:{$0.unitID==unit}) == translated else { return }
                     let ranges: [BiparaCore.TextRange]
-                    if case .matched(let matches) = result.match { ranges = CorrespondenceResolver.resolveMatches(matches.map{($0.quote,$0.occurrence)},in:counterpart)?.ranges ?? [] }
+                    if case .matched(let matches) = result.match { ranges = CorrespondenceResolver.resolveMatches(matches.map{($0.quote,$0.occurrence)},in:payload.request.counterpartText)?.ranges ?? [] }
                     else { ranges = [] }
-                    cache[session,default:.init()].insert(ranges,for:key!); reading[session]?.phraseRanges = ranges
+                    cache[session,default:.init()].insert(ranges,for:key); reading[session]?.phraseRanges = ranges
                 } else {
                     // An opened document with no session-local binding makes
                     // no model call; it can be bound explicitly for
@@ -636,6 +883,10 @@ public final class AppRuntime: ObservableObject {
         case TranslationCoordinator.CoordinatorError.documentTooLarge: errorMessage="The document reached the 20 MiB file limit. Completed translations were kept."
         case DocumentFileService.FileError.oversized: errorMessage="This document exceeds the 20 MiB file limit. Existing documents were kept."
         case CoreError.inputTooLarge: errorMessage="The original exceeds the 1 MiB text limit. Shorten it before applying."
+        case CoreError.unsupportedInput where workspace.activeTab?.draftFormat != .plainText:
+            errorMessage = "The Markdown cannot be planned within the supported limits. Edit the original or choose Plain Text."
+        case TranslationCoordinator.CoordinatorError.invalidMarkdownStructure:
+            errorMessage = "The model changed the Markdown structure. Completed translations were kept."
         case let error as GatewayError: errorMessage = translationFailureMessage(error)
         default: errorMessage=fallback
         }
@@ -658,6 +909,7 @@ public final class AppRuntime: ObservableObject {
         case .invalidTranslationText: reason = "The response contains invalid translation text."
         case .outputTooLarge: reason = "The translated output exceeds the size limit."
         case .alignmentShape: reason = "The response does not match the correspondence format."
+        case .markdownStructureMismatch: reason = "The model changed the Markdown structure. Completed translations were kept."
         case nil:
             switch error.code {
             case .invalidOutput: reason = "The translation failed response validation."

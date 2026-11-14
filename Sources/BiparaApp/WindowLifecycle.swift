@@ -51,6 +51,7 @@ struct WindowLifecycle: NSViewRepresentable {
             }
             removeDuplicateCloseShortcut(NSApp.mainMenu)
             window.setAccessibilityIdentifier(settings ? "Bipara.Settings" : "Bipara.Main")
+            if !settings { window.backgroundColor = .textBackgroundColor }
             if settings { runtime.applyLocalizedChrome() }
         }
         return host

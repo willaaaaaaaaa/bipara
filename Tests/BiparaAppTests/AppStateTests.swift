@@ -231,7 +231,7 @@ struct SettingsStoreTests {
         store.updateDraft { $0.modelConfigurations.append(duplicated) }
         #expect(throws: SettingsStore.SettingsError.duplicateNameEffort) { try store.saveDraft() }
         store.cancelDraft()
-        #expect(store.record.typography.size == 17) // record untouched by failed saves
+        #expect(store.record.typography == ReadingTypography()) // record untouched by failed saves
     }
 
     @Test func emptyListModelListIsValidButRequiresNoDefaultMismatch() throws {

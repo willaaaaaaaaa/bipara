@@ -84,6 +84,18 @@ def translate_request_t01(request_id: str = T01_REQUEST_ID) -> dict[str, Any]:
     }
 
 
+def translate_request_markdown() -> dict[str, Any]:
+    """Wire-format form of the Markdown hard-break corpus case."""
+    from bipara_worker.assets import load_cases
+
+    case = next(case for case in load_cases()["cases"] if case["id"] == "M01-inline-order-and-hard-break")
+    env = translate_request_t01()
+    env["prompt_version"] = case["prompt_version"]
+    env["input"] = case["input"]
+    env["input"]["units"][0]["unit_id"] = T01_UNIT_ID
+    return env
+
+
 def align_request_a01(request_id: str = A01_REQUEST_ID) -> dict[str, Any]:
     return {
         "v": 2,

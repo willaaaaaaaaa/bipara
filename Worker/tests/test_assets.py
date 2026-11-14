@@ -22,7 +22,7 @@ def test_asset_dir_points_at_canonical_prompts_in_dev():
 
 def test_all_canonical_assets_load_and_hash():
     assets = load_assets()
-    assert set(assets.versions) == {"translation.v1", "translation.v2", "alignment.v1"}
+    assert set(assets.versions) == {"translation.v1", "translation.v2", "translation.markdown.v1", "alignment.v1"}
     for filename in ASSET_FILES:
         canonical = hashlib.sha256((ROOT / "prompts" / filename).read_bytes()).hexdigest()
         assert assets.hashes[filename] == canonical
@@ -39,11 +39,16 @@ def test_prompt_assets_are_not_empty_or_templates():
         assert "{" not in text or "JSON object" in text  # literal prose, not a format template
 
 
-def test_cases_corpus_loads_with_twenty_six_cases():
+def test_cases_corpus_includes_both_markdown_directions():
     cases = load_cases()
     ops = [case["op"] for case in cases["cases"]]
-    assert ops.count("translate") == 20
+    assert cases["corpus_version"] == "3"
+    assert ops.count("translate") == 22
     assert ops.count("align") == 6
+    markdown = [case for case in cases["cases"] if case.get("prompt_version") == "translation.markdown.v1"]
+    assert {(case["input"]["source_language"], case["input"]["target_language"]) for case in markdown} == {
+        ("en", "zh"), ("zh", "en")
+    }
 
 
 def test_missing_asset_directory_is_asset_error(tmp_path, monkeypatch):

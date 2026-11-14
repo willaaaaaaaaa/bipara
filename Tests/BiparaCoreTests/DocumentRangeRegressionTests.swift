@@ -316,7 +316,7 @@ struct DocumentRangeRegressionTests {
         // Remove direction.resolved (last key inside its object, so the
         // comma precedes it).
         let missingResolved = good.replacingOccurrences(of: ",\"resolved\":null", with: "")
-        #expect(!missingResolved.contains("\"resolved\""))
+        #expect(!missingResolved.contains("\"resolved\":null"))
         #expect(throws: CoreError.self) { _ = try DocumentCodec.decode(Data(missingResolved.utf8)) }
 
         // Unknown v1 extra fields remain tolerated.

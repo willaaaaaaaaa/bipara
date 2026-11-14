@@ -20,7 +20,7 @@ from bipara_worker.protocol import (
     parse_request,
 )
 
-from conftest import SYNTHETIC_KEY, align_request_a01, translate_request_t01
+from conftest import SYNTHETIC_KEY, align_request_a01, translate_request_markdown, translate_request_t01
 
 
 class TestDecodeFrame:
@@ -196,6 +196,40 @@ class TestParseTranslateRequest:
         env = translate_request_t01()
         env["prompt_version"] = "alignment.v1"
         with pytest.raises(RequestError):
+            parse_request(env)
+
+    @pytest.mark.parametrize("kind", ["markdown_inline", "markdown_fragment"])
+    def test_markdown_request_preserves_hard_break(self, kind):
+        env = translate_request_markdown()
+        env["input"]["units"][0]["kind"] = kind
+        request = parse_request(env)
+        assert request.input.as_input_object() == env["input"]
+        assert "  \n" in request.input.units[0].text
+
+    @pytest.mark.parametrize("version,kind", [
+        ("translation.v1", "markdown_inline"),
+        ("translation.v2", "markdown_fragment"),
+        ("translation.markdown.v1", "sentence"),
+        ("translation.markdown.v1", "fragment"),
+    ])
+    def test_markdown_prompt_and_kind_mismatch_rejected(self, version, kind):
+        env = translate_request_t01()
+        env["prompt_version"] = version
+        env["input"]["units"][0]["kind"] = kind
+        with pytest.raises(RequestError, match="kind"):
+            parse_request(env)
+
+    @pytest.mark.parametrize("text", ["one\rtwo", "one\n\ntwo", "one\n \ntwo", "a" * 8193])
+    def test_invalid_markdown_unit_shape_rejected(self, text):
+        env = translate_request_markdown()
+        env["input"]["units"][0]["text"] = text
+        with pytest.raises(RequestError):
+            parse_request(env)
+
+    def test_markdown_input_bound_measures_escaped_json_bytes(self):
+        env = translate_request_markdown()
+        env["input"]["units"][0]["text"] = "a" + "\x00" * 6000 + "b"
+        with pytest.raises(RequestError, match="serialized input"):
             parse_request(env)
 
     def test_profile_provider_mismatch_rejected(self):

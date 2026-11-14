@@ -74,6 +74,20 @@ class TestTranslationOutput:
         with pytest.raises(WorkerError):
             validate_translation_output(raw, T01_IDS)
 
+    @pytest.mark.parametrize("text", ["甲\r乙", "甲\n\n乙", "甲\n \n乙", "甲\n乙\n丙", "a" * 32769])
+    def test_invalid_markdown_reply_rejected(self, text):
+        raw = translation([{"unit_id": T01_IDS[0], "text": text}])
+        with pytest.raises(WorkerError):
+            validate_translation_output(raw, T01_IDS, source_line_feeds=[1])
+
+    def test_markdown_allows_existing_lf_and_larger_unit_only_in_markdown(self):
+        raw = translation([{"unit_id": T01_IDS[0], "text": "a" * 12000 + "  \nnext"}])
+        assert validate_translation_output(raw, T01_IDS, source_line_feeds=[1]) == raw
+        with pytest.raises(WorkerError):
+            validate_translation_output(raw, T01_IDS)
+        with pytest.raises(WorkerError):
+            validate_translation_output(raw, T01_IDS, source_line_feeds=[0])
+
     def test_oversize_total_content_rejected(self):
         # 20 units x 2500 chars x 3 bytes = 150 KiB, each string under 8 KiB.
         ids = [f"22222222-2222-4222-8222-{i:012d}" for i in range(20)]

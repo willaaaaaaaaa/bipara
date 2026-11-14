@@ -6,10 +6,22 @@ import Foundation
 public struct TabState: Equatable, Sendable {
     public var sessionID: UUID
     public var document: BiparaDocument
-    /// Uncommitted source/direction draft text; empty string means "same
-    /// as the document source".
-    public var draftText: String
-    public var draftDirection: Direction
+    /// Uncommitted source text. Empty text is a valid draft.
+    public var draftText: String {
+        didSet {
+            if !TextIdentity.equal(oldValue, draftText) {
+                draftGeneration += 1
+            }
+        }
+    }
+    public var draftDirection: Direction {
+        didSet { if oldValue != draftDirection { draftGeneration += 1 } }
+    }
+    public var draftFormat: ContentFormat {
+        didSet { if oldValue != draftFormat { draftGeneration += 1 } }
+    }
+    public private(set) var draftGeneration = 0
+    var markdownImportHint = false
     public var layout: LayoutMode
     public var pinnedSelectionUnitID: UUID?
     public var saveURL: URL?
@@ -31,6 +43,7 @@ public struct TabState: Equatable, Sendable {
         self.document = document
         draftText = document.source
         draftDirection = document.requestedDirection
+        draftFormat = document.requestedFormat
         self.layout = layout
         pinnedSelectionUnitID = nil
         saveURL = nil
@@ -40,8 +53,21 @@ public struct TabState: Equatable, Sendable {
         runtimeBinding = nil
     }
 
+    var hasNoProseToTranslate: Bool {
+        !isDraftDirty && document.isMarkdown && document.canUseMarkdownPlan && document.units.isEmpty
+    }
+
+    var canCopyTranslation: Bool {
+        if document.isMarkdown {
+            return document.canUseMarkdownPlan && document.units.count == document.translations.count
+        }
+        return job.state == .completed
+    }
+
     public var isDraftDirty: Bool {
-        !TextIdentity.equal(draftText, document.source) || draftDirection != document.requestedDirection
+        !TextIdentity.equal(draftText, document.source)
+            || draftDirection != document.requestedDirection
+            || draftFormat != document.requestedFormat
     }
 
     /// Dirty for close/save prompts: unsaved draft edits or unsaved
@@ -77,7 +103,7 @@ public enum DocumentTitle {
 /// and gateway dispatch belong to `TranslationCoordinator`.
 @MainActor
 public final class WorkspaceStore: ObservableObject {
-    public struct PreparedDocument: Sendable { fileprivate let document: BiparaDocument }
+    public struct PreparedDocument: Sendable { let document: BiparaDocument }
     public enum PlanningError: Error { case documentTooLarge, staleDraft, revisionExhausted }
     @Published public private(set) var tabs: [TabState] = []
     @Published public private(set) var activeTabIndex: Int?
@@ -101,8 +127,13 @@ public final class WorkspaceStore: ObservableObject {
     }
 
     /// The app prepares nonempty imported/edited documents off the main actor.
-    public nonisolated static func prepareDocument(source:String,direction:Direction,replacing old:BiparaDocument? = nil) throws -> PreparedDocument {
-        let plan = try SourcePlanner.plan(source)
+    public nonisolated static func prepareDocument(
+        source: String, direction: Direction, replacing old: BiparaDocument? = nil,
+        format: ContentFormat = .auto, markdownHint: Bool = false
+    ) throws -> PreparedDocument {
+        let markdown = try MarkdownPlan.prepare(source, format: format, markdownHint: markdownHint)
+        let plan = try markdown.map { SourcePlan(source: source, paragraphs: $0.paragraphs, units: $0.units, markdownPlan: $0) }
+            ?? SourcePlanner.plan(source)
         var document = BiparaDocument(
             documentID: old?.documentID ?? UUID(),
             title: DocumentTitle.derive(from: source),
@@ -117,6 +148,10 @@ public final class WorkspaceStore: ObservableObject {
             layout: old?.layout ?? .sideBySide,
             readingAnchor: nil
         )
+        document.requestedFormat = format
+        document.markdownResolved = markdown != nil
+        document.markdownPlan = markdown
+        document.readingMode = markdown == nil ? .source : (old?.isMarkdown == true ? old?.readingMode ?? .rendered : .rendered)
         if let old, !TextIdentity.equal(old.title,DocumentTitle.derive(from:old.source)), old.title != "Untitled" { document.title=old.title }
         guard try DocumentCodec.encode(document).count <= WorkerContract.documentFileByteLimit else { throw PlanningError.documentTooLarge }
         return PreparedDocument(document:document)
@@ -164,27 +199,46 @@ public final class WorkspaceStore: ObservableObject {
     /// revision and invalidating translations/mappings, exactly as the
     /// design's source-edit rule requires. Cancel-of-work and model
     /// cancellation are the coordinator's concern.
-    public func applyDraft(at index: Int, prepared: PreparedDocument? = nil) throws {
+    public func applyDraft(at index: Int, prepared: PreparedDocument? = nil, forceReplan: Bool = false) throws {
         guard tabs.indices.contains(index) else { return }
         let tab = tabs[index]
         let newText = tab.draftText
         let newDirection = tab.draftDirection
-        guard tab.isDraftDirty else { return }
-        var document = try prepared?.document ?? Self.prepareDocument(source:newText,direction:newDirection,replacing:tab.document).document
+        guard tab.isDraftDirty || forceReplan else { return }
+        var document = try prepared?.document ?? Self.prepareDocument(
+            source: newText, direction: newDirection, replacing: tab.document,
+            format: tab.draftFormat,
+            markdownHint: tab.markdownImportHint && TextIdentity.equal(tab.document.source, newText)
+        ).document
         guard document.documentID == tab.document.documentID, document.sourceRevision == (try Self.nextSourceRevision(tab.document.sourceRevision)),
-              TextIdentity.equal(document.source,newText),document.requestedDirection == newDirection,
-              document.layout == tab.document.layout else { throw PlanningError.staleDraft }
+              TextIdentity.equal(document.source,newText), document.requestedDirection == newDirection,
+              document.requestedFormat == tab.draftFormat else { throw PlanningError.staleDraft }
+        if !forceReplan && Self.preservesRevision(tab, proposed: document) {
+            tabs[index].document.requestedFormat = document.requestedFormat
+            tabs[index].contentGeneration += 1
+            return
+        }
+        document.layout = tab.layout
+        if document.isMarkdown && tab.document.isMarkdown { document.readingMode = tab.document.readingMode }
         let priorDerived = DocumentTitle.derive(from: tab.document.source)
         let numbered = tab.document.title.range(of: #"^Untitled \d+$"#, options: .regularExpression) != nil
         if tab.automaticTitle && (tab.document.title == priorDerived || numbered) {
             let title = DocumentTitle.derive(from: newText)
             document.title = title == "Untitled" ? tab.document.title : title
         }
+        if !TextIdentity.equal(tab.document.source, document.source) { tabs[index].markdownImportHint = false }
         tabs[index].document = document
         tabs[index].contentGeneration += 1
         tabs[index].job = JobModel()
         tabs[index].elapsed = TranslationElapsed()
         tabs[index].pinnedSelectionUnitID = nil
+    }
+
+    static func preservesRevision(_ tab: TabState, proposed: BiparaDocument) -> Bool {
+        tab.document.canUseMarkdownPlan
+            && TextIdentity.equal(tab.document.source, proposed.source)
+            && tab.document.requestedDirection == proposed.requestedDirection
+            && tab.document.isMarkdown == proposed.isMarkdown
     }
 
     public func index(of sessionID: UUID) -> Int? { tabs.firstIndex { $0.sessionID == sessionID } }
@@ -200,7 +254,7 @@ public final class WorkspaceStore: ObservableObject {
         tab.elapsed.sinceOpen = true
         tab.saveURL = canonical
         tab.savedContentGeneration = tab.contentGeneration
-        if let snapshot = document.jobSnapshot, !document.translations.isEmpty {
+        if let snapshot = document.jobSnapshot {
             tab.job.snapshot = snapshot
             tab.job.completedUnitIDs = Set(document.translations.map(\.unitID))
             tab.job.totalNonblankUnits = document.units.count

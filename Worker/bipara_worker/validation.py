@@ -1,8 +1,8 @@
 """Strict validation of raw model output before it becomes a result frame.
 
 The output schemas in ``prompts/`` describe shape only; this module adds
-the semantic rules from the model workflow contract: exact ID coverage and
-order, nonempty trimmed strings without line breaks, UTF-8 budgets, legal
+the rules from the model workflow contract: exact ID coverage and
+order, nonempty trimmed strings with prompt-specific line rules, UTF-8 budgets, legal
 status/match combinations, and literal quote resolution against the actual
 counterpart text.
 """
@@ -14,8 +14,10 @@ from typing import Any, Sequence
 from .errors import ValidationFailure, WorkerError
 from .protocol import (
     MAX_DECODED_CONTENT_BYTES,
+    MAX_MARKDOWN_TRANSLATION_BYTES,
     MAX_MATCHES,
     MAX_TRANSLATION_BYTES,
+    has_markdown_line_shape,
 )
 
 
@@ -36,32 +38,39 @@ def _fail(reason: ValidationFailure) -> None:
     raise WorkerError("invalid_output", validation_reason=reason) from None
 
 
-def _checked_text(value: Any) -> str:
+def _checked_text(value: Any, source_line_feeds: int | None) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         _fail(ValidationFailure.INVALID_TRANSLATION_TEXT)
-    if "\n" in value or "\r" in value:
+    if source_line_feeds is None:
+        if "\n" in value or "\r" in value:
+            _fail(ValidationFailure.INVALID_TRANSLATION_TEXT)
+    elif not has_markdown_line_shape(value) or value.count("\n") > source_line_feeds:
         _fail(ValidationFailure.INVALID_TRANSLATION_TEXT)
     return value
 
 
 def validate_translation_output(
-    raw: Any, requested_unit_ids: Sequence[str]
+    raw: Any, requested_unit_ids: Sequence[str], *, source_line_feeds: Sequence[int] | None = None
 ) -> dict[str, Any]:
-    """Validate raw translation output against the exact requested units."""
+    """Validate output shape and budgets. Markdown supplies per-unit LF bounds."""
 
     if not isinstance(raw, dict) or set(raw.keys()) != {"translations"}:
         _fail(ValidationFailure.TRANSLATION_SHAPE)
     items = raw["translations"]
     if not isinstance(items, list) or len(items) != len(requested_unit_ids):
         _fail(ValidationFailure.UNIT_MISMATCH)
+    if source_line_feeds is not None and len(source_line_feeds) != len(requested_unit_ids):
+        _fail(ValidationFailure.UNIT_MISMATCH)
+    max_text_bytes = MAX_MARKDOWN_TRANSLATION_BYTES if source_line_feeds is not None else MAX_TRANSLATION_BYTES
     canonical: list[dict[str, str]] = []
-    for item, expected_id in zip(items, requested_unit_ids):
+    for index, (item, expected_id) in enumerate(zip(items, requested_unit_ids)):
         if not isinstance(item, dict) or set(item.keys()) != {"unit_id", "text"}:
             _fail(ValidationFailure.TRANSLATION_SHAPE)
         if item["unit_id"] != expected_id:
             _fail(ValidationFailure.UNIT_MISMATCH)
-        text = _checked_text(item["text"])
-        if _output_utf8_len(text) > MAX_TRANSLATION_BYTES:
+        line_feeds = source_line_feeds[index] if source_line_feeds is not None else None
+        text = _checked_text(item["text"], line_feeds)
+        if _output_utf8_len(text) > max_text_bytes:
             _fail(ValidationFailure.OUTPUT_TOO_LARGE)
         canonical.append({"unit_id": expected_id, "text": text})
     if _decoded_size(raw) > MAX_DECODED_CONTENT_BYTES:

@@ -19,8 +19,14 @@ Acceptance is cumulative but reported per check and tested revision. Fixtures do
 
 ## Working commands
 
+The [Markdown delivery sequence](#markdown-delivery-sequence) describes the Markdown feature and its acceptance criteria.
+
 Run script/setup.sh once per checkout. During a requested acceptance round, run script/check.sh for the default offline suites, packaged-worker checks and native build. Routine edits do not trigger acceptance; follow the [acceptance triggers](testing.md#acceptance-triggers). The full check requires full Xcode, uv and a macOS window session for native package tests. See [Tests/README.md](../Tests/README.md).
 
 Use script/build_and_run.sh for a development launch and script/build_dmg.sh --development for an explicitly ad-hoc local package. Formal tag builds and publication follow [releasing](releasing.md). A bounded real-provider verifier remains separate from default tests; never expose credentials or infer a live pass from a fixture.
 
 Write technical outcomes and limitations to the owning document. Keep complete execution logs and temporary reports in .local/; long-lived private material stays outside the checkout. A milestone or command description is not a publication action.
+
+## Markdown delivery sequence
+
+Native table and selection feasibility led to explicit TextKit 1 for Markdown. Local planning, worker capability, schema 3, the reader and export build on that projection. The [test plan](testing.md#markdown-acceptance) specifies the supported flows and the [validation status](validation.md#markdown-validation) records which ran. Real-provider checks use their own agreed call and cost budget.
