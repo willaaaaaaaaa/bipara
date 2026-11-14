@@ -59,8 +59,10 @@ DERIVED="$ROOT/build/native-release"
 # when only the rebuilt worker changed, leaving a stale outer seal over the
 # new nested worker ("nested code is modified or invalid").
 rm -rf "$DERIVED"
+# A local Mac may be listed as arm64e even when building an arm64 package.
 xcodebuild -project Bipara.xcodeproj -scheme Bipara -configuration Release \
-  -destination "platform=macOS,arch=$BIPARA_TARGET_ARCH" "ARCHS=$BIPARA_TARGET_ARCH" -derivedDataPath "$DERIVED" build
+  -destination 'generic/platform=macOS' "ARCHS=$BIPARA_TARGET_ARCH" ONLY_ACTIVE_ARCH=NO \
+  -derivedDataPath "$DERIVED" build
 
 APP_PATH="$DERIVED/Build/Products/Release/Bipara.app"
 verify_bundle "$APP_PATH"
