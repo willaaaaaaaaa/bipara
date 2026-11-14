@@ -88,7 +88,7 @@ enum MarkdownReaderStyles {
                             else {
                                 table = NSTextTable()
                                 table.numberOfColumns = cell.columnCount
-                                table.layoutAlgorithm = .fixed
+                                table.layoutAlgorithm = .fixedLayoutAlgorithm
                                 table.collapsesBorders = true
                                 tables[cell.tableID] = table
                             }
