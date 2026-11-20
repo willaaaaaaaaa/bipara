@@ -5,11 +5,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 export BIPARA_TARGET_ARCH="${BIPARA_TARGET_ARCH:-$(uname -m)}"
-if [ "${1:-}" != --development ]; then
+MODE="${1:-}"
+if [ "$MODE" != --development ] && [ "$MODE" != --install ]; then
   exec python3 "$ROOT/script/release.py" build "$@"
 fi
 shift
-[ "$#" = 0 ] || { echo 'usage: build_dmg.sh --development | --tag vMAJOR.MINOR.PATCH' >&2; exit 1; }
+[ "$#" = 0 ] || { echo 'usage: build_dmg.sh --development | --install | --tag vMAJOR.MINOR.PATCH' >&2; exit 1; }
 
 # Optional local run environment (e.g. DEVELOPER_DIR); ignored if absent.
 # shellcheck disable=SC1091
@@ -32,7 +33,7 @@ verify_bundle() {
   local helper="$app/Contents/Helpers/BiparaWorker.app"
   [ -x "$app/Contents/MacOS/Bipara" ] || fail "app executable missing: $app"
   [ -x "$helper/Contents/MacOS/BiparaWorker" ] || fail "embedded worker missing: $app"
-  for asset in translation.v1.txt translation.v2.txt translation.markdown.v1.txt alignment.v1.txt \
+  for asset in translation.v1.txt translation.v2.txt translation.markdown.v1.txt translation.markdown.v2.txt translation.markdown.v3.txt alignment.v1.txt \
     translation-output.v1.schema.json alignment-output.v1.schema.json; do
     cmp -s "prompts/$asset" "$helper/Contents/Frameworks/prompts/$asset" \
       || fail "bundled asset differs from canonical prompts/$asset"
@@ -41,57 +42,57 @@ verify_bundle() {
     || fail "signature verification failed: $app"
 }
 
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/bipara-package.XXXXXXXX")"
 MOUNTPOINT=""
 cleanup() {
-  if [ -n "$MOUNTPOINT" ]; then
-    /usr/bin/hdiutil detach "$MOUNTPOINT" -force >/dev/null 2>&1 || true
+  if [ -n "$MOUNTPOINT" ] && [ -d "$MOUNTPOINT/Bipara.app" ]; then
+    /usr/bin/hdiutil detach "$MOUNTPOINT" >/dev/null || return 1
   fi
+  rm -rf "$WORK"
 }
 trap cleanup EXIT
 
 step "Release worker bundle"
-"$ROOT/script/build_worker.sh"
+"$ROOT/script/build_worker.sh" --release-only
 
 step "Native Release build"
 xcodebuild -version >/dev/null 2>&1 || fail "a usable full Xcode installation is required"
-DERIVED="$ROOT/build/native-release"
-# Build from a clean state: incremental xcodebuild does not re-sign the app
-# when only the rebuilt worker changed, leaving a stale outer seal over the
-# new nested worker ("nested code is modified or invalid").
-rm -rf "$DERIVED"
+DERIVED="$WORK/native"
 # A local Mac may be listed as arm64e even when building an arm64 package.
 xcodebuild -project Bipara.xcodeproj -scheme Bipara -configuration Release \
   -destination 'generic/platform=macOS' "ARCHS=$BIPARA_TARGET_ARCH" ONLY_ACTIVE_ARCH=NO \
-  -derivedDataPath "$DERIVED" build
+  -derivedDataPath "$DERIVED" -clonedSourcePackagesDirPath "$ROOT/build/SourcePackages" -onlyUsePackageVersionsFromResolvedFile build
 
 APP_PATH="$DERIVED/Build/Products/Release/Bipara.app"
 verify_bundle "$APP_PATH"
+if [ "$MODE" = --install ]; then
+  "$APP_PATH/Contents/MacOS/Bipara" --install-local-build
+  exit 0
+fi
 
 step "Assemble DMG staging"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
   "$APP_PATH/Contents/Info.plist")"
-STAGING="$ROOT/build/dmg-staging"
+STAGING="$WORK/staging"
 DMG="$ROOT/build/dist/Bipara-$VERSION-$BIPARA_TARGET_ARCH.dmg"
-rm -rf "$STAGING"
 mkdir -p "$STAGING" "$ROOT/build/dist"
 /usr/bin/ditto "$APP_PATH" "$STAGING/Bipara.app"
-ln -s /Applications "$STAGING/Applications"
 
 step "Create DMG"
-rm -f "$DMG"
-/usr/bin/hdiutil create -volname Bipara -srcfolder "$STAGING" -format UDZO -ov "$DMG" \
+CANDIDATE="$WORK/Bipara.dmg"
+/usr/bin/hdiutil create -volname Bipara -srcfolder "$STAGING" -format UDZO -ov "$CANDIDATE" \
   || fail "hdiutil create failed"
-[ -f "$DMG" ] || fail "DMG missing after hdiutil"
+[ -f "$CANDIDATE" ] || fail "DMG missing after hdiutil"
 
 step "Verify mounted image"
-rm -rf "$ROOT/build/dmg-mount"
-mkdir -p "$ROOT/build/dmg-mount"
-MOUNTPOINT="$ROOT/build/dmg-mount"
-/usr/bin/hdiutil attach -readonly -nobrowse -mountpoint "$MOUNTPOINT" "$DMG" >/dev/null \
+MOUNTPOINT="$WORK/mount"
+mkdir "$MOUNTPOINT"
+/usr/bin/hdiutil attach -readonly -nobrowse -mountpoint "$MOUNTPOINT" "$CANDIDATE" >/dev/null \
   || fail "could not mount the DMG for verification"
 verify_bundle "$MOUNTPOINT/Bipara.app"
 /usr/bin/hdiutil detach "$MOUNTPOINT" >/dev/null || fail "could not unmount the verified DMG"
 MOUNTPOINT=""
+mv -f "$CANDIDATE" "$DMG"
 
 echo
 echo "build_dmg.sh: verified $DMG"

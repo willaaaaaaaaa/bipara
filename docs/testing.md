@@ -10,6 +10,10 @@ For a requested round, use the relevant cases below and record the exact candida
 
 Git hooks continue to check public content on commit/push. Hosted offline CI continues on pull requests and pushes to main; those automatic checks do not launch native UI acceptance or real-provider calls and do not replace the maintainer's functional acceptance. Saving local files triggers none of these workflows.
 
+## Installation checks
+
+Exercise a fresh install and a source-to-DMG or DMG-to-source upgrade on the maintainer’s Mac. Check the single destination, About revision, signature, installed launch path and cleanup after ejecting the image. Attempt a lower build and a same-number older revision. Verify that rejection preserves the installed binary. Repeat with the destination app open and check that its documents remain open. Keep historical QA evidence as archives and remove expanded test apps after use.
+
 ## App functional acceptance
 
 Run the product checks on the existing desktop using Bipara's own controls, a synthetic document, and the deterministic fixture gateway. The scope covers observable app behavior and its supporting integrity checks. Input-method candidate behavior, VoiceOver speech, global keyboard navigation, system appearance changes, Increase Contrast and Reduce Motion are outside this acceptance scope. Installer qualification has its own evidence under the [release procedure](releasing.md).

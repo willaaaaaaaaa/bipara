@@ -2,6 +2,10 @@
 
 Bipara is experimental. Default development checks do not qualify a public installer, real-provider behavior or the complete native UI.
 
+## Installation
+
+The arm64 development build 0.1.3 (5) based on `5fc1904` with local installer changes was installed from a mounted development DMG through the installer command and then through `script/build_dmg.sh --install`. Both updated the same Applications path. The installed app launched and passed strict signature verification. The installer rejected build 4 and refused to replace a running copy. The signed executable remained unchanged after each rejection. Two focused version-ordering tests covered legacy packages, numeric comparison, same-version ancestry and local edits. The mounted Finder dialog, browser quarantine flow, Intel runtime and formal release qualification remain untested for this change.
+
 ## Markdown validation
 
 On 2026-11-20 (UTC+8), the arm64 Debug working tree based on `5fc1904` passed 40 focused Swift and 195 Python checks with `markdown-plan.v4` and `translation.markdown.v3`. A translation that reordered two code spans before a separate strong span passed offline replay. Moving a span across the strong boundary failed. A packaged fixture preserved the accepted mixed-format order through save, reopen and export. The formal-release attribution check was skipped for this development build. Live provider quality and manual UI acceptance remain open.

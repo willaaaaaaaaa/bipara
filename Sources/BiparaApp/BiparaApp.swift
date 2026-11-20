@@ -3,6 +3,47 @@ import BiparaAppKit
 import SwiftUI
 
 @main
+enum BiparaEntry {
+    @MainActor static func main() {
+        let args = Array(CommandLine.arguments.dropFirst())
+        let bundle = Bundle.main.bundleURL
+        if args == ["--install-local-build"] || args.first == "--install-from" {
+            do {
+                let local = args == ["--install-local-build"]
+                guard local || args.count == 2 else {
+                    FileHandle.standardError.write(Data("Usage: Bipara --install-from /path/to/Bipara.app\n".utf8))
+                    exit(2)
+                }
+                try AppInstaller.install(local ? bundle : URL(fileURLWithPath: args[1]), localRebuild: local)
+                print("Installed \(AppInstaller.destination.path)")
+            } catch {
+                FileHandle.standardError.write(Data("Install failed: \(error.localizedDescription)\n".utf8))
+                exit(1)
+            }
+            return
+        }
+        if (try? bundle.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly) == true {
+            let app = NSApplication.shared
+            app.setActivationPolicy(.regular)
+            app.activate(ignoringOtherApps: true)
+            let prompt = NSAlert()
+            prompt.messageText = "Install Bipara in Applications?"
+            prompt.informativeText = "Save your documents and quit any installed copy before continuing."
+            prompt.addButton(withTitle: "Install")
+            prompt.addButton(withTitle: "Cancel")
+            guard prompt.runModal() == .alertFirstButtonReturn else { return }
+            do {
+                try AppInstaller.install(bundle)
+                NSWorkspace.shared.activateFileViewerSelecting([AppInstaller.destination])
+            } catch {
+                NSAlert(error: error).runModal()
+            }
+            return
+        }
+        BiparaApp.main()
+    }
+}
+
 struct BiparaApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var runtime = AppRuntime.production()

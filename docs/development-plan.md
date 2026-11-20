@@ -23,7 +23,7 @@ The [Markdown delivery sequence](#markdown-delivery-sequence) describes the Mark
 
 Run script/setup.sh once per checkout. During a requested acceptance round, run script/check.sh for the default offline suites, packaged-worker checks and native build. Routine edits do not trigger acceptance; follow the [acceptance triggers](testing.md#acceptance-triggers). The full check requires full Xcode, uv and a macOS window session for native package tests. See [Tests/README.md](../Tests/README.md).
 
-Use script/build_and_run.sh for a development launch and script/build_dmg.sh --development for an explicitly ad-hoc local package. Formal tag builds and publication follow [releasing](releasing.md). A bounded real-provider verifier remains separate from default tests; never expose credentials or infer a live pass from a fixture.
+Use `script/build_dmg.sh --install` for the daily installation. Use script/build_and_run.sh for a temporary Debug launch and script/build_dmg.sh --development for an explicitly ad-hoc local package. Formal tag builds and publication follow [releasing](releasing.md). A bounded real-provider verifier remains separate from default tests; never expose credentials or infer a live pass from a fixture.
 
 Write technical outcomes and limitations to the owning document. Keep complete execution logs and temporary reports in .local/; long-lived private material stays outside the checkout. A milestone or command description is not a publication action.
 

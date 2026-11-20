@@ -217,6 +217,9 @@ def build_release(tag: str) -> None:
     run_logged(["xcodebuild", "-project", "Bipara.xcodeproj", "-scheme", "Bipara", "-configuration", "Release", "-destination", "generic/platform=macOS", f"ARCHS={architecture()}", "ONLY_ACTIVE_ARCH=NO", "-derivedDataPath", str(derived), "CODE_SIGNING_ALLOWED=NO", "build"], env, logs / "native.log")
     app = derived / "Build/Products/Release/Bipara.app"
     resources = app / "Contents/Resources"
+    stamp = json.loads((resources / "BuildSource.json").read_text())
+    if stamp["commits"][:1] != [commit] or stamp["modified"]:
+        raise ReleaseError("bundled source does not match the clean release tag")
     shutil.copy2(ROOT / "LICENSE", resources / "LICENSE")
     signing_options = ["--timestamp", "--options", "runtime"] if mode == "developer-id" else ["--timestamp=none"]
     command("codesign", "--force", "--sign", identity, *signing_options, str(app))
@@ -232,7 +235,6 @@ def build_release(tag: str) -> None:
         staging = Path(temp) / "staging"
         staging.mkdir()
         command("ditto", str(app), str(staging / "Bipara.app"))
-        (staging / "Applications").symlink_to("/Applications")
         dmg = output / assets(tag, architecture())[0]
         command("hdiutil", "create", "-volname", "Bipara", "-srcfolder", str(staging), "-format", "UDZO", str(dmg))
         if mode == "developer-id":
@@ -265,6 +267,7 @@ def build_release(tag: str) -> None:
     (output / assets(tag, architecture())[2]).write_text(json.dumps(manifest, indent=2) + "\n")
     (output / assets(tag, architecture())[1]).write_text("".join(f"{digest(output / n)}  {n}\n" for n in (assets(tag, architecture())[0], assets(tag, architecture())[2])))
     verify_assets(output, tag, commit, mode, architecture())
+    shutil.rmtree(app)
     print(f"release: verified assets in build/release/{tag}")
 
 

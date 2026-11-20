@@ -12,7 +12,9 @@ Bipara is experimental. Real-provider semantic quality, latency and cost are not
 
 ## Install and use
 
-For source builds, follow the development instructions below. Source-readiness requires public-content, history and identity review, plus offline regression checks; their current results and blockers are in [validation status](docs/validation.md).
+Save your documents and quit Bipara before updating. For a source install, run `script/build_dmg.sh --install` with the development prerequisites below. For a DMG built with the checked installer, double-click Bipara on the mounted image and choose **Install**. Eject the image and open `/Applications/Bipara.app`. Both routes check the version and use the same destination. About Bipara shows the source revision and identifies local edits.
+
+For older drag-and-drop DMGs, follow the [legacy package instructions](docs/releasing.md#install-and-publish). Source-readiness requires public-content, history and identity review, plus offline regression checks; their current results and blockers are in [validation status](docs/validation.md).
 
 Every public installer must have a protected version tag and an arm64 DMG validated for installation and upgrade on the maintainer's local Mac against its exact checksum. The release notes identify the tested macOS version; this does not establish clean-machine or cross-version qualification. The initial distribution uses ad-hoc signing without Apple notarization or a verified Developer ID. macOS may require a per-app Open Anyway exception; see [installation and trust](docs/releasing.md#install-and-publish). Find available installers, checksums and test coverage in [GitHub Releases](https://github.com/willaaaaaaaaa/bipara/releases).
 
