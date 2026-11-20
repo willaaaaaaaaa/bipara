@@ -70,7 +70,9 @@ if command -v xcodebuild >/dev/null 2>&1; then
     -destination 'platform=macOS' \
     -derivedDataPath build/native-check \
     build
-  record $? "xcodebuild build"
+  build_status=$?
+  record "$build_status" "xcodebuild build"
+  if [ "$build_status" -eq 0 ]; then rm -rf "$ROOT/build/native-check/Build/Products/Debug/Bipara.app"; fi
 else
   echo "check.sh: xcodebuild unavailable: full Xcode is not installed" >&2
   echo "  (active developer directory is a Command Line Tools instance)" >&2

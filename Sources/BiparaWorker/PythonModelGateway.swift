@@ -39,7 +39,7 @@ public final class PythonModelGateway: ModelGateway, @unchecked Sendable {
             "context_before": request.contextBefore, "context_after": request.contextAfter,
             "units": request.units.map { ["unit_id": $0.unitID.uuidString.lowercased(), "kind": $0.kind.rawValue, "text": $0.text] },
         ]
-        let markdown = request.promptVersion == WorkerContract.markdownTranslationPromptVersion
+        let markdown = WorkerContract.markdownTranslationPromptVersions.contains(request.promptVersion)
         guard WorkerContract.translationPromptVersions.contains(request.promptVersion),
               request.sourceLanguage != request.targetLanguage,
               (1...WorkerContract.maxUnitsPerBatch).contains(request.units.count),
@@ -136,7 +136,7 @@ public final class PythonModelGateway: ModelGateway, @unchecked Sendable {
         _ payload: WirePayload,
         requestedUnits: [TranslateBatchUnit], configuration: ModelConfiguration, promptVersion: String
     ) throws -> TranslateBatchResult {
-        let markdown = promptVersion == WorkerContract.markdownTranslationPromptVersion
+        let markdown = WorkerContract.markdownTranslationPromptVersions.contains(promptVersion)
         guard Set(payload.data.keys) == ["translations"],
               try JSONSerialization.data(withJSONObject: payload.data, options: markdown ? [.withoutEscapingSlashes] : []).count <= WorkerContract.maxDecodedContentBytes else {
             throw GatewayError(code: .invalidOutput)

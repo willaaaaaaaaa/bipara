@@ -12,7 +12,9 @@ Bipara 目前处于实验阶段。真实服务商的语义质量、延迟和费�
 
 ## 安装与使用
 
-源码构建请按下方开发说明操作。源码就绪需要公共内容、历史与身份审查，以及离线回归检查；当前结果和阻碍见[验证状态](docs/validation.md)。
+安装前先保存文档并退出 Bipara。从源码安装时，准备好下方列出的开发工具，运行 `script/build_dmg.sh --install`。对于带版本检查的新 DMG，双击镜像里的 Bipara，选择 **Install**。安装后推出镜像，从 `/Applications/Bipara.app` 启动。两种方式都检查版本并更新同一位置。「关于 Bipara」显示源码提交和本地修改标记。
+
+旧版拖放式 DMG 请参阅[旧包安装说明](docs/releasing.md#install-and-publish)。源码就绪需要公共内容、历史与身份审查，以及离线回归检查；当前结果和阻碍见[验证状态](docs/validation.md)。
 
 每个公开安装版本必须有受保护的版本 tag 和可安装 arm64 DMG，并针对该包的精确校验和在维护者本机完成安装和升级验收。发布说明记录实际测试的 macOS 版本；本机结果不代表干净机器或跨系统验收。首版采用 ad-hoc 签名，未经 Apple 公证，也没有经过验证的 Developer ID 身份；macOS 可能要求针对本应用选择“仍要打开”。详见[安装与信任说明](docs/releasing.md#install-and-publish)。可用安装包、校验和及各版本的验收范围见 [GitHub Releases](https://github.com/willaaaaaaaaa/bipara/releases)。
 

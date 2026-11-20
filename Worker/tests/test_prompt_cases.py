@@ -12,7 +12,7 @@ from uuid import NAMESPACE_URL, uuid5
 import pytest
 
 from bipara_worker.assets import load_cases
-from bipara_worker.protocol import MARKDOWN_TRANSLATE_PROMPT_VERSION
+from bipara_worker.protocol import MARKDOWN_TRANSLATE_PROMPT_VERSIONS
 from bipara_worker.validation import validate_alignment_output, validate_translation_output
 
 CASES = load_cases()["cases"]
@@ -42,7 +42,7 @@ def test_corpus_samples_pass_real_output_validation(case):
             item["unit_id"] = identifier
         source_line_feeds = (
             [unit["text"].count("\n") for unit in case["input"]["units"]]
-            if case.get("prompt_version") == MARKDOWN_TRANSLATE_PROMPT_VERSION else None
+            if case.get("prompt_version") in MARKDOWN_TRANSLATE_PROMPT_VERSIONS else None
         )
         assert validate_translation_output(output, ids, source_line_feeds=source_line_feeds) == output
         assert not literal_violations(case, case["sample_output"])

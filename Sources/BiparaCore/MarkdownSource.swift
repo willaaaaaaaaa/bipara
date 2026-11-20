@@ -114,7 +114,7 @@ struct MarkdownSource {
         references = captured
         var signs: [String] = []
         if metadata != nil { signs.append("metadata") }
-        for node in roots { Self.appendSyntax(node, into: &signs) }
+        for node in roots { Self.visitSyntax(node) { token, _ in signs.append(token) } }
         syntax = signs
         detectsMarkdown = translated ? true : Self.detect(roots, coordinates: coordinates)
     }
@@ -140,20 +140,34 @@ struct MarkdownSource {
         return nil
     }
 
-    private static func appendSyntax(_ node: any Markup, into signature: inout [String]) {
-        switch node {
-        case let heading as Heading: signature.append("heading:\(heading.level)"); return
-        case is Paragraph: signature.append("paragraph"); return
-        case is Table.Cell: signature.append("cell"); return
-        case let code as CodeBlock: signature.append("code:\(code.language ?? ""):\(code.code)"); return
-        case let html as HTMLBlock: signature.append("html:\(html.rawHTML)"); return
-        case let list as OrderedList: signature.append("ordered:\(list.startIndex)")
-        case let item as ListItem: signature.append("item:\(String(describing: item.checkbox))")
-        case let table as Table: signature.append("table:\(table.columnAlignments)")
-        default: signature.append(String(describing: type(of: node)))
+    func syntaxRange(at index: Int) -> TextRange? {
+        if index == 0, let frontmatter { return frontmatter }
+        var position = frontmatter == nil ? 0 : 1
+        var range: TextRange?
+        for node in roots {
+            Self.visitSyntax(node) { _, owner in
+                if position == index { range = coordinates.range(owner.range) }
+                position += 1
+            }
+            if position > index { break }
         }
-        for child in node.children { appendSyntax(child, into: &signature) }
-        signature.append("/")
+        return range
+    }
+
+    private static func visitSyntax(_ node: any Markup, emit: (String, any Markup) -> Void) {
+        switch node {
+        case let heading as Heading: emit("heading:\(heading.level)", node); return
+        case is Paragraph: emit("paragraph", node); return
+        case is Table.Cell: emit("cell", node); return
+        case let code as CodeBlock: emit("code:\(code.language ?? ""):\(code.code)", node); return
+        case let html as HTMLBlock: emit("html:\(html.rawHTML)", node); return
+        case let list as OrderedList: emit("ordered:\(list.startIndex)", node)
+        case let item as ListItem: emit("item:\(String(describing: item.checkbox))", node)
+        case let table as Table: emit("table:\(table.columnAlignments)", node)
+        default: emit(String(describing: type(of: node)), node)
+        }
+        for child in node.children { visitSyntax(child, emit: emit) }
+        emit("/", node)
     }
 
     private static func detect(_ nodes: [any Markup], coordinates: MarkdownCoordinates) -> Bool {

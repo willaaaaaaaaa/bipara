@@ -25,10 +25,11 @@ xcodebuild -project Bipara.xcodeproj -scheme Bipara \
   -only-testing:BiparaUITests/BiparaUITests \
   -skip-testing:BiparaUITests/BiparaUITests/testAccessibilityAuditOfReadingAndSettings \
   -skip-testing:BiparaUITests/BiparaUITests/testReadingSizeAccessibilityTracksChanges \
-  DEBUG_INFORMATION_FORMAT=dwarf-with-dsym test
+  DEBUG_INFORMATION_FORMAT=dwarf-with-dsym test &&
+  rm -rf "$UI_EVIDENCE/derived-data/Build/Products/Debug/Bipara.app"
 ```
 
-Use a fresh result-bundle path on subsequent runs. For the layout/settings smoke case, replace the selector with `-only-testing:BiparaUITests/BiparaUITests/testInputTranslationBothLayoutsAndSettings`. The command launches the native fixture host and needs a foreground desktop with UI automation access and any macOS permissions required by the checkout location. Keep dSYMs available for XCTest failure reporting. See [current validation](../docs/validation.md) for actual runs, source/environment provenance and remaining acceptance limits.
+Keep the result bundle and dSYMs. If a failed run needs the exact app for diagnosis, archive that copy before removing it. Use a fresh result-bundle path on subsequent runs. For the layout/settings smoke case, replace the selector with `-only-testing:BiparaUITests/BiparaUITests/testInputTranslationBothLayoutsAndSettings`. The command launches the native fixture host and needs a foreground desktop with UI automation access and any macOS permissions required by the checkout location. Keep dSYMs available for XCTest failure reporting. See [current validation](../docs/validation.md) for actual runs, source/environment provenance and remaining acceptance limits.
 
 Use app controls and app shortcuts for interactive product checks. Record any unavailable desktop prerequisite as a blocked check. Keep global system settings out of the functional workflow.
 

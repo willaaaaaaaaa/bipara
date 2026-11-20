@@ -1,6 +1,226 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Markdown validation failed": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Markdown 结构校验失败"
+          }
+        }
+      }
+    },
+    "Inline formatting or protected content differs.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "行内格式或受保护的内容不一致。"
+          }
+        }
+      }
+    },
+    "Block structure differs after insertion into the document.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将译文填回文档后，区块结构发生变化。"
+          }
+        }
+      }
+    },
+    "The reply violates the text length, whitespace, or line break rules.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型返回的文本不符合长度、空白或换行规则。"
+          }
+        }
+      }
+    },
+    "The reply could not be read as a single inline Markdown passage.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型返回的文本无法解析为一段行内 Markdown。"
+          }
+        }
+      }
+    },
+    "The reply contains an unescaped pipe (|) inside a table cell.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型返回的表格单元格内有未转义的竖线（|）。"
+          }
+        }
+      }
+    },
+    "The document could not be parsed after inserting the replies.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将译文填回文档后，无法解析 Markdown。"
+          }
+        }
+      }
+    },
+    "The translation units do not match the source order.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "翻译单元与原文顺序不一致。"
+          }
+        }
+      }
+    },
+    "Submitted unit": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本批次的翻译单元"
+          }
+        }
+      }
+    },
+    "Original sent to the model": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发送给模型的原文"
+          }
+        }
+      }
+    },
+    "Actual model reply": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型实际返回的译文"
+          }
+        }
+      }
+    },
+    "Completed translations were kept.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已完成的译文已保留。"
+          }
+        }
+      }
+    },
+    "Unit %lld": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "第 %lld 个翻译单元"
+          }
+        }
+      }
+    },
+    "Expected structure": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原文结构"
+          }
+        }
+      }
+    },
+    "Received structure": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "译文结构"
+          }
+        }
+      }
+    },
+    "No corresponding structure": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无对应结构"
+          }
+        }
+      }
+    },
+    "Bold (**)": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加粗（**）"
+          }
+        }
+      }
+    },
+    "Italic (*)": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "斜体（*）"
+          }
+        }
+      }
+    },
+    "Strikethrough (~~)": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "删除线（~~）"
+          }
+        }
+      }
+    },
+    "Hard line break": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "硬换行"
+          }
+        }
+      }
+    },
+    "Paragraph": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "段落"
+          }
+        }
+      }
+    },
+    "End of structure": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "结构结束"
+          }
+        }
+      }
+    },
     "Editor": {
       "localizations": {
         "zh-Hans": {

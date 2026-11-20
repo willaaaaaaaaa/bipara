@@ -1,12 +1,13 @@
 @testable import BiparaAppKit
 import BiparaCore
+import BiparaWorker
 import Foundation
 import Testing
 
 @MainActor
 @Suite("Markdown document workflow")
 struct MarkdownRuntimeTests {
-    private func runtime(_ gateway: ScriptedGateway, withCredential: Bool = true) -> AppRuntime {
+    private func runtime(_ gateway: any ModelGateway, withCredential: Bool = true) -> AppRuntime {
         let defaults = UserDefaults(suiteName: "dev.bipara.markdown-tests.\(UUID())")!
         let keys = FaultCredentials()
         let app = AppRuntime(gateway: gateway, keychain: keys, defaults: defaults)
@@ -45,6 +46,31 @@ struct MarkdownRuntimeTests {
         #expect(pinnedFormat.sourceRevision == tab.document.sourceRevision)
         #expect(pinnedFormat.translations == tab.document.translations)
         #expect(gateway.dispatchCount == 1)
+    }
+
+    @Test func reorderedTableCellCommitsAndReopensThroughPackagedWorker() async throws {
+        try await checkTableCell("Use `Bash` with `rg` if both `Grep` and `Glob` are unavailable.",
+                                 reply: "如果 `Grep` 和 `Glob` 都不可用，就在 `Bash` 中使用 `rg`。")
+        try await checkTableCell("Before saving, run `check` from `toolkit`. Before publishing, **review**.",
+                                 reply: "保存前，运行 `toolkit` 中的 `check`。发布前，**请审阅**。")
+    }
+
+    private func checkTableCell(_ cell: String, reply: String) async throws {
+        let gateway = PythonModelGateway(executableURL: CoordinatorRealWorkerTests.fixtureExecutable)
+        defer { Task { await gateway.shutdown() } }
+        let app = runtime(gateway)
+        let source = "| `ID` | `Notes` |\n| --- | --- |\n| 1 | \(cell) |"
+        _ = try app.workspace.newTab(source: source, direction: .enToZh)
+        let session = try #require(app.activeSession)
+        await app.translate(session)
+        let tab = app.workspace.tabs[0]
+        #expect(tab.job.state == .completed)
+        #expect(app.markdownFailure == nil)
+        #expect(tab.document.translations.map(\.text) == [reply])
+        let restored = try DocumentCodec.decode(DocumentCodec.encode(tab.document))
+        #expect(restored.jobSnapshot?.translationPromptVersion == "translation.markdown.v3")
+        #expect(restored.markdownExport(bilingual: false, plain: false, allowPartial: false)
+            == source.replacingOccurrences(of: cell, with: reply))
     }
 
     @Test func explicitRetranslationUpgradesSupportedLegacyMetadataPlan() async throws {
@@ -120,7 +146,14 @@ struct MarkdownRuntimeTests {
         #expect(tab.document.source == source)
         #expect(tab.document.translations.isEmpty)
         #expect(tab.job.state == .failed)
-        #expect(app.errorMessage == "The model changed the Markdown structure. Completed translations were kept.")
+        #expect(app.errorMessage == nil)
+        let failure = try #require(app.markdownFailure?.failure)
+        #expect(failure.difference == .inlineStructure(expected: ["strong", "/"], received: []))
+        let passage = try #require(failure.passages.first)
+        #expect(failure.passages.count == 1)
+        #expect(passage.unitNumber == 2)
+        #expect(passage.input == "Open the **window**.")
+        #expect(passage.reply == "译1-1")
     }
 
     @Test func formatReplacementCancelsAnInFlightMarkdownAttempt() async throws {

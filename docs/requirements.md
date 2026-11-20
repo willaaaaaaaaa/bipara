@@ -33,6 +33,7 @@ Provide a native macOS translation and bilingual reading app powered by large la
 | R21 | Give every document a useful default title and show compact, document-specific translation elapsed time. |
 | R22 | Default to appearance-adaptive Amber correspondence highlights in Light and Dark, and allow choosing a highlight color in Reading settings. Preserve native text selection and explicitly saved color choices. |
 | R23 | Add an opt-in setting that skips the document save prompt on close. Make the resulting discard behavior explicit. |
+| R29 | Source and DMG installs share one application in /Applications, reject downgrades and expose the source revision in About Bipara. Packaging and QA remove temporary app copies after use. |
 
 Reading preferences retain the global Active Model and explicit interface-language contracts. Detailed current behavior is owned by [interaction](design/interaction.md) and [model configuration](design/model-settings.md).
 

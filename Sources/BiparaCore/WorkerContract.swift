@@ -35,13 +35,15 @@ public enum WorkerContract {
     public static let glmSerializedWindow: Duration = .seconds(60)
 
     /// Prompt versions the app requires from a worker handshake.
-    public static let markdownTranslationPromptVersion = "translation.markdown.v1"
-    public static let promptVersions = ["translation.v1", "translation.v2", markdownTranslationPromptVersion, "alignment.v1"]
+    public static let legacyMarkdownTranslationPromptVersion = "translation.markdown.v1"
+    public static let markdownTranslationPromptVersion = "translation.markdown.v3"
+    public static let markdownTranslationPromptVersions = [legacyMarkdownTranslationPromptVersion, "translation.markdown.v2", markdownTranslationPromptVersion]
+    public static let promptVersions = translationPromptVersions + alignmentPromptVersions
     public static let currentTranslationPromptVersion = "translation.v2"
     /// Operation-specific prompt-version sets: a version belongs to exactly
     /// one operation, and each field of a snapshot is validated against
     /// its own operation's set (N6).
-    public static let translationPromptVersions = ["translation.v1", "translation.v2", markdownTranslationPromptVersion]
+    public static let translationPromptVersions = ["translation.v1", "translation.v2"] + markdownTranslationPromptVersions
     public static let alignmentPromptVersions = ["alignment.v1"]
 
     /// Maximum wire frame size in bytes, including the terminating LF.

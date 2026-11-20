@@ -96,6 +96,105 @@ struct MarkdownPlanTests {
         }
     }
 
+    @Test func markdownFailureDetailsPreserveReplyAndPointToTheChangedUnit() throws {
+        let value = try document("# Title\n\nStart here.\n\n**Protocol.** Refactor this.\n\nFinish here.")
+        let plan = try #require(value.markdownPlan)
+        let changed = plan.units[2]
+        let newIDs = Set(plan.units.map(\.id))
+        let unchanged = plan.units.map { UnitTranslation(unitID: $0.id, text: plan.requestText(for: $0)!, completedAt: .now) }
+
+        var invalid = unchanged
+        invalid[2].text = "**原则。**重构此处。"
+        let inline = try #require(throws: MarkdownPlan.ValidationFailure.self) {
+            try plan.validateBatch(invalid, language: .zh, newUnitIDs: newIDs)
+        }
+        #expect(inline.difference == .inlineStructure(expected: ["strong", "/"], received: []))
+        #expect(inline.passages.map(\.id) == [changed.id])
+        #expect(inline.passages.first?.input == "**Protocol.** Refactor this.")
+        #expect(inline.passages.first?.reply == "**原则。**重构此处。")
+
+        invalid = unchanged
+        invalid[3].text = "# 完成"
+        let block = try #require(throws: MarkdownPlan.ValidationFailure.self) {
+            try plan.validateBatch(invalid, language: .zh, newUnitIDs: newIDs)
+        }
+        #expect(block.difference == .blockStructure(expected: ["paragraph"], received: ["heading:1"]))
+        #expect(block.passages.map(\.unitNumber) == [4, 1, 2, 3])
+        #expect(block.passages.first?.reply == "# 完成")
+    }
+
+    @Test func onlyStandaloneCodeMayMoveWithinItsOwnUnit() throws {
+        let source = "Use `Bash` with `rg` when `Grep` and `Glob` are unavailable."
+        let reply = "当会话没有 `Grep` 或 `Glob` 时，用带 `rg` 的 `Bash`。"
+        for version in MarkdownPlan.supportedVersions {
+            let value = try document(source, version: version)
+            let plan = try #require(value.markdownPlan)
+            let id = try #require(plan.units.first?.id)
+            let translated = UnitTranslation(unitID: id, text: reply, completedAt: .now)
+            if version == "markdown-plan.v3" || version == MarkdownPlan.version {
+                #expect(value.translationPromptVersion == (version == "markdown-plan.v3" ? "translation.markdown.v2" : "translation.markdown.v3"))
+                try plan.validateBatch([translated], language: .zh, newUnitIDs: [id])
+                var duplicate = translated
+                duplicate.text = reply.replacingOccurrences(of: "`Glob`", with: "`Grep`")
+                let error = try #require(throws: MarkdownPlan.ValidationFailure.self) {
+                    try plan.validateBatch([duplicate], language: .zh, newUnitIDs: [id])
+                }
+                #expect(error.difference == .inlineStructure(expected: ["code:`Glob`"], received: ["code:`Grep`"]))
+            } else {
+                #expect(value.translationPromptVersion == "translation.markdown.v1")
+                #expect(throws: GatewayError.self) { try plan.validateTranslations([translated], language: .zh) }
+            }
+        }
+
+        for (original, damaged) in [
+            (source, reply.replacingOccurrences(of: "`rg`", with: "")),
+            (source, reply.replacingOccurrences(of: "`rg`", with: "`RG`")),
+            ("Use `Café` then `B`.", "先 `B` 后 `Cafe\u{301}`。"),
+            ("Use `A` **before** `B`.", "使用 `B` **然后** `A`。"),
+            ("Use [`A`](https://example.org) then `B`.", "先用 [`B`](https://example.org) 再用 `A`。"),
+            ("Use `A`.\\\nThen `B`.", "先用 `B`。\\\n再用 `A`。"),
+        ] {
+            let plan = try #require(try document(original).markdownPlan)
+            let id = try #require(plan.units.first?.id)
+            #expect(throws: GatewayError.self) {
+                try plan.validateTranslations([.init(unitID: id, text: damaged, completedAt: .now)], language: .zh)
+            }
+        }
+    }
+
+    @Test func codeSpansMayReorderOnlyBetweenTheSameMarkupBoundaries() throws {
+        for (source, reply) in [
+            ("Run `check` from `toolkit`. Then **review**.", "运行 `toolkit` 中的 `check`。然后 **审阅**。"),
+            ("**Use `A` then `B` now**.", "**现在用 `B` 和 `A`**。"),
+            ("See [use `A` and `B` here](https://example.org).", "见[此处使用 `B` 和 `A`](https://example.org)。"),
+            ("Use `A` and `B` **here** then `C` and `D`.", "用 `B` 和 `A` **在此**，再用 `D` 和 `C`。"),
+        ] {
+            for version in ["markdown-plan.v3", MarkdownPlan.version] {
+                let plan = try #require(try document(source, version: version).markdownPlan)
+                let id = try #require(plan.units.first?.id)
+                let translation = UnitTranslation(unitID: id, text: reply, completedAt: .now)
+                if version == MarkdownPlan.version {
+                    try plan.validateBatch([translation], language: .zh, newUnitIDs: [id])
+                } else {
+                    #expect(throws: GatewayError.self) { try plan.validateTranslations([translation], language: .zh) }
+                }
+            }
+        }
+        for (source, reply) in [
+            ("Use `A` then **use `B` now**.", "使用 `B` 然后 **使用 `A`**。"),
+            ("**Use `A` now** then **use `B` now**.", "**使用 `B`** 然后 **使用 `A`**。"),
+            ("Use `A` and `B` then **review**.", "用 `B` 和 `B`，然后 **审阅**。"),
+            ("Use `A` and `B` then **review**.", "用 `B` 和 `A`，然后 *审阅*。"),
+            ("Use `A` and `B` then [review](https://example.org).", "用 `B` 和 `A`，然后[审阅](https://example.com)。"),
+        ] {
+            let plan = try #require(try document(source).markdownPlan)
+            let id = try #require(plan.units.first?.id)
+            #expect(throws: GatewayError.self) {
+                try plan.validateTranslations([.init(unitID: id, text: reply, completedAt: .now)], language: .zh)
+            }
+        }
+    }
+
     @Test func offsetsAndReferencesFollowTheParsedDocument() throws {
         let cases: [(String, [String])] = [
             ("# Heading #\n\nA paragraph.", ["Heading", "A paragraph."]),
@@ -153,7 +252,7 @@ struct MarkdownPlanTests {
         let source = "---\r\nname: stable-id\r\ntitle: 'Reader''s guide' # keep comment\r\ndescription: Read the full guide.\r\nversion: 1\r\nconfig:\r\n  description: Nested value\r\n---\r\n\r\n# Body\r\n\r\nText."
         var value = try document(source)
         let plan = try #require(value.markdownPlan)
-        #expect(plan.planVersion == "markdown-plan.v2")
+        #expect(plan.planVersion == MarkdownPlan.version)
         #expect(plan.units.compactMap(plan.requestText).prefix(2) == ["Reader's guide", "Read the full guide."])
         #expect(!plan.prose.contains("stable-id"))
         #expect(!plan.prose.contains("Nested value"))

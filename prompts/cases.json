@@ -1,5 +1,5 @@
 {
-  "corpus_version": "3",
+  "corpus_version": "5",
   "provenance": "Original synthetic examples authored for Bipara; no private user text.",
   "cases": [
     {
@@ -728,6 +728,24 @@
       "sample_output": {"translations": [{"unit_id": "m02a", "text": "Read the [guide][guide]."}, {"unit_id": "m02b", "text": "Status \\| Meaning"}]},
       "semantic_checks": ["Translate the visible link label and keep the explicit reference ID.", "Preserve the escaped pipe inside one cell without introducing a table delimiter."],
       "literal_checks": [{"unit_id": "m02a", "contains": "][guide]"}, {"unit_id": "m02b", "literal": "\\|", "count": 1}]
+    },
+    {
+      "id": "M03-conditional-code-span-order",
+      "op": "translate",
+      "prompt_version": "translation.markdown.v3",
+      "input": {"source_language": "en", "target_language": "zh", "context_before": "", "context_after": "", "units": [{"unit_id": "m03", "kind": "markdown_inline", "text": "Use `Bash` with `rg` if both `Grep` and `Glob` are unavailable."}]},
+      "sample_output": {"translations": [{"unit_id": "m03", "text": "如果 `Grep` 和 `Glob` 都不可用，就在 `Bash` 中使用 `rg`。"}]},
+      "semantic_checks": ["Keep the fallback conditional on both tools being unavailable. Keep the roles of the shell and search command when moving the condition."],
+      "literal_checks": [{"unit_id": "m03", "literal": "`Bash`", "count": 1}, {"unit_id": "m03", "literal": "`rg`", "count": 1}, {"unit_id": "m03", "literal": "`Grep`", "count": 1}, {"unit_id": "m03", "literal": "`Glob`", "count": 1}]
+    },
+    {
+      "id": "M04-code-before-strong",
+      "op": "translate",
+      "prompt_version": "translation.markdown.v3",
+      "input": {"source_language": "en", "target_language": "zh", "context_before": "", "context_after": "", "units": [{"unit_id": "m04", "kind": "markdown_inline", "text": "Before saving, run `check` from `toolkit`. Before publishing, **review**."}]},
+      "sample_output": {"translations": [{"unit_id": "m04", "text": "保存前，运行 `toolkit` 中的 `check`。发布前，**请审阅**。"}]},
+      "semantic_checks": ["Preserve the command and its toolkit when reversing their order. Keep review emphasized in the separate publishing instruction."],
+      "literal_checks": [{"unit_id": "m04", "literal": "`check`", "count": 1}, {"unit_id": "m04", "literal": "`toolkit`", "count": 1}, {"unit_id": "m04", "literal": "**", "count": 2}]
     }
   ]
 }

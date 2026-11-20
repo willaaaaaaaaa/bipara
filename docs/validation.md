@@ -2,7 +2,15 @@
 
 Bipara is experimental. Default development checks do not qualify a public installer, real-provider behavior or the complete native UI.
 
+## Installation
+
+The arm64 development build 0.1.3 (5) based on `5fc1904` with local installer changes was installed from a mounted development DMG through the installer command and then through `script/build_dmg.sh --install`. Both updated the same Applications path. The installed app launched and passed strict signature verification. The installer rejected build 4 and refused to replace a running copy. The signed executable remained unchanged after each rejection. Two focused version-ordering tests covered legacy packages, numeric comparison, same-version ancestry and local edits. The mounted Finder dialog, browser quarantine flow, Intel runtime and formal release qualification remain untested for this change.
+
 ## Markdown validation
+
+On 2026-11-20 (UTC+8), the arm64 Debug working tree based on `5fc1904` passed 40 focused Swift and 195 Python checks with `markdown-plan.v4` and `translation.markdown.v3`. A translation that reordered two code spans before a separate strong span passed offline replay. Moving a span across the strong boundary failed. A packaged fixture preserved the accepted mixed-format order through save, reopen and export. The formal-release attribution check was skipped for this development build. Live provider quality and manual UI acceptance remain open.
+
+On 2026-11-20 (UTC+8), the arm64 Debug working tree based on `5fc1904` passed 57 focused Swift and 155 Python checks with `markdown-plan.v3` and `translation.markdown.v2`. A packaged offline fixture moved a conditional clause and its inline code spans within a table cell. The app committed the returned order and preserved it on save, reopen and Markdown export. The new validator rejected changed or duplicated literals and reordered mixed markup. Live model quality and manual UI acceptance remain open for this change.
 
 Later on 2026-11-13 (UTC+8), the source-editor color regression was reproduced as missing foreground attributes after inserting text. The fix passed 30 focused native reading/editor checks; the strengthened editor regression also passed in both Light and Dark, before and after changing size and switching appearance, while preserving text and selection. Synthetic workspace captures confirmed a neutral text background and readable input in both appearances. The arm64 native Debug build passed on the same Mac and toolchain. The 187-input source manifest SHA-256 is `497fd318ab3217faadeae2b23445988ac3b9ea49cc33bd5dc6d051813a68d611`. The 12-point Menlo default and existing bilingual reading palette remain unchanged. These are focused checks; no full UI acceptance, provider calls or distribution qualification were performed, and the running user app was not restarted.
 

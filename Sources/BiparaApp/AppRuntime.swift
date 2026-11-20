@@ -19,6 +19,7 @@ public final class AppRuntime: ObservableObject {
     @Published public var composing: Set<UUID> = []
     @Published public var reading: [UUID: ReadingPresentation] = [:]
     @Published public var errorMessage: String?
+    @Published var markdownFailure: MarkdownFailurePresentation?
     @Published public var closing: Set<UUID> = []
     @Published public var focusedWindowRole: String?
     /// A pending explicit configuration-binding request for an opened
@@ -50,6 +51,12 @@ public final class AppRuntime: ObservableObject {
     private var disclosures: [String: Task<Bool, Never>] = [:]
     private let defaults: UserDefaults
     private var settingsObservation: AnyCancellable?
+
+    struct MarkdownFailurePresentation: Identifiable {
+        let id = UUID()
+        let title: String
+        let failure: MarkdownPlan.ValidationFailure
+    }
 
     /// An explicit session-local binding choice for one document snapshot,
     /// showing the configuration's display name and destination host.
@@ -417,6 +424,11 @@ public final class AppRuntime: ObservableObject {
         }
         catch TranslationCoordinator.CoordinatorError.retiredPromptVersion {
             errorMessage = "This document was translated with an older prompt version and cannot resume. Use Retranslate to continue with the current version."
+        }
+        catch let failure as MarkdownPlan.ValidationFailure {
+            if let i = workspace.index(of: session) {
+                markdownFailure = .init(title: workspace.tabs[i].document.title, failure: failure)
+            }
         }
         catch { report(error,fallback:"Translation stopped. Completed paragraphs were kept; check the model settings and retry.") }
     }
@@ -885,8 +897,6 @@ public final class AppRuntime: ObservableObject {
         case CoreError.inputTooLarge: errorMessage="The original exceeds the 1 MiB text limit. Shorten it before applying."
         case CoreError.unsupportedInput where workspace.activeTab?.draftFormat != .plainText:
             errorMessage = "The Markdown cannot be planned within the supported limits. Edit the original or choose Plain Text."
-        case TranslationCoordinator.CoordinatorError.invalidMarkdownStructure:
-            errorMessage = "The model changed the Markdown structure. Completed translations were kept."
         case let error as GatewayError: errorMessage = translationFailureMessage(error)
         default: errorMessage=fallback
         }

@@ -107,8 +107,10 @@ async def test_translate_operation_executes_real_branch(monkeypatch, prompt_vers
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("invalid_text", [None, "甲\n乙\n丙"])
-async def test_markdown_operation_uses_versioned_prompt_and_source_line_bound(monkeypatch, invalid_text):
+@pytest.mark.parametrize("version", ["translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3"])
+async def test_markdown_operation_uses_versioned_prompt_and_source_line_bound(monkeypatch, invalid_text, version):
     envelope = translate_request_markdown()
+    envelope["prompt_version"] = version
     case = next(case for case in load_cases()["cases"] if case["id"] == "M01-inline-order-and-hard-break")
     output = {"translations": [{
         "unit_id": envelope["input"]["units"][0]["unit_id"],
@@ -119,13 +121,13 @@ async def test_markdown_operation_uses_versioned_prompt_and_source_line_bound(mo
     if invalid_text is None:
         data, meta = await operation(parse_request(envelope))
         assert data == output
-        assert meta["prompt_version"] == "translation.markdown.v1"
+        assert meta["prompt_version"] == version
     else:
         with pytest.raises(WorkerError) as exc:
             await operation(parse_request(envelope))
         assert exc.value.code == "invalid_output"
     system, human = fake.calls[0]
-    assert system.content == load_assets().prompts["translation.markdown.v1"]
+    assert system.content == load_assets().prompts[version]
     assert json.loads(human.content) == envelope["input"]
     assert len(fake.calls) == 1
 
