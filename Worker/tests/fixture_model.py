@@ -12,7 +12,7 @@ import asyncio
 from typing import Any
 
 from bipara_worker.errors import WorkerError
-from bipara_worker.protocol import AlignInput, MARKDOWN_TRANSLATE_PROMPT_VERSION, Request, TranslateInput
+from bipara_worker.protocol import AlignInput, MARKDOWN_TRANSLATE_PROMPT_VERSIONS, Request, TranslateInput
 from bipara_worker.validation import validate_alignment_output, validate_translation_output
 
 
@@ -24,9 +24,10 @@ def build_case_indexes(cases: dict[str, Any]) -> tuple[dict[tuple[Any, ...], str
             source = case["input"]["source_language"]
             target = case["input"]["target_language"]
             outputs = case["sample_output"]["translations"]
-            markdown = case.get("prompt_version") == MARKDOWN_TRANSLATE_PROMPT_VERSION
+            version = case.get("prompt_version")
+            markdown_version = version if version in MARKDOWN_TRANSLATE_PROMPT_VERSIONS else None
             for unit, output in zip(case["input"]["units"], outputs):
-                translations[(markdown, source, target, unit["text"])] = output["text"]
+                translations[(markdown_version, source, target, unit["text"])] = output["text"]
         else:
             inp = case["input"]
             alignments[(inp["reading_text"], inp["counterpart_text"], inp["selection"]["text"])] = (
@@ -62,11 +63,12 @@ def make_fixture_operation(
         if delay > 0:
             await asyncio.sleep(delay)
         if isinstance(request.input, TranslateInput):
-            markdown = request.prompt_version == MARKDOWN_TRANSLATE_PROMPT_VERSION
+            markdown = request.prompt_version in MARKDOWN_TRANSLATE_PROMPT_VERSIONS
             texts = []
             for unit in request.input.units:
                 sample = translations.get(
-                    (markdown, request.input.source_language, request.input.target_language, unit.text)
+                    (request.prompt_version if markdown else None,
+                     request.input.source_language, request.input.target_language, unit.text)
                 )
                 if sample is None:
                     # Deterministic, obviously synthetic fallback for

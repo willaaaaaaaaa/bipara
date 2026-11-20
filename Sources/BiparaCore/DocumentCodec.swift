@@ -341,7 +341,7 @@ public enum DocumentCodec {
         // and model IDs are kept literal: snapshots from older app versions
         // still open for reading, and Resume gating is app policy.
         if let snapshot = document.jobSnapshot {
-            guard document.isMarkdown || snapshot.translationPromptVersion != WorkerContract.markdownTranslationPromptVersion else {
+            guard document.isMarkdown || !WorkerContract.markdownTranslationPromptVersions.contains(snapshot.translationPromptVersion) else {
                 throw CoreError.invalidDocument("Markdown prompt requires a Markdown document")
             }
             guard snapshot.sourceLanguage != snapshot.targetLanguage else {

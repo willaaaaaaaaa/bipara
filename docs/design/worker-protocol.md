@@ -1,6 +1,6 @@
 # Swift–Python Worker Protocol v2
 
-This document defines the current v2 transport contract. App and bundled worker upgrade together; reject protocol v1 at handshake before transmitting a credential. New plain-text jobs use `translation.v2`. Markdown jobs use `translation.markdown.v1` and retained jobs use their recorded prompt. Alignment and output schemas remain v1. [Model workflow](model-workflow.md) owns model inputs/validation; [prompt assets](../../prompts/README.md) own model output schemas. This protocol is local process IPC, not a network service or public API.
+This document defines the current v2 transport contract. App and bundled worker upgrade together; reject protocol v1 at handshake before transmitting a credential. New plain-text jobs use `translation.v2`. New Markdown jobs use `translation.markdown.v3` and retained jobs use their recorded prompt. Alignment and output schemas remain v1. [Model workflow](model-workflow.md) owns model inputs/validation; [prompt assets](../../prompts/README.md) own model output schemas. This protocol is local process IPC, not a network service or public API.
 
 ## Transport and lifecycle
 
@@ -19,7 +19,7 @@ After spawn, the app sends hello. No credential is sent until ready validates. S
 ```
 
 ```json
-{"v":2,"type":"ready","worker_version":"0.1.0","max_inflight":4,"prompt_versions":["translation.v1","translation.v2","translation.markdown.v1","alignment.v1"]}
+{"v":2,"type":"ready","worker_version":"0.1.0","max_inflight":4,"prompt_versions":["translation.v1","translation.v2","translation.markdown.v1","translation.markdown.v2","translation.markdown.v3","alignment.v1"]}
 ```
 
 `v` is integer 2 in every frame. `worker_version` is the actual packaged version string, not a success signal. All required prompt versions and `max_inflight: 4` must match this app's contract. Accept exactly one ready event after hello. An incompatible handshake may emit `fatal` and exit. Python does not write ready before successfully loading/validating its assets.
@@ -169,7 +169,7 @@ A fake provider proves transport, not provider compatibility. Both live-provider
 
 ## Markdown prompt extension
 
-The v2 worker dispatches Markdown translation when the prompt ID is `translation.markdown.v1`. The app and worker ship together and advertise the asset in the ready handshake. A worker missing the required prompt fails readiness before credentials or HTTP; there is no fallback to `translation.v2` for a Markdown plan.
+The v2 worker dispatches Markdown translation for `translation.markdown.v3` and retained `translation.markdown.v1` and `translation.markdown.v2` requests. The app and worker ship together and advertise all three assets in the ready handshake. A worker missing the required prompt fails readiness before credentials or HTTP; there is no fallback to `translation.v2` for a Markdown plan.
 
 The Markdown input has the same top-level keys as Translate: `source_language`, `target_language`, `context_before`, `context_after`, `units`. Each unit still contains exactly `unit_id`, `kind`, `text`; its kind is `markdown_inline` for a whole inline payload or `markdown_fragment` for an oversized payload fragment. These kinds are valid only with the Markdown prompt. Context carries at most 512 UTF-8 bytes on either side; each nonempty trimmed text and the sum of unit texts are at most 8,192 bytes, with 1–64 units and a 32 KiB serialized input. LF represents semantic hard breaks only; canonical input contains no CR or blank lines. Swift supplies locally normalized inline syntax and retains all node IDs, native offsets, section paths and source maps in its request registry.
 

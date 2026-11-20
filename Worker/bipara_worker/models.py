@@ -27,7 +27,7 @@ from .errors import ValidationFailure, WorkerError
 from .protocol import (
     AlignInput,
     Config,
-    MARKDOWN_TRANSLATE_PROMPT_VERSION,
+    MARKDOWN_TRANSLATE_PROMPT_VERSIONS,
     Request,
     TranslateInput,
     decode_json_strict,
@@ -546,7 +546,7 @@ def make_langchain_operation(
         if isinstance(request.input, TranslateInput):
             source_line_feeds = (
                 [unit.text.count("\n") for unit in request.input.units]
-                if request.prompt_version == MARKDOWN_TRANSLATE_PROMPT_VERSION else None
+                if request.prompt_version in MARKDOWN_TRANSLATE_PROMPT_VERSIONS else None
             )
             validated = validate_translation_output(
                 data, [unit.unit_id for unit in request.input.units],

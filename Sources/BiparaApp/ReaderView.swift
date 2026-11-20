@@ -94,10 +94,20 @@ public struct WorkspaceView: View {
                 runtime.bindAndResume(request,configurationID:configurationID)
             } onCancel:{runtime.bindingRequest=nil}
         }
+        .sheet(item: $runtime.markdownFailure) { report in
+            markdownFailureSheet(report)
+        }
         .alert(t("Unable to complete the action"),isPresented:Binding(get:{runtime.errorMessage != nil},set:{if !$0{runtime.errorMessage=nil}})) {
             Button(t("OK")){runtime.errorMessage=nil}
         } message:{Text(t(runtime.errorMessage ?? ""))}
         .onExitCommand { runtime.clearPin() }
+    }
+
+    private func markdownFailureSheet(_ report: AppRuntime.MarkdownFailurePresentation) -> some View {
+        MarkdownFailureSheet(report: report, language: settings.record.interfaceLanguage) {
+            runtime.markdownFailure = nil
+        }
+        .id(report.id)
     }
     private var tabs: some View {
         ScrollView(.horizontal,showsIndicators:false) {
@@ -391,5 +401,118 @@ struct BindingSheet: View {
                 Button(t("Cancel"), action: onCancel).keyboardShortcut(.cancelAction).accessibilityIdentifier("binding.cancel")
             }
         }.padding(20).frame(width: 460)
+    }
+}
+
+private struct MarkdownFailureSheet: View {
+    let report: AppRuntime.MarkdownFailurePresentation
+    let language: InterfaceLanguage
+    let dismiss: () -> Void
+    @State private var selectedUnit: UUID?
+
+    private func t(_ key: String) -> String { AppLocalization.text(key, language: language) }
+
+    var body: some View {
+        let passages = report.failure.passages
+        let passage = passages.first { $0.id == selectedUnit } ?? passages.first
+        let difference = report.failure.difference
+        VStack(alignment: .leading, spacing: 12) {
+            Text(t("Markdown validation failed")).font(.headline)
+            Text(report.title).lineLimit(1).foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    switch difference {
+                    case .inlineStructure(let expected, let received):
+                        structure(t("Inline formatting or protected content differs."), expected: expected, received: received)
+                    case .blockStructure(let expected, let received):
+                        structure(t("Block structure differs after insertion into the document."), expected: expected, received: received)
+                    case .textShape:
+                        Text(t("The reply violates the text length, whitespace, or line break rules."))
+                    case .inlineParse:
+                        Text(t("The reply could not be read as a single inline Markdown passage."))
+                    case .tablePipe:
+                        Text(t("The reply contains an unescaped pipe (|) inside a table cell."))
+                    case .blockParse:
+                        Text(t("The document could not be parsed after inserting the replies."))
+                    case .unitOrder:
+                        Text(t("The translation units do not match the source order."))
+                    }
+
+                    if passages.count > 1 {
+                        Picker(t("Submitted unit"), selection: Binding(
+                            get: { passage?.id },
+                            set: { selectedUnit = $0 }
+                        )) {
+                            ForEach(passages) { item in
+                                Text(unitLabel(item)).tag(Optional(item.id))
+                            }
+                        }
+                    } else if let passage {
+                        Text(unitLabel(passage)).font(.subheadline.weight(.semibold))
+                    }
+                    if let passage {
+                        HStack(alignment: .top, spacing: 12) {
+                            panel(t("Original sent to the model"), passage.input)
+                            panel(t("Actual model reply"), passage.reply)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.trailing, 8)
+            }
+            HStack {
+                Text(t("Completed translations were kept.")).foregroundStyle(.secondary)
+                Spacer()
+                Button(t("OK"), action: dismiss).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 700, height: 510)
+    }
+
+    private func unitLabel(_ passage: MarkdownPlan.ValidationFailure.Passage) -> String {
+        String(format: t("Unit %lld"), passage.unitNumber)
+    }
+
+    private func structure(_ label: String, expected: [String], received: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label)
+            HStack(alignment: .top, spacing: 12) {
+                panel(t("Expected structure"), signature(expected))
+                panel(t("Received structure"), signature(received))
+            }
+        }
+    }
+
+    private func signature(_ tokens: [String]) -> String {
+        guard !tokens.isEmpty else { return t("No corresponding structure") }
+        let lines = tokens.prefix(8).map { token in
+            switch token {
+            case "strong": return t("Bold (**)")
+            case "em": return t("Italic (*)")
+            case "strike": return t("Strikethrough (~~)")
+            case "break": return t("Hard line break")
+            case "paragraph": return t("Paragraph")
+            case "/": return t("End of structure")
+            default:
+                let start = token.prefix(160)
+                return start.count == token.count ? String(start) : String(start) + "…"
+            }
+        }
+        return (lines + (tokens.count > lines.count ? ["…"] : [])).joined(separator: "\n")
+    }
+
+    private func panel(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label).font(.subheadline.weight(.semibold))
+            Text(verbatim: value)
+                .font(.system(.callout, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(9)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

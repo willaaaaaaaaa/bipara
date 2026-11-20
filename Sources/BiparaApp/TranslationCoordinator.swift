@@ -63,7 +63,8 @@ public final class TranslationCoordinator: ObservableObject {
         // (D4, N6).
         guard tab.document.canUseMarkdownPlan,
               WorkerContract.translationPromptVersions.contains(snapshot.translationPromptVersion),
-              tab.document.isMarkdown == (snapshot.translationPromptVersion == WorkerContract.markdownTranslationPromptVersion),
+              (tab.document.isMarkdown ? snapshot.translationPromptVersion == tab.document.translationPromptVersion
+                  : !WorkerContract.markdownTranslationPromptVersions.contains(snapshot.translationPromptVersion)),
               WorkerContract.alignmentPromptVersions.contains(snapshot.alignmentPromptVersion) else {
             throw CoordinatorError.retiredPromptVersion
         }
@@ -286,6 +287,10 @@ public final class TranslationCoordinator: ObservableObject {
             }
         }
         if cancelledByUser { throw CancellationError() }
+        if schedule.firstFailure is MarkdownPlan.ValidationFailure,
+           currentIndex(session, original: original, attempt: attempt, workspace: workspace) == nil {
+            return
+        }
         if let firstFailure = schedule.firstFailure { throw firstFailure }
     }
 
@@ -317,8 +322,7 @@ public final class TranslationCoordinator: ObservableObject {
         let snapshotToValidate = candidate
         let encodedSize = try await Task.detached {
             if let plan = snapshotToValidate.markdownPlan {
-                do { try plan.validateTranslations(snapshotToValidate.translations, language: resolved.targetLanguage, newUnitIDs: Set(requestedUnitIDs)) }
-                catch { throw CoordinatorError.invalidMarkdownStructure }
+                try plan.validateBatch(snapshotToValidate.translations, language: resolved.targetLanguage, newUnitIDs: Set(requestedUnitIDs))
             }
             return try DocumentCodec.encode(snapshotToValidate).count
         }.value
@@ -369,5 +373,5 @@ public final class TranslationCoordinator: ObservableObject {
         throw CoordinatorError.manualDirectionRequired
     }
 
-    public enum CoordinatorError: Error { case emptyInput, manualDirectionRequired, invalidBatch, invalidMarkdownStructure, documentTooLarge, retiredPromptVersion }
+    public enum CoordinatorError: Error { case emptyInput, manualDirectionRequired, invalidBatch, documentTooLarge, retiredPromptVersion }
 }

@@ -27,7 +27,7 @@ actor FixtureGateway:ModelGateway {
         if !translationFailures.isEmpty { throw translationFailures.removeFirst() }
         return .init(translations: request.units.map { unit in
             let text: String
-            if request.promptVersion == WorkerContract.markdownTranslationPromptVersion {
+            if WorkerContract.markdownTranslationPromptVersions.contains(request.promptVersion) {
                 text = unit.text
                     .replacingOccurrences(of: "Setup", with: "准备")
                     .replacingOccurrences(of: "Open the", with: "打开")

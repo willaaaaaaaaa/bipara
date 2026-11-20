@@ -5,7 +5,12 @@ extension BiparaDocument {
     public var canUseMarkdownPlan: Bool { !isMarkdown || markdownPlan != nil }
 
     public var translationPromptVersion: String {
-        isMarkdown ? WorkerContract.markdownTranslationPromptVersion : WorkerContract.currentTranslationPromptVersion
+        guard isMarkdown else { return WorkerContract.currentTranslationPromptVersion }
+        switch markdownPlan?.planVersion {
+        case MarkdownPlan.version: return WorkerContract.markdownTranslationPromptVersion
+        case "markdown-plan.v3": return "translation.markdown.v2"
+        default: return WorkerContract.legacyMarkdownTranslationPromptVersion
+        }
     }
 
     public func requestText(for unit: PlannedUnit) -> String? {

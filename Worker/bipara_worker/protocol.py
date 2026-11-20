@@ -63,8 +63,8 @@ LEGACY_PROFILE_BASE_URL = {
 }
 LEGACY_PROFILE_EFFORT = {"openai-json-schema-v1": "auto", "glm-json-v1": "off"}
 TRANSLATE_PROMPT_VERSION = "translation.v2"
-MARKDOWN_TRANSLATE_PROMPT_VERSION = "translation.markdown.v1"
-TRANSLATE_PROMPT_VERSIONS = ("translation.v1", TRANSLATE_PROMPT_VERSION, MARKDOWN_TRANSLATE_PROMPT_VERSION)
+MARKDOWN_TRANSLATE_PROMPT_VERSIONS = ("translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3")
+TRANSLATE_PROMPT_VERSIONS = ("translation.v1", TRANSLATE_PROMPT_VERSION, *MARKDOWN_TRANSLATE_PROMPT_VERSIONS)
 ALIGN_PROMPT_VERSION = "alignment.v1"
 PROMPT_VERSIONS = (*TRANSLATE_PROMPT_VERSIONS, ALIGN_PROMPT_VERSION)
 # Accepted design revision (owner, 2026-11-05): 2 -> 4 so phrase alignment
@@ -366,7 +366,7 @@ def has_markdown_line_shape(text: str) -> bool:
 
 def _parse_translate_input(raw: Any, prompt_version: str) -> TranslateInput:
     obj = _exact_object(raw, TRANSLATE_INPUT_KEYS, "translate input")
-    markdown = prompt_version == MARKDOWN_TRANSLATE_PROMPT_VERSION
+    markdown = prompt_version in MARKDOWN_TRANSLATE_PROMPT_VERSIONS
     allowed_kinds = MARKDOWN_UNIT_KINDS if markdown else UNIT_KINDS
     source_language = obj["source_language"]
     target_language = obj["target_language"]

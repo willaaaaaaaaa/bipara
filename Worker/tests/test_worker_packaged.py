@@ -62,7 +62,7 @@ def _handshake(client: WorkerClient) -> dict:
     assert ready["type"] == "ready"
     assert ready["v"] == 2
     assert ready["max_inflight"] == 4
-    assert ready["prompt_versions"] == ["translation.v1", "translation.v2", "translation.markdown.v1", "alignment.v1"]
+    assert ready["prompt_versions"] == ["translation.v1", "translation.v2", "translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3", "alignment.v1"]
     return ready
 
 

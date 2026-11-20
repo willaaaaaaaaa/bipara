@@ -20,12 +20,16 @@ PROMPT_FILES = {
     "translation.v1": "translation.v1.txt",
     "translation.v2": "translation.v2.txt",
     "translation.markdown.v1": "translation.markdown.v1.txt",
+    "translation.markdown.v2": "translation.markdown.v2.txt",
+    "translation.markdown.v3": "translation.markdown.v3.txt",
     "alignment.v1": "alignment.v1.txt",
 }
 SCHEMA_FILES = {
     "translation.v1": "translation-output.v1.schema.json",
     "translation.v2": "translation-output.v1.schema.json",
     "translation.markdown.v1": "translation-output.v1.schema.json",
+    "translation.markdown.v2": "translation-output.v1.schema.json",
+    "translation.markdown.v3": "translation-output.v1.schema.json",
     "alignment.v1": "alignment-output.v1.schema.json",
 }
 ASSET_FILES = tuple(dict.fromkeys((*PROMPT_FILES.values(), *SCHEMA_FILES.values())))

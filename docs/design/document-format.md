@@ -95,7 +95,7 @@ Schema 3 adds the following root fields to the shared records above.
 | --- | --- |
 | `content_format` | Object containing `requested` (`auto`, `markdown` or `plain_text`), `resolved` (`markdown` or `plain_text`) and nullable `detector_version`. Explicit choices match the resolved format. Auto records the detector version. |
 | `reading_mode` | `rendered` or `source`. Plain text uses `source`. |
-| `markdown_plan_version` | `markdown-plan.v2` for new Markdown plans; supported v1 documents retain their instance version and original unit identities until explicit retranslation. Null for plain text. |
+| `markdown_plan_version` | `markdown-plan.v4` for new Markdown plans. Until explicit retranslation, v1/v2 plans retain ordered validation and v3 plans permit inline-code reordering only in code-and-prose units. All supported plans preserve their original unit identities on reopen. Null for plain text. |
 | `paragraphs`, `units` | Plain-text records retain their old validation. Markdown stores the stable block and unit IDs and the exact source ranges used to rebuild its plan. Several fragments may share the range of one normalized inline payload. The payload itself is derived. |
 | `reading_anchor` | The shared `paragraph_id`, `side`, `fraction` anchor also accepts optional `section_id` and UTF-16 `offset` for Markdown. The paragraph ID identifies the logical Markdown block. |
 | `translations`, `job_snapshot` | A completed translation references a unit in the active plan. Markdown jobs record the Markdown prompt version. A document containing only copied literals has an empty result list and no job snapshot. |
