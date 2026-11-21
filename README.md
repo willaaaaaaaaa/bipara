@@ -1,59 +1,55 @@
 # Bipara
 
-English · [Simplified Chinese](README.zh-CN.md)
+English · [简体中文](README.zh-CN.md)
 
-Bipara is a large language model (LLM)-powered native macOS app for translation and bilingual reading, built for long Chinese and English texts. Read in side-by-side panes or alternating paragraphs, select text to find corresponding passages, and work with independent documents in tabs.
+Bipara is a native macOS app for translating and reading long documents. It currently supports only **English to Chinese** and **Chinese to English**. Paste an article, translate it with your own model connection, and read both languages side by side.
 
-**Markdown reading.** Paste Markdown directly to detect its format locally, then read rendered originals and translations side by side or section by section. You can choose the format yourself, inspect the Markdown source, import UTF-8 `.md` files, and export Markdown. See the [reading guide](docs/design/interaction.md#markdown-reading) and [validation status](docs/validation.md#markdown-validation).
+![An English Git guide and its Chinese translation in Bipara, with the same recipe diff in both columns](docs/images/bilingual-reader.png)
 
-Bipara uses Swift for native presentation and document/task logic, plus a bundled Python worker with LangChain. End users do not install Python or run a server. Model connections use OpenAI Responses or Anthropic Messages, with a custom form for name, protocol, model ID, effort, API Base URL and API key. Users choose compatible models and parameters; provider calls require network access, an eligible account and may incur charges.
+*Source build preview. A Git guide explains a change to a recipe. Both columns show the exact lines the author added and removed.*
 
-Bipara is experimental. Real-provider semantic quality, latency and cost are not fully qualified; native UI and accessibility acceptance is incomplete.
+## Reading with Bipara
 
-## Install and use
+- **Follow the same passage in two languages.** Scroll the paired columns together, or alternate the original and translation paragraph by paragraph. In the source build, switch one tab to Translation Reader for an uninterrupted read. Switch back when a sentence needs a closer look.
+- **Read technical guides without losing the example.** Open a Markdown file or paste the text in the source build. Headings, lists and tables keep their structure. Commands inside backticks and fenced code blocks stay intact, and translated link labels still point to the original destination.
+- **Pick up a long article tomorrow.** Save it as a `.bipara` document with its source, translation and reading position. Reopen it offline to read completed passages. If you paused halfway through, resume the remaining work with the matching model connection.
+- **Keep several articles open.** Let one tab translate while you read another. Each tab keeps its own progress and failure details. In the source build, copy a completed translation or export a translated Markdown file for your notes.
 
-Save your documents and quit Bipara before updating. For a source install, run `script/build_dmg.sh --install` with the development prerequisites below. For a DMG built with the checked installer, double-click Bipara on the mounted image and choose **Install**. Eject the image and open `/Applications/Bipara.app`. Both routes check the version and use the same destination. About Bipara shows the source revision and identifies local edits.
+We can add more language pairs as people need them, using the same translate-and-read workflow. To suggest a pair, tell us which languages you read and what you would like to translate. [Request a language pair](https://github.com/willaaaaaaaaa/bipara/issues/new?template=feature_request.md)
 
-For older drag-and-drop DMGs, follow the [legacy package instructions](docs/releasing.md#install-and-publish). Source-readiness requires public-content, history and identity review, plus offline regression checks; their current results and blockers are in [validation status](docs/validation.md).
+## Install
 
-Every public installer must have a protected version tag and an arm64 DMG validated for installation and upgrade on the maintainer's local Mac against its exact checksum. The release notes identify the tested macOS version; this does not establish clean-machine or cross-version qualification. The initial distribution uses ad-hoc signing without Apple notarization or a verified Developer ID. macOS may require a per-app Open Anyway exception; see [installation and trust](docs/releasing.md#install-and-publish). Find available installers, checksums and test coverage in [GitHub Releases](https://github.com/willaaaaaaaaa/bipara/releases).
+[Download Bipara for macOS](https://github.com/willaaaaaaaaa/bipara/releases/latest). Choose the DMG for your Mac in the release assets.
 
-Open Settings, add a model configuration with its exact model, API Base URL and key, and choose an Active Model. Paste text or open a UTF-8 .txt file, then translate. Switch reading layouts without retranslating. Save editable work as .bipara or explicitly export/copy text. Read [Privacy](PRIVACY.md) before sending documents.
+Current source targets macOS 14.0 or later on Apple silicon and Intel Macs. The published v0.1.3 installers have the following requirements.
 
-Bipara targets macOS 26 and 27 on Apple Silicon, plus macOS 26 on compatible Intel Macs, with a minimum deployment version of macOS 26.0. Acceptance is limited to the maintainer's local macOS version; other target versions are not maintainer-tested, and users must verify compatibility on their own devices. Intel uses a separate installer and receives no maintainer runtime acceptance. See the validation status and each release's notes for actual tested environments and installation evidence. VoiceOver, keyboard-only workflows, Increase Contrast and Reduce Motion still require complete native acceptance.
+| Mac | v0.1.3 compatibility target | v0.1.3 package |
+| --- | --- | --- |
+| Apple Silicon | macOS 26 or 27 | `arm64.dmg`. Installation and upgrade tested on macOS 27.0.1. |
+| Intel | Macs that support macOS 26 | `x86_64.dmg`. Built for Intel. Runtime testing on Intel is still pending. |
 
-## Develop
+For a first install of **v0.1.3**, open the DMG, drag Bipara into Applications, eject the image, and launch the app. End users do not need Python. The release uses ad-hoc signing and has not been notarized by Apple. The release page includes checksums. See [installation and trust](docs/releasing.md#install-and-publish) for upgrades, Gatekeeper and newer installers.
 
-Requirements: full Xcode, Python 3.12+ for tooling and uv. The worker uses the frozen CPython 3.13 environment. Native package/UI tests require a macOS window session. No provider key is needed for default checks.
+## Your first translation
+
+1. Open **Settings → Models → Add** and enter your connection details. On a fresh source build the list starts empty, so the first model you add becomes active. If the list already contains entries, choose yours under **Active Model**, then save Settings.
+2. Click **+**, paste an article, and choose **Translate**. You can also open a UTF-8 `.txt` file. The source build also opens `.md` files and recognizes pasted Markdown.
+3. Read the two columns together, or switch to alternating paragraphs. Changing layouts keeps your place and uses the translation you already have. Save a `.bipara` document to reopen both texts and the completed work later.
+
+Bipara stores your API key in macOS Keychain. Translation sends text and nearby context to the endpoint you configure, which may charge for requests. Saved documents stay on your Mac. [Privacy](PRIVACY.md)
+
+## Run from source
+
+Use a compatible Mac with full Xcode 26.6 or later, Python 3.12+ for tooling and [uv](https://docs.astral.sh/uv/). The first build downloads the pinned Swift and Python dependencies and bundles the Python 3.13 worker.
 
 ```sh
-script/setup.sh
-uv sync --project Worker --frozen --group dev
-script/check.sh
 script/build_and_run.sh
-script/build_dmg.sh --development
 ```
 
-Local setup installs Git hooks and pinned check tools for this checkout. Select a public Git author identity before committing. See [Contributing](CONTRIBUTING.md) for setup details and [repository boundaries](docs/repository-boundaries.md) for handling development artifacts and credentials.
+To contribute, start with [local setup and checks](CONTRIBUTING.md#local-setup-and-checks). For a requested offline acceptance run, use `script/check.sh`. For a local development DMG, use `script/build_dmg.sh --development`. [Test instructions](Tests/README.md) · [Architecture](docs/architecture.md) · [Validation status](docs/validation.md)
 
-The check script runs public-content/tooling checks, worker packaging, Swift and Python offline suites, then a native build. Native UI, real-model and actual distribution checks are separate. See [Tests/README.md](Tests/README.md). Formal tag builds use [the release procedure](docs/releasing.md), including the installation gate before a draft becomes public.
-
-## Project documentation
-
-| Document | Purpose |
-| --- | --- |
-| [Requirements](docs/requirements.md) | Product behavior and acceptance boundaries |
-| [Architecture](docs/architecture.md) | Module/runtime ownership and detailed contracts |
-| [Design principles](docs/design-principles.md) | Simplicity, native presentation and trade-offs |
-| [Development plan](docs/development-plan.md) | Contract read order and delivery gates |
-| [Open-source readiness](docs/open-source-preparation.md) | Source publication and installer qualification gates |
-| [Prompts](prompts/README.md) | Canonical assets, schemas and synthetic evaluation corpus |
-| [Contributing](CONTRIBUTING.md) | Contribution and review workflow |
-| [Support](SUPPORT.md) | Bug reports, feature requests and usage questions |
-| [Security](SECURITY.md) | Private vulnerability reporting and support boundary |
-
-The [icon provenance](docs/design/icons/README.md) records the current artwork's source. Build output stays ignored; use script/clean.sh --dry-run before cleaning.
+Bipara is experimental. Real-provider translation quality and complete accessibility coverage are still being evaluated. For help or bug reports, see [Support](SUPPORT.md). For private reports, see [Security](SECURITY.md).
 
 ## License
 
-[MIT](LICENSE) for project-owned work. Preserve dependency and asset attribution. [Worker notices](Worker/THIRD_PARTY_NOTICES.md) describe license collection. Complete licensing for external dylibs and legal compatibility remain unverified. See [validation status](docs/validation.md).
+Bipara is [MIT licensed](LICENSE). Bundled dependencies retain their [third-party notices](Worker/THIRD_PARTY_NOTICES.md).

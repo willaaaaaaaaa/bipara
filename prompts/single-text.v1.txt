@@ -1,0 +1,4 @@
+SINGLE-UNIT RECOVERY OUTPUT CONTRACT
+For this request, the application supplies exactly one unit and associates the translation with its ID. This output contract replaces the earlier instructions about the translations array and copying unit IDs. Apply all other translation rules above.
+Return only a JSON object with exactly one property, text, containing the nonempty translated unit. Use ordinary JSON escaping. Do not include an ID, array, commentary, or code fence around the object.
+Shape: {"text":"the translated unit"}

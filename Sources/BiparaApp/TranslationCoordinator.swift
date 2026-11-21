@@ -6,7 +6,80 @@ import Foundation
 @MainActor
 public final class TranslationCoordinator: ObservableObject {
     private let gateway: any ModelGateway
-    private var active: [UUID: (UUID, Task<Void, Error>)] = [:]
+    private struct AttemptOwner: Equatable {
+        let session: UUID
+        let documentID: UUID
+        let sourceRevision: Int
+        let jobID: UUID?
+        let attempt: Int
+
+        init(_ tab: TabState) {
+            session = tab.sessionID
+            documentID = tab.document.documentID
+            sourceRevision = tab.document.sourceRevision
+            jobID = (tab.job.snapshot ?? tab.document.jobSnapshot)?.jobID
+            attempt = tab.job.attemptGeneration
+        }
+
+        @MainActor func index(in workspace: WorkspaceStore) -> Int? {
+            guard let index = workspace.index(of: session), AttemptOwner(workspace.tabs[index]) == self else { return nil }
+            return index
+        }
+    }
+
+    @MainActor private final class Attempt {
+        let requested: AttemptOwner
+        let requiredContentGeneration: Int?
+        let jobID: UUID
+        var running: AttemptOwner?
+        var waitingRetries = 0
+        private var deferredFailures: [CheckedContinuation<Void, Never>] = []
+
+        init(tab: TabState, jobID: UUID) {
+            requested = AttemptOwner(tab)
+            requiredContentGeneration = tab.job.state == .failed && requested.jobID != nil ? nil : tab.contentGeneration
+            self.jobID = jobID
+        }
+
+        func index(in workspace: WorkspaceStore) -> Int? {
+            if let running { return running.index(in: workspace) }
+            guard let index = requested.index(in: workspace),
+                  requiredContentGeneration == nil || workspace.tabs[index].contentGeneration == requiredContentGeneration else { return nil }
+            return index
+        }
+
+        func result(of task: Task<Void, Error>) async throws {
+            do {
+                try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            } catch let failure as Failure {
+                if waitingRetries > 0 {
+                    await withCheckedContinuation { deferredFailures.append($0) }
+                }
+                throw failure
+            }
+        }
+
+        func finishedWaitingForRetry() {
+            waitingRetries -= 1
+            if waitingRetries == 0 {
+                for continuation in deferredFailures { continuation.resume() }
+                deferredFailures.removeAll()
+            }
+        }
+
+        func canShare(with other: Attempt) -> Bool {
+            guard jobID == other.jobID else { return false }
+            return running == other.requested
+                || (requested == other.requested && requiredContentGeneration == other.requiredContentGeneration)
+        }
+    }
+
+    struct Failure: Error {
+        let underlying: any Error
+        let isCurrent: @MainActor @Sendable () -> Bool
+    }
+
+    private var active: [UUID: (attempt: Attempt, task: Task<Void, Error>)] = [:]
     private(set) var waitingCallerCount = 0
 
     public init(gateway: any ModelGateway) { self.gateway = gateway }
@@ -25,35 +98,69 @@ public final class TranslationCoordinator: ObservableObject {
         credential: @escaping CredentialResolver
     ) async throws {
         guard workspace.tabs.indices.contains(tabIndex) else { return }
-        let session = workspace.tabs[tabIndex].sessionID
+        do {
+            try await translate(tab: workspace.tabs[tabIndex], workspace: workspace, snapshot: snapshot, binding: binding, credential: credential)
+        } catch let failure as Failure {
+            if failure.isCurrent() { throw failure.underlying }
+        }
+    }
+
+    func translate(
+        tab: TabState,
+        workspace: WorkspaceStore,
+        snapshot: JobSnapshot,
+        binding: RuntimeModelBinding,
+        credential: @escaping CredentialResolver
+    ) async throws {
+        let attempt = Attempt(tab: tab, jobID: snapshot.jobID)
+        guard snapshot.sourceRevision == attempt.requested.sourceRevision,
+              attempt.requested.jobID == nil || attempt.requested.jobID == snapshot.jobID else { return }
+        let session = tab.sessionID
+        try Task.checkCancellation()
         while let previous = active[session] {
-            waitingCallerCount += 1
-            if !previous.1.isCancelled {
+            let retryingFailure = tab.job.state == .failed && previous.attempt.running == attempt.requested
+            if !previous.task.isCancelled && !retryingFailure {
+                guard previous.attempt.index(in: workspace) != nil, previous.attempt.canShare(with: attempt) else { return }
+                waitingCallerCount += 1
                 defer { waitingCallerCount -= 1 }
-                return try await withTaskCancellationHandler { try await previous.1.value } onCancel: { previous.1.cancel() }
+                return try await previous.attempt.result(of: previous.task)
             }
-            _ = try? await previous.1.value
+            waitingCallerCount += 1
+            if retryingFailure { previous.attempt.waitingRetries += 1 }
+            _ = try? await previous.task.value
+            if retryingFailure { previous.attempt.finishedWaitingForRetry() }
             waitingCallerCount -= 1
-            if active[session]?.0 == previous.0 { active[session] = nil }
+            if active[session]?.attempt === previous.attempt { active[session] = nil }
             try Task.checkCancellation()
         }
         try Task.checkCancellation()
-        guard workspace.index(of: session) != nil else { return }
-        let token = UUID()
-        let task = Task { try await self.run(session: session, workspace: workspace, snapshot: snapshot, binding: binding, credential: credential) }
-        active[session] = (token, task)
-        defer { if active[session]?.0 == token { active[session] = nil } }
-        try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard attempt.index(in: workspace) != nil else { return }
+        let task = Task {
+            do {
+                try await self.run(attempt: attempt, workspace: workspace, snapshot: snapshot, binding: binding, credential: credential)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                throw Failure(underlying: error) {
+                    if let active = self.active[session], active.attempt !== attempt { return false }
+                    return attempt.index(in: workspace) != nil
+                }
+            }
+        }
+        active[session] = (attempt, task)
+        defer { if active[session]?.attempt === attempt { active[session] = nil } }
+        try await attempt.result(of: task)
     }
 
     private func run(
-        session: UUID,
+        attempt: Attempt,
         workspace: WorkspaceStore,
         snapshot: JobSnapshot,
         binding: RuntimeModelBinding,
         credential: CredentialResolver
     ) async throws {
-        guard let index = workspace.index(of: session) else { return }
+        try Task.checkCancellation()
+        guard let index = attempt.index(in: workspace) else { return }
         let tab = workspace.tabs[index]
         guard !tab.document.source.isEmpty, !tab.document.source.isWhitespaceOnly else { throw CoordinatorError.emptyInput }
         // Preflight prompt availability per operation: a retained snapshot
@@ -61,10 +168,7 @@ public final class TranslationCoordinator: ObservableObject {
         // other operation's field, cannot dispatch. Its translations stay
         // readable and exportable; the app offers an explicit Retranslate
         // (D4, N6).
-        guard tab.document.canUseMarkdownPlan,
-              WorkerContract.translationPromptVersions.contains(snapshot.translationPromptVersion),
-              (tab.document.isMarkdown ? snapshot.translationPromptVersion == tab.document.translationPromptVersion
-                  : !WorkerContract.markdownTranslationPromptVersions.contains(snapshot.translationPromptVersion)),
+        guard tab.document.supportsTranslationPrompt(snapshot.translationPromptVersion),
               WorkerContract.alignmentPromptVersions.contains(snapshot.alignmentPromptVersion) else {
             throw CoordinatorError.retiredPromptVersion
         }
@@ -76,7 +180,7 @@ public final class TranslationCoordinator: ObservableObject {
         case nil, .auto: direction = try Self.resolveDirection(original.requestedDirection, source: original.markdownPlan?.prose ?? original.source)
         }
         let resolved = JobSnapshot(
-            jobID: snapshot.jobID, sourceRevision: original.sourceRevision,
+            jobID: snapshot.jobID, sourceRevision: snapshot.sourceRevision,
             sourceLanguage: direction.0, targetLanguage: direction.1,
             provider: snapshot.provider, model: snapshot.model, profile: snapshot.profile,
             effort: snapshot.effort,
@@ -89,7 +193,6 @@ public final class TranslationCoordinator: ObservableObject {
         let plan = SourcePlan(source: original.source, paragraphs: original.paragraphs, units: units, markdownPlan: original.markdownPlan)
         let initialBatches = try SourcePlanner.formBatches(plan)
         guard !initialBatches.isEmpty else { return }
-        let originalBatchCount = initialBatches.count
         workspace.withTab(index) { tab in
             if tab.job.snapshot != nil || tab.job.state != .idle {
                 tab.job.snapshot = resolved
@@ -103,8 +206,8 @@ public final class TranslationCoordinator: ObservableObject {
                 _ = tab.job.apply(.translate(snapshot: resolved, batches: Array(initialBatches.indices), totalNonblankUnits: original.units.count))
             }
         }
-        guard let initialIndex = workspace.index(of: session) else { return }
-        let attempt = workspace.tabs[initialIndex].job.attemptGeneration
+        let owner = AttemptOwner(workspace.tabs[index])
+        attempt.running = owner
         let byID = Dictionary(uniqueKeysWithValues: units.map { ($0.id, $0) })
         // One child task per in-flight batch; nil `gatewayError` marks a
         // cancellation. Everything mutating shared state happens on this
@@ -119,8 +222,16 @@ public final class TranslationCoordinator: ObservableObject {
         @MainActor final class BatchSchedule {
             var batches: [TranslationBatch]
             var firstFailure: (any Error)?
+            let originalCount: Int
 
-            init(batches: [TranslationBatch]) { self.batches = batches }
+            init(batches: [TranslationBatch]) {
+                self.batches = batches
+                originalCount = batches.count
+            }
+
+            func usesSingleText(_ batchID: Int) -> Bool {
+                batchID >= originalCount && batches[batchID].unitIDs.count == 1
+            }
         }
 
         let schedule = BatchSchedule(batches: initialBatches)
@@ -133,7 +244,7 @@ public final class TranslationCoordinator: ObservableObject {
 
             @MainActor func canStartMore() -> Bool {
                 guard inFlight < maxInFlight, schedule.firstFailure == nil, !cancelledByUser, !abandoned,
-                      let i = currentIndex(session, original: original, attempt: attempt, workspace: workspace) else { return false }
+                      let i = owner.index(in: workspace) else { return false }
                 return !workspace.tabs[i].job.queuedBatchIDs.isEmpty
             }
 
@@ -142,33 +253,44 @@ public final class TranslationCoordinator: ObservableObject {
             // outcomes can no longer commit.
             @MainActor func markCancelled() {
                 cancelledByUser = true
-                if let i = currentIndex(session, original: original, attempt: attempt, workspace: workspace) {
+                if let i = owner.index(in: workspace) {
                     workspace.withTab(i) { _ = $0.job.apply(.cancel) }
                 }
             }
 
             @MainActor func failBatch(_ batchID: Int, _ error: Error) {
-                if let i = currentIndex(session, original: original, attempt: attempt, workspace: workspace) {
+                if let i = owner.index(in: workspace) {
                     workspace.withTab(i) { _ = $0.job.apply(.batchFailed(batchID: batchID)) }
                 }
                 if schedule.firstFailure == nil { schedule.firstFailure = error }
             }
 
-            @MainActor func splitFailedBatch(_ batchID: Int, _ error: GatewayError) -> Bool {
-                guard error.code == .invalidOutput, error.validationFailure == .unitMismatch,
-                      batchID < originalBatchCount, schedule.firstFailure == nil, !Task.isCancelled,
-                      let i = currentIndex(session, original: original, attempt: attempt, workspace: workspace),
+            @MainActor func handleUnitFailure(_ batchID: Int, _ error: GatewayError) -> Bool {
+                let batch = schedule.batches[batchID]
+                let singleTextRecovery = schedule.usesSingleText(batchID)
+                guard error.code == .invalidOutput, error.validationFailure == .unitMismatch || singleTextRecovery,
+                      schedule.firstFailure == nil, !Task.isCancelled,
+                      let i = owner.index(in: workspace),
                       workspace.tabs[i].job.activeBatchIDs.contains(batchID) else { return false }
-                let failedUnits = schedule.batches[batchID].unitIDs.compactMap { byID[$0] }
-                guard failedUnits.count > 1 else { return false }
-                let midpoint = failedUnits.count / 2
-                let replacements = try? [failedUnits[..<midpoint], failedUnits[midpoint...]].flatMap { half in
-                    try SourcePlanner.formBatches(SourcePlan(source: plan.source, paragraphs: plan.paragraphs, units: Array(half), markdownPlan: plan.markdownPlan))
+                let nextID = schedule.batches.count
+                let remaining = WorkerContract.maxUnitRecoveryRequests - (nextID - schedule.originalCount)
+                if !singleTextRecovery && batch.unitIDs.count == 1 && remaining >= 1 {
+                    schedule.batches.append(batch)
+                } else if batch.unitIDs.count > 1 && remaining >= 2 {
+                    let failedUnits = batch.unitIDs.compactMap { byID[$0] }
+                    let midpoint = failedUnits.count / 2
+                    do {
+                        let replacements = try [failedUnits[..<midpoint], failedUnits[midpoint...]].flatMap { half in
+                            try SourcePlanner.formBatches(SourcePlan(source: plan.source, paragraphs: plan.paragraphs, units: Array(half), markdownPlan: plan.markdownPlan))
+                        }
+                        if replacements.count <= remaining { schedule.batches.append(contentsOf: replacements) }
+                    } catch {
+                        failBatch(batchID, error)
+                        return true
+                    }
                 }
-                guard let replacements, replacements.count == 2 else { return false }
-                let replacementIDs = [schedule.batches.count, schedule.batches.count + 1]
-                schedule.batches.append(contentsOf: replacements)
-                workspace.withTab(i) { _ = $0.job.apply(.batchSplit(batchID: batchID, replacementIDs: replacementIDs)) }
+                let replacements = Array(nextID..<schedule.batches.count)
+                workspace.withTab(i) { _ = $0.job.apply(.batchNeedsRecovery(batchID: batchID, replacementIDs: replacements)) }
                 return true
             }
 
@@ -176,7 +298,7 @@ public final class TranslationCoordinator: ObservableObject {
             // window. A lost ownership/state guard stops further starts
             // without failing the job; remaining children still drain.
             @MainActor func startNext(group: inout TaskGroup<BatchOutcome>, replayBatchID: Int? = nil) {
-                guard let i = currentIndex(session, original: original, attempt: attempt, workspace: workspace),
+                guard let i = owner.index(in: workspace),
                       [.queued, .running].contains(workspace.tabs[i].job.state),
                       let batchID = replayBatchID ?? workspace.tabs[i].job.queuedBatchIDs.first else {
                     abandoned = true
@@ -186,7 +308,7 @@ public final class TranslationCoordinator: ObservableObject {
                 workspace.withTab(i) { tab in
                     if !tab.job.activeBatchIDs.contains(batchID) { _ = tab.job.apply(.batchDispatched(batchID: batchID)) }
                 }
-                guard let i = currentIndex(session, original: original, attempt: attempt, workspace: workspace),
+                guard let i = owner.index(in: workspace),
                       workspace.tabs[i].job.activeBatchIDs.contains(batchID) else {
                     abandoned = true
                     return
@@ -202,8 +324,9 @@ public final class TranslationCoordinator: ObservableObject {
                 var request = TranslateBatchRequest(
                     sourceLanguage: resolved.sourceLanguage, targetLanguage: resolved.targetLanguage,
                     contextBefore: batch.contextBefore, contextAfter: batch.contextAfter,
-                    units: requestUnits, ownerSessionID: session, promptVersion: resolved.translationPromptVersion
+                    units: requestUnits, ownerSessionID: owner.session, promptVersion: resolved.translationPromptVersion
                 )
+                request.singleTextRecovery = schedule.usesSingleText(batchID)
                 if replayBatchID != nil {
                     request.rateLimitReplayDeadline = ContinuousClock.now + WorkerContract.glmAutomaticWaitBudget
                 }
@@ -242,7 +365,7 @@ public final class TranslationCoordinator: ObservableObject {
                         try Task.checkCancellation()
                         try await commitBatch(
                             result, batchID: batchID, requestedUnitIDs: unitIDs,
-                            session: session, original: original, attempt: attempt,
+                            owner: owner, original: original,
                             workspace: workspace, resolved: resolved
                         )
                     } catch is CancellationError {
@@ -251,20 +374,25 @@ public final class TranslationCoordinator: ObservableObject {
                         failBatch(batchID, error)
                     }
                 case let .failure(batchID, gatewayError):
+                    if Task.isCancelled { markCancelled(); return }
+                    guard owner.index(in: workspace) != nil else {
+                        abandoned = true
+                        return
+                    }
                     if let gatewayError {
                         if schedule.firstFailure == nil, !cancelledByUser, !abandoned, !Task.isCancelled,
                            let delay = gatewayError.glmCooldown(provider: resolved.provider),
                            delay <= WorkerContract.glmAutomaticWaitBudget,
                            replayedBatches.insert(batchID).inserted {
                             startNext(group: &group, replayBatchID: batchID)
-                        } else if replayedBatches.contains(batchID) || !splitFailedBatch(batchID, gatewayError) {
+                        } else if !handleUnitFailure(batchID, gatewayError) {
                             failBatch(batchID, gatewayError)
                         }
                     } else if schedule.firstFailure == nil && !cancelledByUser {
                         // A cancellation with no earlier failure is the
                         // user cancelling the attempt.
                         markCancelled()
-                    } else if let i = currentIndex(session, original: original, attempt: attempt, workspace: workspace) {
+                    } else if let i = owner.index(in: workspace) {
                         // A sibling aborted after a failure or user cancel:
                         // clear its reducer slot (a no-op once the attempt
                         // was cancelled or the job already failed).
@@ -287,11 +415,13 @@ public final class TranslationCoordinator: ObservableObject {
             }
         }
         if cancelledByUser { throw CancellationError() }
-        if schedule.firstFailure is MarkdownPlan.ValidationFailure,
-           currentIndex(session, original: original, attempt: attempt, workspace: workspace) == nil {
-            return
-        }
+        guard let index = owner.index(in: workspace) else { return }
         if let firstFailure = schedule.firstFailure { throw firstFailure }
+        if workspace.tabs[index].job.state == .failed {
+            let completed = workspace.tabs[index].job.completedUnitIDs
+            let missing = IndexSet(original.units.enumerated().compactMap { completed.contains($0.element.id) ? nil : $0.offset + 1 })
+            throw CoordinatorError.incompleteUnits(missing)
+        }
     }
 
     /// Validates a batch result against its request and commits it
@@ -300,13 +430,12 @@ public final class TranslationCoordinator: ObservableObject {
         _ result: TranslateBatchResult,
         batchID: Int,
         requestedUnitIDs: [UUID],
-        session: UUID,
+        owner: AttemptOwner,
         original: BiparaDocument,
-        attempt: Int,
         workspace: WorkspaceStore,
         resolved: JobSnapshot
     ) async throws {
-        guard let i = currentIndex(session, original: original, attempt: attempt, workspace: workspace) else { return }
+        guard let i = owner.index(in: workspace) else { return }
         guard result.translations.map(\.unitID) == requestedUnitIDs,
               result.meta.provider == resolved.provider, result.meta.requestedModel == resolved.model,
               result.meta.requestedEffort == resolved.effort,
@@ -327,7 +456,7 @@ public final class TranslationCoordinator: ObservableObject {
             return try DocumentCodec.encode(snapshotToValidate).count
         }.value
         guard encodedSize <= WorkerContract.documentFileByteLimit else { throw CoordinatorError.documentTooLarge }
-        guard let i = currentIndex(session, original: original, attempt: attempt, workspace: workspace) else { return }
+        guard let i = owner.index(in: workspace) else { return }
         workspace.withTab(i) { tab in
             tab.document.translations = candidate.translations
             tab.document.jobSnapshot = candidate.jobSnapshot
@@ -337,16 +466,9 @@ public final class TranslationCoordinator: ObservableObject {
         }
     }
 
-    private func currentIndex(_ session: UUID, original: BiparaDocument, attempt: Int, workspace: WorkspaceStore) -> Int? {
-        guard let i = workspace.index(of: session), workspace.tabs[i].document.documentID == original.documentID,
-              workspace.tabs[i].document.sourceRevision == original.sourceRevision,
-              workspace.tabs[i].job.attemptGeneration == attempt else { return nil }
-        return i
-    }
-
     public func cancel(tabIndex: Int, workspace: WorkspaceStore) {
         guard workspace.tabs.indices.contains(tabIndex) else { return }
-        active[workspace.tabs[tabIndex].sessionID]?.1.cancel()
+        active[workspace.tabs[tabIndex].sessionID]?.task.cancel()
         workspace.withTab(tabIndex) { _ = $0.job.apply(.cancel) }
     }
 
@@ -373,5 +495,8 @@ public final class TranslationCoordinator: ObservableObject {
         throw CoordinatorError.manualDirectionRequired
     }
 
-    public enum CoordinatorError: Error { case emptyInput, manualDirectionRequired, invalidBatch, documentTooLarge, retiredPromptVersion }
+    public enum CoordinatorError: Error, Equatable {
+        case emptyInput, manualDirectionRequired, invalidBatch, documentTooLarge, retiredPromptVersion
+        case incompleteUnits(IndexSet)
+    }
 }

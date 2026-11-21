@@ -42,7 +42,7 @@ enum MarkdownMetadata {
                 let gap = TextRange(location: range.location + cursor, length: valueRange.location - cursor)
                 blocks.append(.init(kind: .literal, range: gap, literal: ns.substring(with: NSRange(location: cursor, length: gap.length))))
             }
-            blocks.append(.init(kind: .literal, range: edit, edit: edit, payload: value, metadataScalar: true))
+            blocks.append(.init(kind: .literal, range: edit, edit: edit, payload: value, metadataKey: ns.substring(with: match.range(at: 1))))
             cursor = valueRange.location + length
         }
         if cursor < ns.length {

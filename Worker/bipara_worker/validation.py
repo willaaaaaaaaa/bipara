@@ -1,8 +1,8 @@
 """Strict validation of raw model output before it becomes a result frame.
 
 The output schemas in ``prompts/`` describe shape only; this module adds
-the rules from the model workflow contract: exact ID coverage and
-order, nonempty trimmed strings with prompt-specific line rules, UTF-8 budgets, legal
+the rules from the model workflow contract: exact ID coverage, request-order
+results, nonempty trimmed strings with prompt-specific line rules, UTF-8 budgets, legal
 status/match combinations, and literal quote resolution against the actual
 counterpart text.
 """
@@ -18,6 +18,7 @@ from .protocol import (
     MAX_MATCHES,
     MAX_TRANSLATION_BYTES,
     has_markdown_line_shape,
+    is_canonical_uuid,
 )
 
 
@@ -50,26 +51,43 @@ def _checked_text(value: Any, source_line_feeds: int | None) -> str:
 
 
 def validate_translation_output(
-    raw: Any, requested_unit_ids: Sequence[str], *, source_line_feeds: Sequence[int] | None = None
+    raw: Any, requested_unit_ids: Sequence[str], *, source_line_feeds: Sequence[int] | None = None,
+    single_text: bool = False,
 ) -> dict[str, Any]:
     """Validate output shape and budgets. Markdown supplies per-unit LF bounds."""
 
-    if not isinstance(raw, dict) or set(raw.keys()) != {"translations"}:
-        _fail(ValidationFailure.TRANSLATION_SHAPE)
-    items = raw["translations"]
-    if not isinstance(items, list) or len(items) != len(requested_unit_ids):
-        _fail(ValidationFailure.UNIT_MISMATCH)
+    if single_text:
+        if not isinstance(raw, dict) or set(raw) != {"text"} or len(requested_unit_ids) != 1:
+            _fail(ValidationFailure.TRANSLATION_SHAPE)
+        texts = {requested_unit_ids[0]: raw["text"]}
+    else:
+        if not isinstance(raw, dict) or set(raw) != {"translations"}:
+            _fail(ValidationFailure.TRANSLATION_SHAPE)
+        items = raw["translations"]
+        if not isinstance(items, list) or len(items) != len(requested_unit_ids):
+            _fail(ValidationFailure.UNIT_MISMATCH)
+        expected_ids = set(requested_unit_ids)
+        texts = {}
+        for item in items:
+            if not isinstance(item, dict) or "text" not in item or item.keys() - {"unit_id", "text"}:
+                _fail(ValidationFailure.TRANSLATION_SHAPE)
+            unit_id = item.get("unit_id")
+            if not isinstance(unit_id, str):
+                _fail(ValidationFailure.UNIT_MISMATCH)
+            if unit_id not in expected_ids and len(unit_id) == 36 and unit_id.isascii():
+                folded = unit_id.lower()
+                if is_canonical_uuid(folded):
+                    unit_id = folded
+            if unit_id not in expected_ids or unit_id in texts:
+                _fail(ValidationFailure.UNIT_MISMATCH)
+            texts[unit_id] = item["text"]
     if source_line_feeds is not None and len(source_line_feeds) != len(requested_unit_ids):
         _fail(ValidationFailure.UNIT_MISMATCH)
     max_text_bytes = MAX_MARKDOWN_TRANSLATION_BYTES if source_line_feeds is not None else MAX_TRANSLATION_BYTES
     canonical: list[dict[str, str]] = []
-    for index, (item, expected_id) in enumerate(zip(items, requested_unit_ids)):
-        if not isinstance(item, dict) or set(item.keys()) != {"unit_id", "text"}:
-            _fail(ValidationFailure.TRANSLATION_SHAPE)
-        if item["unit_id"] != expected_id:
-            _fail(ValidationFailure.UNIT_MISMATCH)
+    for index, expected_id in enumerate(requested_unit_ids):
         line_feeds = source_line_feeds[index] if source_line_feeds is not None else None
-        text = _checked_text(item["text"], line_feeds)
+        text = _checked_text(texts[expected_id], line_feeds)
         if _output_utf8_len(text) > max_text_bytes:
             _fail(ValidationFailure.OUTPUT_TOO_LARGE)
         canonical.append({"unit_id": expected_id, "text": text})

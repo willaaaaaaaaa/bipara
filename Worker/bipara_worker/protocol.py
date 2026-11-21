@@ -62,14 +62,12 @@ LEGACY_PROFILE_BASE_URL = {
     "glm-json-v1": "https://open.bigmodel.cn/api/paas/v4/",
 }
 LEGACY_PROFILE_EFFORT = {"openai-json-schema-v1": "auto", "glm-json-v1": "off"}
-TRANSLATE_PROMPT_VERSION = "translation.v2"
-MARKDOWN_TRANSLATE_PROMPT_VERSIONS = ("translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3")
-TRANSLATE_PROMPT_VERSIONS = ("translation.v1", TRANSLATE_PROMPT_VERSION, *MARKDOWN_TRANSLATE_PROMPT_VERSIONS)
+TRANSLATE_PROMPT_VERSION = "translation.v3"
+MARKDOWN_TRANSLATE_PROMPT_VERSIONS = ("translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3", "translation.markdown.v4")
+TRANSLATE_PROMPT_VERSIONS = ("translation.v1", "translation.v2", TRANSLATE_PROMPT_VERSION, *MARKDOWN_TRANSLATE_PROMPT_VERSIONS)
 ALIGN_PROMPT_VERSION = "alignment.v1"
-PROMPT_VERSIONS = (*TRANSLATE_PROMPT_VERSIONS, ALIGN_PROMPT_VERSION)
-# Accepted design revision (owner, 2026-11-05): 2 -> 4 so phrase alignment
-# keeps headroom while up to two translation batches per document session
-# run in parallel.
+SINGLE_TEXT_RECOVERY = "single-text.v1"
+PROMPT_VERSIONS = (*TRANSLATE_PROMPT_VERSIONS, ALIGN_PROMPT_VERSION, SINGLE_TEXT_RECOVERY)
 MAX_INFLIGHT = 4
 
 # Canonical effort values from the model configuration design. `minimal` is
@@ -77,9 +75,6 @@ MAX_INFLIGHT = 4
 EFFORTS = ("auto", "off", "on", "minimal", "low", "medium", "high", "xhigh", "max")
 MAX_BASE_URL_BYTES = 2048
 
-# Input bounds from the model workflow contract. Accepted design revision
-# (owner, 2026-11-05): doubled the batch-text and unit bounds so a typical
-# document plans into fewer batches.
 LANGUAGES = ("en", "zh")
 UNIT_KINDS = ("sentence", "fragment")
 MARKDOWN_UNIT_KINDS = ("markdown_inline", "markdown_fragment")
@@ -287,6 +282,7 @@ class Request:
     prompt_version: str
     input: TranslateInput | AlignInput
     secret_headers: dict[str, str] = field(default_factory=dict)
+    recovery: str | None = None
 
 
 def _exact_object(value: Any, keys: frozenset[str], what: str) -> dict[str, Any]:
@@ -516,6 +512,12 @@ def parse_request(env: Any) -> Request:
             parsed_input = _parse_translate_input(env.get("input"), prompt_version)
         else:
             parsed_input = _parse_align_input(env.get("input"))
+        recovery = env.get("recovery")
+        if "recovery" in env and (
+            recovery != SINGLE_TEXT_RECOVERY or not isinstance(parsed_input, TranslateInput)
+            or len(parsed_input.units) != 1
+        ):
+            raise RequestError("recovery requires single-text.v1 and exactly one translation unit")
     except RequestError:
         raise
     except (TypeError, AttributeError) as exc:
@@ -535,6 +537,7 @@ def parse_request(env: Any) -> Request:
         prompt_version=prompt_version,
         input=parsed_input,
         secret_headers=secret_headers,
+        recovery=recovery,
     )
 
 

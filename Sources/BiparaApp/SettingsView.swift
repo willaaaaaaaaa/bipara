@@ -86,8 +86,8 @@ public struct SettingsView: View {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     Text(t(failure.messageKey)).font(.callout).fixedSize(horizontal: false, vertical: true)
                     Spacer()
-                    if failure.kind == .migrationFailed {
-                        Button(t("Try Again")) { store.retryMigration() }
+                    if failure.kind != .corruptOrNewerRecord {
+                        Button(t(failure.kind == .migrationPending ? "Migrate Model Settings" : "Try Again")) { store.retryMigration() }
                             .accessibilityIdentifier("settings.load.retry")
                     }
                 }
@@ -95,10 +95,14 @@ public struct SettingsView: View {
                 .accessibilityIdentifier("settings.load.banner")
             }
             if let notice = store.maintenanceNotice {
-                Text(t(notice)).font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 20).padding(.top, 8)
-                    .accessibilityIdentifier("settings.maintenance.notice")
+                HStack(alignment: .top, spacing: 10) {
+                    Text(t(notice)).font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button(t("Clean Up Legacy Keys")) { store.retryLegacyCleanup() }
+                }
+                .padding(.horizontal, 20).padding(.top, 8)
+                .accessibilityIdentifier("settings.maintenance.notice")
             }
             Form {
                 Section(t("General")) {
@@ -119,7 +123,12 @@ public struct SettingsView: View {
                         Text(t("Light")).tag(AppearanceMode.light)
                         Text(t("Dark")).tag(AppearanceMode.dark)
                     }.accessibilityIdentifier("settings.appearance")
-                    Toggle(t("Don't ask to save on close"), isOn: Binding(
+                    Picker(t("Theme"), selection: binding(\.theme)) {
+                        ForEach(AppTheme.allCases, id: \.self) { theme in
+                            Text(t(theme.title)).tag(theme)
+                        }
+                    }.accessibilityIdentifier("settings.theme")
+                    Toggle(t("Discard unsaved changes when closing documents"), isOn: Binding(
                         get: { store.draft.dontAskToSaveOnClose },
                         set: { value in store.updateDraft { $0.skipDocumentSavePrompt = value } }
                     )).accessibilityIdentifier("settings.close.skipSave")
@@ -134,17 +143,6 @@ public struct SettingsView: View {
                     )) {
                         ForEach(ReadingWidth.allCases, id: \.self) { Text(t($0.rawValue.capitalized)).tag($0) }
                     }.accessibilityIdentifier("settings.reading.width")
-                    Picker(t("Correspondence Color"), selection: Binding(
-                        get: { store.draft.correspondenceColor },
-                        set: { value in store.updateDraft { $0.preferredCorrespondenceColor = value } }
-                    )) {
-                        ForEach(CorrespondenceColor.allCases, id: \.self) { preset in
-                            HStack {
-                                Circle().fill(Color(nsColor: ThemeColors.correspondence(preset))).frame(width: 12, height: 12)
-                                Text(t(preset.rawValue.capitalized))
-                            }.tag(preset)
-                        }
-                    }.accessibilityIdentifier("settings.reading.highlight")
                     Picker(t("Font family"), selection: typography(\.family)) {
                         Text(t("Monospaced")).tag(ReadingTypography.Family.monospaced)
                         Text(t("System")).tag(ReadingTypography.Family.system)
@@ -155,7 +153,7 @@ public struct SettingsView: View {
                         Text(t("Compact")).tag(ReadingTypography.LineHeight.compact)
                         Text(t("Comfortable")).tag(ReadingTypography.LineHeight.comfortable)
                         Text(t("Spacious")).tag(ReadingTypography.LineHeight.spacious)
-                    }
+                    }.accessibilityIdentifier("settings.reading.lineHeight")
                     LabeledContent(t("Reading size")) {
                         Slider(value: typography(\.size), in: 12...28, step: 1)
                             .accessibilityLabel(t("Reading size"))
@@ -165,6 +163,7 @@ public struct SettingsView: View {
                     }
                 }
             }.formStyle(.grouped).padding(.vertical,8)
+            .disabled(store.loadFailure != nil)
             Divider()
             if let error {
                 Text(t(error)).font(.callout).foregroundStyle(.red).frame(maxWidth:.infinity,alignment:.leading)
@@ -211,7 +210,8 @@ public struct SettingsView: View {
                 Text(t(store.draft.modelConfigurations.isEmpty ? "No configurations" : "Choose a model")).tag(UUID?.none)
             }
             ForEach(store.draft.modelConfigurations) { configuration in
-                Text(configuration.resolvedName).tag(UUID?.some(configuration.id))
+                Text(configuration.selectionLabel(in: store.draft.modelConfigurations, effortLabel: configuration.effort.label(t)))
+                    .tag(UUID?.some(configuration.id))
             }
         }.accessibilityIdentifier("settings.model.default")
         if let selection = store.draft.defaultModelConfigurationID, selection != store.record.defaultModelConfigurationID {
@@ -224,11 +224,16 @@ public struct SettingsView: View {
                 ForEach(store.draft.modelConfigurations) { configuration in
                     let selected = selectedConfigurationID == configuration.id
                     let effort = configuration.effort.label(t)
-                    let summary = "\(configuration.vendorName) · \(configuration.modelID) · \(effort)"
+                    let summary = configuration.summary(effortLabel: effort)
+                    let active = store.record.defaultModelConfigurationID == configuration.id
                     Button {
                         selectedConfigurationID = configuration.id
                     } label: {
                         HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            if active {
+                                Image(systemName: "checkmark")
+                                    .accessibilityIdentifier("settings.model.activeIndicator")
+                            }
                             Text(configuration.resolvedName)
                                 .fontWeight(.medium)
                             Spacer(minLength: 0)
@@ -250,7 +255,7 @@ public struct SettingsView: View {
                     .help("\(configuration.resolvedName)\n\(summary)")
                     .accessibilityIdentifier("settings.model.row")
                     .accessibilityLabel(configuration.resolvedName)
-                    .accessibilityValue("\(configuration.vendorName), \(configuration.modelID), \(effort)")
+                    .accessibilityValue(active ? t("Active Model") + ", " + summary : summary)
                     .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }.accessibilityElement(children: .contain).accessibilityIdentifier("settings.models.list")
@@ -365,7 +370,8 @@ private struct DeletionSheet: View {
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Picker(t("Active Model"), selection: $replacement) {
                 ForEach(request.others) { configuration in
-                    Text(configuration.resolvedName).tag(UUID?.some(configuration.id))
+                    Text(configuration.selectionLabel(in: request.others, effortLabel: configuration.effort.label(t)))
+                        .tag(UUID?.some(configuration.id))
                 }
             }
             .pickerStyle(.radioGroup)
@@ -572,8 +578,9 @@ struct ConfigurationSheet: View, Identifiable {
                     TextField(t("Name"), text: $displayName)
                         .accessibilityIdentifier("settings.model.name")
                     Picker(t("Protocol"), selection: $provider) {
-                        Text("OpenAI").tag("openai")
-                        Text("Anthropic").tag("anthropic")
+                        ForEach(ModelAPIProtocol.allCases, id: \.self) { api in
+                            Text(api.displayName).tag(api.rawValue)
+                        }
                     }.accessibilityIdentifier("settings.model.protocol")
                     TextField(t("Model ID"), text: $modelID).accessibilityIdentifier("settings.model.id")
                     effortPicker

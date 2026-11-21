@@ -29,7 +29,73 @@ struct CredentialBindingRegressionTests {
         defaults.set(try! JSONSerialization.data(withJSONObject: legacy), forKey: SettingsStore.legacyDefaultsKey)
     }
 
+    @Test func migrationKeepsReadOnlyPreferencesThroughCredentialFailure() throws {
+        let defaults = freshDefaults()
+        installLegacyV1(defaults)
+        let data = try #require(defaults.data(forKey: SettingsStore.legacyDefaultsKey))
+        var legacy = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        legacy["interfaceLanguage"] = "zh-Hans"
+        legacy["appearance"] = "dark"
+        legacy["preferredTheme"] = "unknown-future-value"
+        defaults.set(try JSONSerialization.data(withJSONObject: legacy), forKey: SettingsStore.legacyDefaultsKey)
+        let keys = FaultCredentials()
+        keys.failLegacyReadProvider = "glm"
+        let store = SettingsStore(defaults: defaults, keychain: keys)
+        let preview = store.record
+        #expect(preview.interfaceLanguage == .simplifiedChinese)
+        #expect(preview.appearance == .dark && preview.theme == .dynamicCapsule)
+        #expect(preview.typography == ReadingTypography(family: .system, size: 17, lineHeight: .comfortable))
+        #expect(preview.modelConfigurations.isEmpty)
+
+        for state in [SettingsLoadFailure.Kind.migrationPending, .migrationFailed] {
+            #expect(store.loadFailure?.kind == state)
+            store.updateDraft { $0.interfaceLanguage = .english }
+            store.setKeyDraft(.set("fixture"), configurationID: UUID())
+            #expect(!store.hasDraftChanges)
+            #expect(store.draft == preview && store.record == preview)
+            store.retryMigration()
+        }
+        keys.failLegacyReadProvider = nil
+        store.retryMigration()
+        #expect(store.loadFailure == nil && store.record.modelConfigurations.count == 2)
+        #expect(store.record.theme == preview.theme && store.record.typography == preview.typography)
+        store.updateDraft { $0.interfaceLanguage = .english }
+        try store.saveDraft()
+        #expect(store.record.interfaceLanguage == .english)
+    }
+
     // MARK: - abort migration on legacy credential read failure
+
+    @Test func readingAndDeclinedMigrationKeepLegacyCredentialsUntilUserRetries() async throws {
+        let defaults = freshDefaults()
+        installLegacyV1(defaults)
+        let keychain = FaultCredentials()
+        keychain.failLegacyReadProvider = "glm"
+        let gateway = ScriptedGateway()
+        let app = AppRuntime(gateway: gateway, keychain: keychain, defaults: defaults)
+        app.alertHandler = { _, _, _ in 1 }
+        #expect(app.settings.loadFailure?.kind == .migrationPending)
+        app.newTab()
+        let session = try #require(app.activeSession)
+        app.workspace.withTab(0) { $0.draftText = "This is an English passage to translate." }
+        #expect(try await app.apply(session))
+        #expect(app.settings.loadFailure?.kind == .migrationPending)
+        #expect(gateway.dispatchCount == 0)
+
+        await app.translate(session)
+        #expect(app.settings.loadFailure?.kind == .migrationFailed)
+        #expect(defaults.data(forKey: SettingsStore.defaultsKey) == nil)
+        #expect(keychain.legacy.count == 2 && keychain.keys.isEmpty)
+        #expect(gateway.dispatchCount == 0)
+
+        keychain.failLegacyReadProvider = nil
+        app.settings.retryMigration()
+        app.alertHandler = { _, _, _ in 0 }
+        await app.translate(session)
+        #expect(app.settings.loadFailure == nil)
+        #expect(app.workspace.tabs[0].job.state == .completed)
+        #expect(gateway.dispatchCount == 1)
+    }
 
     @Test func legacyCredentialReadFailureAbortsMigrationWithoutDestructiveCleanup() throws {
         let defaults = freshDefaults()
@@ -39,6 +105,7 @@ struct CredentialBindingRegressionTests {
         // be compensated, and the uncopied GLM key must not be deleted).
         keychain.failLegacyReadProvider = "glm"
         let store = SettingsStore(defaults: defaults, keychain: keychain)
+        store.retryMigration()
         #expect(store.loadFailure == SettingsLoadFailure(kind: .migrationFailed, messageKey: SettingsStore.messageMigrationFailed))
         // No authoritative v2 was created; v1 stays readable.
         #expect(defaults.data(forKey: SettingsStore.defaultsKey) == nil)
@@ -63,6 +130,7 @@ struct CredentialBindingRegressionTests {
         let keychain = FaultCredentials()
         keychain.failLegacyReadProvider = "glm"
         let store = SettingsStore(defaults: defaults, keychain: keychain)
+        store.retryMigration()
         #expect(store.loadFailure?.kind == .migrationFailed)
         // Unrelated edit → Save must not make the failed migration's empty
         // in-memory record authoritative.
@@ -104,12 +172,13 @@ struct CredentialBindingRegressionTests {
 
     // MARK: - residual legacy cleanup retried across launches
 
-    @Test func residualLegacyCleanupRetriesIndependentlyAcrossLaunches() throws {
+    @Test func residualLegacyCleanupWaitsForExplicitRetryAcrossLaunches() throws {
         let defaults = freshDefaults()
         installLegacyV1(defaults)
         let keychain = FaultCredentials()
         keychain.failLegacyDeleteProvider = "glm"
         let first = SettingsStore(defaults: defaults, keychain: keychain)
+        first.retryMigration()
         // Migration itself succeeded: v2 is authoritative with stable IDs.
         #expect(first.loadFailure == nil)
         #expect(first.maintenanceNotice == SettingsStore.messageCleanupResidue)
@@ -120,11 +189,14 @@ struct CredentialBindingRegressionTests {
         #expect(keychain.legacy["glm"] == "OLD_GLM")
         #expect(defaults.stringArray(forKey: SettingsStore.pendingLegacyCleanupKey) == ["glm"])
 
-        // Relaunch: only the cleanup retries — no migration, no new IDs,
-        // no credential copies, v2 contents unchanged.
+        // Relaunch leaves the old item alone. The explicit retry performs
+        // only cleanup and preserves the committed configurations.
         keychain.failLegacyDeleteProvider = nil
         let second = SettingsStore(defaults: defaults, keychain: keychain)
         #expect(second.loadFailure == nil)
+        #expect(second.maintenanceNotice == SettingsStore.messageCleanupResidue)
+        #expect(keychain.legacy["glm"] == "OLD_GLM")
+        second.retryLegacyCleanup()
         #expect(second.maintenanceNotice == nil)
         #expect(second.record.modelConfigurations.map(\.id) == migratedIDs)
         #expect(second.record.modelConfigurations.map(\.modelID) == first.record.modelConfigurations.map(\.modelID))
@@ -168,7 +240,7 @@ struct CredentialBindingRegressionTests {
         // committed key is preserved.
         let other = freshDefaults()
         let keychain2 = FaultCredentials()
-        let store2 = SettingsStore(defaults: other, keychain: keychain2)
+        let store2 = SettingsStore(defaults: other, keychain: keychain2, record: LegacyModelFixture.record())
         let victim = try #require(store2.record.defaultConfiguration)
         try keychain2.setKey("COMMITTED_KEY", configurationID: victim.id) // write #1
         keychain2.failAt = 2 // the deletion write inside the Save transaction
@@ -187,7 +259,7 @@ struct CredentialBindingRegressionTests {
         store.removeConfigurationFromDraft(id: added.id, replacement: nil)
         #expect(store.keyDrafts[added.id] == nil) // never committed: no staged deletion
         try store.saveDraft()
-        #expect(store.record.modelConfigurations.count == 2)
+        #expect(store.record.modelConfigurations.isEmpty)
     }
 
     // MARK: - typed keys bound to their canonical endpoint (seam)
@@ -292,116 +364,6 @@ struct CredentialBindingRegressionTests {
 
     // MARK: - explicit binding for analysis of existing translations
 
-    @Test func openedDocumentAnalysisRequiresExplicitBindingWithoutRetranslating() async throws {
-        let gateway = ScriptedGateway()
-        let (app, _, defs) = preparedApp(gateway: gateway)
-        defs.set(true, forKey: "dev.bipara.disclosure.openai|https://api.openai.com")
-        let session = try openedTab(app, source: "The window is open. It rained today.", completed: true)
-        let document = app.workspace.tabs[0].document
-        let selection = ReadingSelection(
-            paragraphID: document.paragraphs[0].id, unitID: document.units[0].id,
-            side: .source, range: .init(location: 0, length: 3))
-        app.selected(selection, session: session)
-        // After the debounce the app offers an explicit analysis binding;
-        // no model call happens before that confirmation.
-        try await appWaitUntil { app.bindingRequest != nil }
-        let request = try #require(app.bindingRequest)
-        #expect(request.purpose == .analysis)
-        #expect(gateway.alignmentDispatchCount == 0)
-        #expect(gateway.dispatchCount == 0)
-        // Cancellation: no call, the fallback stays.
-        app.bindingRequest = nil
-        try await Task.sleep(for: .milliseconds(500))
-        #expect(gateway.alignmentDispatchCount == 0)
-
-        // Confirming the binding runs analysis under the frozen snapshot:
-        // the snapshot's model/profile/effort with the chosen endpoint. A
-        // different selection re-triggers the offer (identical selections
-        // are deduplicated by design).
-        app.selected(ReadingSelection(
-            paragraphID: document.paragraphs[0].id, unitID: document.units[0].id,
-            side: .source, range: .init(location: 4, length: 5)), session: session)
-        try await appWaitUntil { app.bindingRequest != nil }
-        let confirmed = try #require(app.bindingRequest)
-        let match = try #require(confirmed.matches.first)
-        app.bindForAnalysis(confirmed, configurationID: match.id)
-        try await appWaitUntil { gateway.alignmentDispatchCount == 1 }
-        let used = try #require(gateway.alignConfigurations.first)
-        #expect(used.model == "gpt-4.1-mini-2025-04-14") // frozen snapshot model
-        #expect(used.profile == ModelProfileID.openaiV2)
-        #expect(used.effort == .auto)
-        #expect(used.baseURL == match.baseURL)
-        #expect(gateway.dispatchCount == 0) // analysis-only binding never translates
-        #expect(!app.workspace.tabs[0].isDirty) // binding does not dirty content
-    }
-
-    @Test func sameURLModelEditKeepsAnalysisOnFrozenSnapshotWhileEndpointChangesBlockIt() async throws {
-        let gateway = ScriptedGateway()
-        let (app, keys, defs) = preparedApp(gateway: gateway)
-        defs.set(true, forKey: "dev.bipara.disclosure.openai|https://api.openai.com")
-        let session = try openedTab(app, source: "The window is open. It rained today.", completed: true)
-        let defaultID = try #require(app.settings.record.defaultConfiguration?.id)
-        app.workspace.withTab(0) { $0.runtimeBinding = RuntimeModelBinding(configurationID: defaultID, baseURL: WorkerContract.openAIStandardBaseURL, provider: "openai") }
-        let document = app.workspace.tabs[0].document
-        let selection = ReadingSelection(
-            paragraphID: document.paragraphs[0].id, unitID: document.units[0].id,
-            side: .source, range: .init(location: 0, length: 3))
-
-        // A model edit at the same endpoint does not disable analysis; the
-        // job keeps its frozen snapshot values.
-        app.settings.updateDraft {
-            if let i = $0.modelConfigurations.firstIndex(where: { $0.id == defaultID }) {
-                $0.modelConfigurations[i].modelID = "edited-model"
-            }
-        }
-        try app.settings.saveDraft()
-        app.selected(selection, session: session)
-        try await appWaitUntil { gateway.alignmentDispatchCount == 1 }
-        #expect(gateway.alignConfigurations.last?.model == "gpt-4.1-mini-2025-04-14")
-
-        // An endpoint change on the bound configuration blocks later
-        // analysis quietly (local configuration_unavailable, no call).
-        app.settings.updateDraft {
-            if let i = $0.modelConfigurations.firstIndex(where: { $0.id == defaultID }) {
-                $0.modelConfigurations[i].baseURL = "https://gateway.example.com/v1/"
-            }
-        }
-        try app.settings.saveDraft()
-        app.reading[session]?.selectionGeneration += 1 // supersede the cached pending analysis
-        app.selected(ReadingSelection(
-            paragraphID: document.paragraphs[0].id, unitID: document.units[0].id,
-            side: .source, range: .init(location: 4, length: 5)), session: session)
-        try await Task.sleep(for: .milliseconds(500))
-        #expect(gateway.alignmentDispatchCount == 1)
-
-        // Deletion of the bound configuration behaves the same way.
-        app.settings.updateDraft {
-            $0.modelConfigurations.removeAll { $0.id == defaultID }
-            $0.defaultModelConfigurationID = $0.modelConfigurations.first?.id
-        }
-        try app.settings.saveDraft()
-        app.reading[session]?.selectionGeneration += 1
-        app.selected(selection, session: session)
-        try await Task.sleep(for: .milliseconds(500))
-        #expect(gateway.alignmentDispatchCount == 1)
-        _ = keys
-    }
-
-    @Test func unboundPartialDocumentAnalysisOnUntranslatedUnitMakesNoRequest() async throws {
-        let gateway = ScriptedGateway()
-        let (app, _, defs) = preparedApp(gateway: gateway)
-        defs.set(true, forKey: "dev.bipara.disclosure.openai|https://api.openai.com")
-        let session = try openedTab(app, source: "The window is open. It rained today.", completed: false)
-        let document = app.workspace.tabs[0].document
-        let untranslated = try #require(document.units.last)
-        app.selected(ReadingSelection(
-            paragraphID: untranslated.paragraphID, unitID: untranslated.id,
-            side: .source, range: .init(location: 0, length: 3)), session: session)
-        try await Task.sleep(for: .milliseconds(500))
-        #expect(app.bindingRequest == nil) // no analysis offer for untranslated text
-        #expect(gateway.alignmentDispatchCount == 0)
-    }
-
     // MARK: - retired prompt versions block Resume, Retranslate proceeds
 
     @Test func retiredPromptVersionsBlockResumeAndRetranslateUsesCurrentVersions() async throws {
@@ -430,7 +392,7 @@ struct CredentialBindingRegressionTests {
         await app.translate(session, retranslate: true)
         try await appWaitUntil { app.workspace.tabs[0].job.state == .completed }
         #expect(gateway.dispatchCount > 0)
-        #expect(app.workspace.tabs[0].document.jobSnapshot?.translationPromptVersion == "translation.v2")
+        #expect(app.workspace.tabs[0].document.jobSnapshot?.translationPromptVersion == "translation.v3")
         #expect(app.workspace.tabs[0].document.jobSnapshot?.alignmentPromptVersion == "alignment.v1")
     }
 

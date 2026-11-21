@@ -58,6 +58,8 @@ def test_corpus_samples_pass_real_output_validation(case):
     ("T18-code-fences", "t18a", "json"),
     ("T19-descriptive-config-value", "t19", '{"描述": "只读", "enabled": false}'),
     ("T20-markdown-table", "t20b", "| —— | —— |"),
+    ("T21-release-slip", "t21", "两名检验员都签字放行这批货后，才能在单据上盖准予发货印章。"),
+    ("M05-index-and-ordinary-label", "m05", "在索引中查找 **冬日之光**，然后阅读[策展人手记](https://example.org/notes)。"),
 ])
 def test_literal_expectations_detect_known_format_damage(case_id, unit_id, bad_text):
     case = next(case for case in CASES if case["id"] == case_id)

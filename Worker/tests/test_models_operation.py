@@ -61,7 +61,7 @@ def make_operation(monkeypatch, fake: FakeModel):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("prompt_version", ["translation.v1", "translation.v2"])
+@pytest.mark.parametrize("prompt_version", ["translation.v1", "translation.v2", "translation.v3"])
 async def test_translate_operation_executes_real_branch(monkeypatch, prompt_version):
     fake = FakeModel(reply=FakeMessage(
         content=json.dumps(
@@ -107,7 +107,7 @@ async def test_translate_operation_executes_real_branch(monkeypatch, prompt_vers
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("invalid_text", [None, "甲\n乙\n丙"])
-@pytest.mark.parametrize("version", ["translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3"])
+@pytest.mark.parametrize("version", ["translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3", "translation.markdown.v4"])
 async def test_markdown_operation_uses_versioned_prompt_and_source_line_bound(monkeypatch, invalid_text, version):
     envelope = translate_request_markdown()
     envelope["prompt_version"] = version

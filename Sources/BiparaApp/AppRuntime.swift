@@ -18,7 +18,11 @@ public final class AppRuntime: ObservableObject {
     @Published public var editing: Set<UUID> = []
     @Published public var composing: Set<UUID> = []
     @Published public var reading: [UUID: ReadingPresentation] = [:]
-    @Published public var errorMessage: String?
+    @Published public var errorMessage: String? {
+        didSet { translationMessageSession = nil }
+    }
+    private var translationMessageSession: UUID?
+    @Published private var translationFailures: [UUID: TranslationFailure] = [:]
     @Published var markdownFailure: MarkdownFailurePresentation?
     @Published public var closing: Set<UUID> = []
     @Published public var focusedWindowRole: String?
@@ -45,12 +49,25 @@ public final class AppRuntime: ObservableObject {
     private var draftPlanning: [UUID: DraftPlanning] = [:]
     @Published private var detectedFormats: [UUID: (generation: Int, format: ContentFormat)] = [:]
     private var saveTasks: [UUID: (UUID, Task<Bool, Never>)] = [:]
-    private var analysis: [UUID: Task<Void, Never>] = [:]
-    private var cache: [UUID: SelectionCache] = [:]
     private var copyTask: Task<Void, Never>?
+    private var copyID: UUID?
+    @Published private(set) var copyFeedback: CopyFeedback?
+    @Published private(set) var replacing: Set<UUID> = []
+    struct CopyFeedback: Equatable {
+        let session: UUID
+        let succeeded: Bool
+    }
+    let pasteboard: NSPasteboard
+    var writeClipboard: (String) -> Bool
+    var translationForCopy: (BiparaDocument) async throws -> String
     private var disclosures: [String: Task<Bool, Never>] = [:]
     private let defaults: UserDefaults
     private var settingsObservation: AnyCancellable?
+
+    private enum TranslationFailure {
+        case message(String)
+        case markdown(MarkdownFailurePresentation)
+    }
 
     struct MarkdownFailurePresentation: Identifiable {
         let id = UUID()
@@ -60,22 +77,33 @@ public final class AppRuntime: ObservableObject {
 
     /// An explicit session-local binding choice for one document snapshot,
     /// showing the configuration's display name and destination host.
-    /// `.resume` continues translation; `.analysis` only binds phrase
-    /// analysis of existing translations without retranslating.
     public struct BindingRequest: Identifiable, Equatable {
-        public enum Purpose: Equatable { case resume, analysis }
         public let id = UUID()
         public let session: UUID
         public let snapshot: JobSnapshot
         public let matches: [ModelConfigurationRecord]
-        public let purpose: Purpose
     }
 
     public init(gateway: any ModelGateway, keychain: any CredentialStore = KeychainStore(), defaults: UserDefaults = .standard,
-                files: DocumentFileService = DocumentFileService()) {
+                files: DocumentFileService = DocumentFileService(), pasteboard: NSPasteboard = .general) {
+        self.pasteboard = pasteboard
+        writeClipboard = { value in
+            pasteboard.clearContents()
+            return pasteboard.setString(value, forType: .string)
+        }
+        translationForCopy = { document in
+            try await Task.detached { try files.exportTranslation(document, markdown: document.isMarkdown) }.value
+        }
         self.gateway = gateway; self.keychain = keychain; self.defaults = defaults; self.files = files
         workspace = WorkspaceStore(); settings = SettingsStore(defaults: defaults, keychain: keychain)
         coordinator = TranslationCoordinator(gateway: gateway)
+        workspace.activeSessionDidChange = { [weak self] previous in
+            if let previous {
+                self?.captureAnchor(for: previous)
+                self?.dismissTranslationFailure(for: previous)
+            }
+            self?.invalidateCopy()
+        }
         appearance.apply(settings.record.appearance)
         settingsObservation = settings.$record.dropFirst().sink { [weak self] record in
             guard let self else { return }
@@ -114,9 +142,37 @@ public final class AppRuntime: ObservableObject {
         do { let i = try workspace.newTab(); editing.insert(workspace.tabs[i].sessionID) }
         catch { errorMessage = "This text could not be opened." }
     }
-    public func setLayout(_ layout: LayoutMode) {
+    private func captureAnchor(for session: UUID, clearOffset: Bool = false) {
+        guard let i = workspace.index(of: session), var anchor = nativeReader?.visibleAnchor(for: session) else { return }
+        if clearOffset { anchor.offset = nil }
+        if workspace.tabs[i].isTranslationReader { reading[session, default: .init()].readerAnchor = anchor }
+        else { reading[session, default: .init()].anchors[workspace.tabs[i].layout] = anchor }
+    }
+    weak var nativeReader: ParallelReader?
+
+    func editOriginal(_ session: UUID) {
+        if session == activeSession {
+            invalidateCopy()
+            captureAnchor(for: session)
+        }
+        editing.insert(session)
+    }
+
+    public func setLayout(_ layout: LayoutMode) { setReadingView(.paired(layout)) }
+
+    func setReadingView(_ choice: ReadingViewChoice) {
         guard let i = workspace.activeTabIndex else { return }
-        workspace.withTab(i) { $0.layout = layout; $0.document.layout = layout }
+        let tab = workspace.tabs[i], session = tab.sessionID
+        guard choice != tab.readingView, choice != .translationReader || tab.document.canUseMarkdownPlan else { return }
+        let anchor = nativeReader?.visibleAnchor(for: session) ?? (tab.isTranslationReader ? reading[session]?.readerAnchor : reading[session]?.anchors[tab.layout])
+        switch choice {
+        case .paired(let layout):
+            workspace.withTab(i) { $0.layout = layout }
+            if let anchor { reading[session, default: .init()].anchors[layout] = anchor }
+        case .translationReader:
+            if let anchor { reading[session, default: .init()].readerAnchor = anchor }
+            workspace.withTab(i) { $0.readingView = .translationReader }
+        }
     }
 
     private func preparedDraft(_ tab: TabState, direction: Direction) async throws -> WorkspaceStore.PreparedDocument {
@@ -131,7 +187,8 @@ public final class AppRuntime: ObservableObject {
             let preserveSavedAuto = tab.document.requestedFormat == .auto && tab.document.isMarkdown && sameSource
             return try WorkspaceStore.prepareDocument(
                 source: tab.draftText, direction: direction, replacing: tab.document,
-                format: tab.draftFormat, markdownHint: (tab.markdownImportHint && sameSource) || preserveSavedAuto
+                format: tab.draftFormat, markdownHint: (tab.markdownImportHint && sameSource) || preserveSavedAuto,
+                automaticTitle: tab.automaticTitle
             )
         }
         draftPlanning[tab.sessionID] = DraftPlanning(key: key, task: task)
@@ -202,13 +259,8 @@ public final class AppRuntime: ObservableObject {
         guard let index = workspace.index(of: session) else { return }
         let document = workspace.tabs[index].document
         guard document.isMarkdown, document.canUseMarkdownPlan, document.readingMode != mode else { return }
+        if activeSession == session { captureAnchor(for: session, clearOffset: true) }
         workspace.withTab(index) { $0.document.readingMode = mode }
-        analysis.removeValue(forKey: session)?.cancel()
-        reading[session]?.selectionGeneration += 1
-        reading[session]?.selection = nil
-        reading[session]?.hover = nil
-        reading[session]?.phraseRanges = []
-        reading[session]?.analyzing = false
     }
 
     @discardableResult
@@ -251,14 +303,14 @@ public final class AppRuntime: ObservableObject {
         let tab = workspace.tabs[index]
         let session = tab.sessionID
         let replacesRevision = forceReplan || !WorkspaceStore.preservesRevision(tab, proposed: prepared.document)
+        if replacesRevision, activeSession == session { invalidateCopy() }
         if replacesRevision { coordinator.cancel(tabIndex: index, workspace: workspace) }
         try workspace.applyDraft(at: index, prepared: prepared, forceReplan: forceReplan)
         draftPlanning.removeValue(forKey: session)?.task.cancel()
         detectedFormats[session] = nil
         guard replacesRevision else { return }
-        analysis.removeValue(forKey: session)?.cancel()
+        clearTranslationFailure(for: session)
         reading[session] = ReadingPresentation()
-        cache[session] = nil
         workspace.withTab(index) { $0.runtimeBinding = nil }
     }
 
@@ -287,20 +339,28 @@ public final class AppRuntime: ObservableObject {
     }
 
     public func translate(_ session: UUID, retranslate: Bool = false, overrideBinding: RuntimeModelBinding? = nil) async {
+        guard let i = workspace.index(of: session), !composing.contains(session),
+              !workspace.tabs[i].draftText.isEmpty, !workspace.tabs[i].draftText.isWhitespaceOnly else { return }
+        let tab = workspace.tabs[i]
         do {
-            guard let i = workspace.index(of: session), !composing.contains(session),
-                  !workspace.tabs[i].draftText.isEmpty, !workspace.tabs[i].draftText.isWhitespaceOnly else { return }
-            let preferences = settings.record
-            let tab = workspace.tabs[i]
+            var preferences = settings.record
+            let migrationWasPending = settings.loadFailure?.kind == .migrationPending
             let retained = tab.job.snapshot ?? tab.document.jobSnapshot
             let forceReplan = retranslate && tab.document.isMarkdown
                 && tab.document.markdownPlan?.planVersion != MarkdownPlan.version
+            let replacement = retranslate || (!tab.isDraftDirty && tab.job.state == .completed && overrideBinding == nil)
+            guard !replacing.contains(session) else { return }
+            if replacement {
+                replacing.insert(session)
+                if activeSession == session { invalidateCopy() }
+            }
+            var holdsReplacement = replacement
+            defer { if holdsReplacement { replacing.remove(session) } }
             var prepared: WorkspaceStore.PreparedDocument?
             if tab.isDraftDirty || forceReplan {
                 prepared = try await preparedDraft(tab, direction: tab.draftDirection)
             }
             var proposed = prepared?.document ?? tab.document
-            let replacement = retranslate || (!tab.isDraftDirty && tab.job.state == .completed && overrideBinding == nil)
             let fresh = replacement || retained == nil || !WorkspaceStore.preservesRevision(tab, proposed: proposed)
 
             if fresh, proposed.requestedDirection != preferences.translationDirection, !proposed.isMarkdown || !proposed.units.isEmpty {
@@ -336,6 +396,14 @@ public final class AppRuntime: ObservableObject {
                 ? try TranslationCoordinator.resolveDirection(
                     proposed.requestedDirection, source: proposed.markdownPlan?.prose ?? proposed.source)
                 : nil
+            if migrationWasPending {
+                if settings.loadFailure?.kind == .migrationPending { settings.retryMigration() }
+                preferences = settings.record
+            }
+            if let failure = settings.loadFailure, failure.kind == .migrationFailed {
+                await offerSettings(for: session, title: "Saved model settings need attention.", detail: failure.messageKey)
+                return
+            }
             var snapshot: JobSnapshot
             var binding: RuntimeModelBinding?
             if let overrideBinding, let retainedSnapshot = retained, !fresh {
@@ -343,7 +411,7 @@ public final class AppRuntime: ObservableObject {
                 binding = overrideBinding
             } else if let direction {
                 guard let configuration = preferences.defaultConfiguration else {
-                    await offerSettings(title: "Add a model configuration in Settings before translating.",
+                    await offerSettings(for: session, title: "Add a model configuration in Settings before translating.",
                                         detail: "Add a model configuration to translate.")
                     return
                 }
@@ -373,26 +441,25 @@ public final class AppRuntime: ObservableObject {
             // Preflight the frozen binding before any confirmation dialog.
             do { _ = try settings.resolveCredential(frozen) }
             catch SettingsStore.SettingsError.missingCredential {
-                await offerSettings(title: "Add an API key in Settings before translating.",
+                await offerSettings(for: session, title: "Add an API key in Settings before translating.",
                                     detail: "The selected model has no API key yet.")
                 return
             }
             catch SettingsStore.SettingsError.configurationUnavailable {
-                if fresh { errorMessage = "The selected model changed. Choose a model and try again." }
+                if fresh { recordFailure(.message("The selected model changed. Choose a model and try again."), for: session) }
                 else {
-                    await offerSettings(title: "The original model configuration is unavailable.",
+                    await offerSettings(for: session, title: "The original model configuration is unavailable.",
                                         detail: "Restore the original configuration, or use Retranslate to start with the active model.")
                 }
                 return
             }
-            catch { report(error, fallback: "Translation stopped. Check the model settings and retry."); return }
 
             guard await consent(provider: frozen.provider, origin: CanonicalBaseURL.origin(of: frozen.requestOptions?.endpointURL ?? frozen.baseURL)) else { return }
             try Task.checkCancellation()
             if formatReplacement {
                 guard await confirmFormatReplacement(rebuildingPlan: rebuildingPlan) else { return }
             } else if replacement {
-                guard await alert("Replace existing translations?", detail: "Retranslating clears the current translations and correspondence.",
+                guard await alert("Replace existing translations?", detail: "Retranslating replaces the current translations.",
                                   buttons: ["Retranslate", "Cancel"]) == 0 else { return }
             }
             try Task.checkCancellation()
@@ -411,33 +478,52 @@ public final class AppRuntime: ObservableObject {
                 discardTranslations(session)
             }
             workspace.withTab(current) { $0.runtimeBinding = frozen }
-            if cache[session] == nil { cache[session] = .init() }
             editing.remove(session)
-            try await coordinator.translate(tabIndex: current, workspace: workspace, snapshot: snapshot, binding: frozen,
+            clearTranslationFailure(for: session)
+            if holdsReplacement {
+                replacing.remove(session)
+                holdsReplacement = false
+            }
+            try await coordinator.translate(tab: workspace.tabs[current], workspace: workspace, snapshot: snapshot, binding: frozen,
                                             credential: dispatchCredential)
         } catch is CancellationError { }
-        catch TranslationCoordinator.CoordinatorError.manualDirectionRequired {
-            if await alert("Choose a translation direction", detail: "Automatic could not determine a direction for this text.",
-                           buttons: ["Open Settings", "Cancel"]) == 0 {
-                settingsRequested = true
+        catch {
+            let problem: any Error
+            if let failure = error as? TranslationCoordinator.Failure {
+                guard failure.isCurrent() else { return }
+                problem = failure.underlying
+            } else {
+                guard let index = currentDraft(tab),
+                      workspace.tabs[index].job.attemptGeneration == tab.job.attemptGeneration,
+                      workspace.tabs[index].job.snapshot == tab.job.snapshot else { return }
+                problem = error
+            }
+            switch problem {
+            case TranslationCoordinator.CoordinatorError.manualDirectionRequired:
+                await offerSettings(for: session, title: "Choose a translation direction", detail: "Automatic could not determine a direction for this text.")
+            case TranslationCoordinator.CoordinatorError.retiredPromptVersion:
+                recordFailure(.message("This document was translated with an older prompt version and cannot resume. Use Retranslate to continue with the current version."), for: session)
+            case let failure as MarkdownPlan.ValidationFailure:
+                if let index = workspace.index(of: session) {
+                    recordFailure(.markdown(.init(title: workspace.tabs[index].document.title, failure: failure)), for: session)
+                }
+            default:
+                let message = failureMessage(problem, fallback: "Translation stopped. Completed paragraphs were kept; check the model settings and retry.",
+                                             draftFormat: tab.draftFormat)
+                recordFailure(.message(message), for: session)
             }
         }
-        catch TranslationCoordinator.CoordinatorError.retiredPromptVersion {
-            errorMessage = "This document was translated with an older prompt version and cannot resume. Use Retranslate to continue with the current version."
-        }
-        catch let failure as MarkdownPlan.ValidationFailure {
-            if let i = workspace.index(of: session) {
-                markdownFailure = .init(title: workspace.tabs[i].document.title, failure: failure)
-            }
-        }
-        catch { report(error,fallback:"Translation stopped. Completed paragraphs were kept; check the model settings and retry.") }
     }
 
     /// A dispatch-blocking preflight failure that Settings can resolve
     /// (empty configuration list, missing key) offers Settings directly,
     /// with zero model calls (model-settings: "offers Settings when a job
     /// cannot dispatch").
-    private func offerSettings(title: String, detail: String) async {
+    private func offerSettings(for session: UUID, title: String, detail: String) async {
+        guard activeSession == session else {
+            recordFailure(.message(text(title) + "\n\n" + text(detail)), for: session)
+            return
+        }
         if await alert(title, detail: detail, buttons: ["Open Settings", "Cancel"]) == 0 {
             settingsRequested = true
         }
@@ -452,7 +538,7 @@ public final class AppRuntime: ObservableObject {
             Task { await offerMissingConfiguration(session: session, snapshot: snapshot) }
             return
         }
-        bindingRequest = BindingRequest(session: session, snapshot: snapshot, matches: matches, purpose: .resume)
+        bindingRequest = BindingRequest(session: session, snapshot: snapshot, matches: matches)
     }
 
     private func offerMissingConfiguration(session: UUID, snapshot: JobSnapshot) async {
@@ -463,15 +549,8 @@ public final class AppRuntime: ObservableObject {
             buttons: ["Retranslate", "Settings…", "Cancel"])
         guard !Task.isCancelled, let current = workspace.index(of: session),
               workspace.tabs[current].document.jobSnapshot == snapshot else { return }
-        if action == 0 {
-            // Retranslate cancels this session's analysis task. Start the
-            // explicit action independently so it cannot cancel itself.
-            Task {
-                guard let i = workspace.index(of: session),
-                      workspace.tabs[i].document.jobSnapshot == snapshot else { return }
-                await translate(session, retranslate: true)
-            }
-        } else if action == 1 { settingsRequested = true }
+        if action == 0 { await translate(session, retranslate: true) }
+        else if action == 1 { settingsRequested = true }
     }
 
     /// Revalidates a binding-sheet choice against the saved record at
@@ -498,23 +577,12 @@ public final class AppRuntime: ObservableObject {
         bindingRequest = nil
         guard let i = workspace.index(of: request.session),
               workspace.tabs[i].document.jobSnapshot == request.snapshot else { return }
-        switch request.purpose {
-        case .resume:
-            requestBinding(session: request.session, snapshot: request.snapshot)
-        case .analysis:
-            let matches = settings.matchingConfigurations(for: request.snapshot)
-            if !matches.isEmpty {
-                bindingRequest = BindingRequest(session: request.session, snapshot: request.snapshot, matches: matches, purpose: .analysis)
-            } else {
-                Task { await offerMissingConfiguration(session: request.session, snapshot: request.snapshot) }
-            }
-        }
+        requestBinding(session: request.session, snapshot: request.snapshot)
     }
 
     /// Applies an explicit binding choice from the binding sheet and
     /// resumes the document's retained snapshot.
     public func bindAndResume(_ request: BindingRequest, configurationID: UUID) {
-        guard request.purpose == .resume else { bindForAnalysis(request, configurationID: configurationID); return }
         guard let configuration = validatedBindingChoice(request, configurationID: configurationID) else {
             refreshBindingRequest(request)
             return
@@ -522,43 +590,18 @@ public final class AppRuntime: ObservableObject {
         bindingRequest = nil
         guard let i = workspace.index(of: request.session),
               workspace.tabs[i].document.jobSnapshot == request.snapshot else { return }
-        // Explicit rebinding clears cached model analysis for the session.
-        if workspace.tabs[i].runtimeBinding != nil { cache[request.session] = nil }
         workspace.withTab(i) { $0.runtimeBinding = configuration.runtimeBinding }
         Task { await translate(request.session, overrideBinding: configuration.runtimeBinding) }
     }
 
-    /// Applies an explicit binding for phrase analysis of an existing
-    /// translation (D3): no translation starts, the document is not
-    /// dirtied, and the binding choice is revalidated against the saved
-    /// record at confirmation. The pending selection analysis re-runs
-    /// under the new binding.
-    public func bindForAnalysis(_ request: BindingRequest, configurationID: UUID) {
-        guard request.purpose == .analysis,
-              let configuration = validatedBindingChoice(request, configurationID: configurationID) else {
-            if request.purpose == .analysis { refreshBindingRequest(request) }
-            return
-        }
-        bindingRequest = nil
-        guard let i = workspace.index(of: request.session),
-              workspace.tabs[i].document.jobSnapshot == request.snapshot else { return }
-        if workspace.tabs[i].runtimeBinding != nil { cache[request.session] = nil }
-        workspace.withTab(i) { $0.runtimeBinding = configuration.runtimeBinding }
-        // Re-run the pending selection analysis under the new binding;
-        // the re-entered schedule advances the selection owner so any
-        // pre-binding analysis task can no longer commit.
-        reading[request.session]?.phraseRanges = []
-        reading[request.session]?.analyzing = false
-        reading[request.session]?.selectionGeneration += 1
-        scheduleAnalysis(for: reading[request.session]?.selection, session: request.session)
-    }
-
     func discardTranslations(_ session: UUID) {
         guard let i = workspace.index(of: session) else { return }
+        if activeSession == session { invalidateCopy() }
+        clearTranslationFailure(for: session)
         coordinator.cancel(tabIndex: i, workspace: workspace)
         workspace.withTab(i) { $0.document.translations = []; $0.document.jobSnapshot = nil; $0.document.resolvedDirection = nil; $0.job = JobModel(); $0.elapsed = TranslationElapsed(); $0.runtimeBinding = nil; $0.contentGeneration += 1 }
-        cache[session] = nil; analysis.removeValue(forKey:session)?.cancel()
         var presentation = ReadingPresentation(); presentation.anchors = reading[session]?.anchors ?? [:]
+        presentation.readerAnchor = reading[session]?.readerAnchor
         reading[session] = presentation
     }
 
@@ -592,7 +635,11 @@ public final class AppRuntime: ObservableObject {
             let generation = workspace.tabs[i].contentGeneration
             var document = workspace.tabs[i].document
             document.layout = workspace.tabs[i].layout
-            document.readingAnchor = reading[session]?.anchors[workspace.tabs[i].layout]
+            document.readingAnchor = nativeReader?.visibleAnchor(for: session) ?? (workspace.tabs[i].isTranslationReader
+                ? reading[session]?.readerAnchor : reading[session]?.anchors[workspace.tabs[i].layout]) ?? document.readingAnchor
+            if let offset = document.readingAnchor?.offset, offset > WorkerContract.maxSourceUTF8Bytes {
+                document.readingAnchor?.offset = nil
+            }
             try await files.save(document, to: url, ownerSessionID: session)
             guard let i = workspace.index(of: session) else { return true }
             let old = workspace.tabs[i].saveURL
@@ -642,7 +689,7 @@ public final class AppRuntime: ObservableObject {
                 if let tab = workspace.activeTab {
                     do { try await files.reserveDestination(url, ownerSessionID: tab.sessionID) }
                     catch { if !previous.contains(tab.sessionID), let i = workspace.index(of: tab.sessionID) { workspace.closeTab(at: i) }; throw error }
-                    if let anchor = document.readingAnchor { reading[tab.sessionID, default: .init()].anchors[tab.layout] = anchor }
+                    if !previous.contains(tab.sessionID), let anchor = document.readingAnchor { reading[tab.sessionID, default: .init()].anchors[tab.layout] = anchor }
                 }
             }
         } catch { report(error,fallback:"This file is invalid, unavailable, or already owned by another tab. Existing documents were kept.") }
@@ -655,7 +702,8 @@ public final class AppRuntime: ObservableObject {
         guard let i = workspace.index(of: session) else { return true }
         if [.running,.queued].contains(workspace.tabs[i].job.state) {
             guard await alert("Stop translation and close?", detail: "Completed work will be kept until you decide whether to save it.", buttons: ["Stop and Close","Keep Tab"]) == 0 else { return false }
-            coordinator.cancel(tabIndex: i, workspace: workspace)
+            guard let current = workspace.index(of: session) else { return true }
+            coordinator.cancel(tabIndex: current, workspace: workspace)
         }
         guard let i = workspace.index(of: session) else { return true }
         if workspace.tabs[i].isDirty && !settings.record.dontAskToSaveOnClose {
@@ -670,7 +718,10 @@ public final class AppRuntime: ObservableObject {
         let url = workspace.tabs[i].saveURL
         draftPlanning.removeValue(forKey: session)?.task.cancel()
         detectedFormats[session] = nil
-        workspace.closeTab(at: i); analysis.removeValue(forKey:session)?.cancel(); reading[session] = nil; cache[session] = nil; editing.remove(session)
+        clearTranslationFailure(for: session)
+        workspace.closeTab(at: i)
+        reading[session] = nil
+        editing.remove(session)
         if let url { await files.releaseDestination(url, ownerSessionID: session) }
         return true
     }
@@ -730,175 +781,108 @@ public final class AppRuntime: ObservableObject {
         }
     }
 
-    public func copy(original: Bool) {
-        guard let document = workspace.activeTab?.document else { return }
+    func showsCompletionCopy(_ tab: TabState) -> Bool {
+        tab.sessionID == activeSession && !editing.contains(tab.sessionID) && !closing.contains(tab.sessionID)
+            && !replacing.contains(tab.sessionID) && tab.canCopyTranslation && !tab.document.units.isEmpty
+            && tab.job.state == .completed
+    }
+
+    private func invalidateCopy() {
         copyTask?.cancel()
+        copyTask = nil
+        copyID = nil
+        copyFeedback = nil
+    }
+
+    @discardableResult public func copy(original: Bool) -> Task<Void, Never>? {
+        invalidateCopy()
+        guard let tab = workspace.activeTab, original || (tab.canCopyTranslation && !replacing.contains(tab.sessionID)) else { return nil }
         if original {
-            writeClipboard(document.source)
-        } else if document.isMarkdown {
-            let previousClipboard = NSPasteboard.general.changeCount
-            copyTask = Task {
-                let files = files
-                let export = Task.detached { try files.exportTranslation(document, markdown: true) }
-                guard let value = try? await export.value, !Task.isCancelled,
-                      NSPasteboard.general.changeCount == previousClipboard else { return }
-                writeClipboard(value)
+            if !writeClipboard(tab.document.source) { copyFeedback = .init(session: tab.sessionID, succeeded: false) }
+            return nil
+        }
+        let token = UUID(), version = pasteboard.changeCount
+        copyID = token
+        func ownsResult() -> Bool {
+            guard let active = workspace.activeTab else { return false }
+            return copyID == token && active.sessionID == tab.sessionID
+                && active.document.sourceRevision == tab.document.sourceRevision && active.contentGeneration == tab.contentGeneration
+                && !closing.contains(tab.sessionID)
+        }
+        copyTask = Task {
+            let value = try? await translationForCopy(tab.document)
+            guard ownsResult(), pasteboard.changeCount == version else { return }
+            let succeeded = value.map(writeClipboard) ?? false
+            guard ownsResult() else { return }
+            let message = text(succeeded ? "Copied" : "Copy failed")
+            copyFeedback = CopyFeedback(session: tab.sessionID, succeeded: succeeded)
+            if NSApp != nil, let window = mainWindow {
+                NSAccessibility.post(element: window, notification: .announcementRequested,
+                                     userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
             }
-        } else if let value = try? files.exportTranslation(document) {
-            writeClipboard(value)
+            copyTask = Task {
+                try? await Task.sleep(for: .seconds(2))
+                if copyID == token { copyFeedback = nil }
+            }
+        }
+        return copyTask
+    }
+
+    func hasTranslationFailure(for session: UUID) -> Bool {
+        translationFailures[session] != nil
+    }
+
+    func showTranslationFailure(for session: UUID) {
+        guard activeSession == session, let failure = translationFailures[session] else { return }
+        switch failure {
+        case .message(let message):
+            errorMessage = message
+            translationMessageSession = session
+        case .markdown(let report):
+            markdownFailure = report
         }
     }
 
-    private func writeClipboard(_ value: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(value, forType: .string)
-    }
-
-    public func selected(_ selection: ReadingSelection?, session: UUID) {
-        guard reading[session]?.selection != selection else { return }
-        analysis.removeValue(forKey:session)?.cancel()
-        reading[session,default:.init()].selection = selection
-        reading[session,default:.init()].selectionGeneration += 1
-        reading[session,default:.init()].phraseRanges = []
-        reading[session,default:.init()].analyzing = false
-        scheduleAnalysis(for: selection, session: session)
-    }
-
-    /// Schedules the debounced phrase analysis for a selection. Called by
-    /// `selected` for new selections and re-entered directly after an
-    /// explicit analysis binding is confirmed (D3), so the pending
-    /// selection re-runs under the new binding even though the selection
-    /// value itself did not change.
-    private struct AnalysisInput: Sendable {
-        let source: String
-        let target: String
-        let request: AlignSelectionRequest
-    }
-
-    private nonisolated static func analysisInput(
-        document: BiparaDocument, unitID: UUID, selection: ReadingSelection
-    ) -> AnalysisInput? {
-        guard let source = document.visibleUnitText(unitID, side: .source),
-              let target = document.visibleUnitText(unitID, side: .translation),
-              source.utf8.count + target.utf8.count <= WorkerContract.maxAlignTextBytes else { return nil }
-        let reading = selection.side == .source ? source : target
-        let counterpart = selection.side == .source ? target : source
-        guard selection.range.length > 0,
-              let end = selection.range.end,
-              let selected = reading.substring(utf16: selection.range),
-              selected.utf8.count <= WorkerContract.maxAlignSelectionBytes else { return nil }
-        let before = (reading as NSString).substring(to: selection.range.location)
-        let after = (reading as NSString).substring(from: end)
-        let request = AlignSelectionRequest(readingText: reading, counterpartText: counterpart,
-                                           before: before, selectedText: selected, after: after)
-        return .init(source: source, target: target, request: request)
-    }
-
-    private func scheduleAnalysis(for selection: ReadingSelection?, session: UUID) {
-        guard let selection, let unit = selection.unitID, let i = workspace.index(of: session) else { return }
-        let tab = workspace.tabs[i]
-        let document = tab.document
-        guard document.canUseMarkdownPlan, (!document.isMarkdown || document.readingMode == .rendered),
-              selection.range.length > 0,
-              let snapshot = document.jobSnapshot,
-              WorkerContract.alignmentPromptVersions.contains(snapshot.alignmentPromptVersion),
-              let translated = document.translations.first(where: { $0.unitID == unit }) else { return }
-        // Keep the existing immediate plain-text range/size preflight. Markdown
-        // projection can parse inline syntax, so do that off the UI actor.
-        let preflight = document.isMarkdown ? nil : Self.analysisInput(document: document, unitID: unit, selection: selection)
-        guard document.isMarkdown || preflight != nil else { return }
-        let generation = reading[session]!.selectionGeneration
-        let revision = document.sourceRevision
-        let binding = tab.runtimeBinding
-        analysis[session]?.cancel()
-        analysis[session] = Task {
-            do {
-                try await Task.sleep(for: .milliseconds(350))
-                try Task.checkCancellation()
-                let payload: AnalysisInput?
-                if let preflight { payload = preflight }
-                else {
-                    payload = await Task.detached {
-                        Self.analysisInput(document: document, unitID: unit, selection: selection)
-                    }.value
-                }
-                try Task.checkCancellation()
-                guard let payload, let current = workspace.index(of: session),
-                      workspace.tabs[current].document.sourceRevision == revision,
-                      reading[session]?.selectionGeneration == generation,
-                      workspace.tabs[current].document.translations.first(where: { $0.unitID == unit }) == translated else { return }
-                let key = binding.map { bound in
-                    SelectionCache.Key(
-                        sourceRevision: revision, unit: unit, source: Data(payload.source.utf8), target: Data(payload.target.utf8),
-                        targetCompletedAt: translated.completedAt, side: selection.side.rawValue,
-                        location: selection.range.location, length: selection.range.length,
-                        provider: snapshot.provider, model: snapshot.model, profile: snapshot.profile, effort: snapshot.effort.rawValue,
-                        bindingID: bound.configurationID, promptVersion: snapshot.alignmentPromptVersion
-                    )
-                }
-                if let key, let cached = cache[session, default: .init()].value(for: key) {
-                    reading[session]?.phraseRanges = cached
-                    return
-                }
-                if let binding, let key {
-                    // Already bound: resolve by frozen configuration
-                    // identity and endpoint URL. Same-URL model/effort edits
-                    // to the configuration do not disable analysis — the
-                    // job keeps its frozen snapshot (D3). Consent suspends
-                    // first; the owner and credential are revalidated after
-                    // it, with the key resolved in the Settings transaction
-                    // boundary immediately before dispatch (N5).
-                    guard let configuration = settings.configuration(binding.configurationID),
-                          configuration.credentialIdentity == binding.credentialIdentity,
-                          await consent(provider:configuration.provider, origin:CanonicalBaseURL.origin(of:binding.requestOptions?.endpointURL ?? binding.baseURL)) else { return }
-                    try Task.checkCancellation()
-                    guard let postConsent = workspace.index(of:session), workspace.tabs[postConsent].document.sourceRevision == revision,
-                          reading[session]?.selectionGeneration == generation,
-                          workspace.tabs[postConsent].document.translations.first(where:{$0.unitID==unit}) == translated else { return }
-                    let credentials: ModelCredentials
-                    do { credentials = try ModelCredentials.decode(settings.resolveCredential(binding)) }
-                    catch { return } // deleted/changed endpoint during consent: retain the fallback, zero calls
-                    reading[session]?.analyzing = true
-                    let result = try await gateway.alignSelection(payload.request,
-                        configuration:.init(provider:snapshot.provider,model:snapshot.model,profile:snapshot.profile,
-                                           baseURL:binding.baseURL,effort:snapshot.effort,apiKey:credentials.apiKey,
-                                           configurationID:binding.configurationID, requestOptions: binding.requestOptions, secretHeaders: credentials.headers))
-                    try Task.checkCancellation()
-                    guard let current = workspace.index(of:session), workspace.tabs[current].document.sourceRevision == revision,
-                          reading[session]?.selectionGeneration == generation,
-                          workspace.tabs[current].document.translations.first(where:{$0.unitID==unit}) == translated else { return }
-                    let ranges: [BiparaCore.TextRange]
-                    if case .matched(let matches) = result.match { ranges = CorrespondenceResolver.resolveMatches(matches.map{($0.quote,$0.occurrence)},in:payload.request.counterpartText)?.ranges ?? [] }
-                    else { ranges = [] }
-                    cache[session,default:.init()].insert(ranges,for:key); reading[session]?.phraseRanges = ranges
-                } else {
-                    // An opened document with no session-local binding makes
-                    // no model call; it can be bound explicitly for
-                    // analysis of the existing translation (D3). No call
-                    // happens before that confirmation.
-                    let matches = settings.matchingConfigurations(for: snapshot)
-                    guard bindingRequest == nil else { return }
-                    guard !matches.isEmpty else {
-                        await offerMissingConfiguration(session: session, snapshot: snapshot)
-                        return
-                    }
-                    bindingRequest = BindingRequest(session: session, snapshot: snapshot, matches: matches, purpose: .analysis)
-                }
-            } catch { }
-            if reading[session]?.selectionGeneration == generation { reading[session]?.analyzing = false }
+    private func dismissTranslationFailure(for session: UUID) {
+        if translationMessageSession == session { errorMessage = nil }
+        if case let .markdown(report) = translationFailures[session], markdownFailure?.id == report.id {
+            markdownFailure = nil
         }
     }
-    func hasSelectionTask(for session: UUID) -> Bool { analysis[session] != nil }
-    func report(_ error:Error,fallback:String) {
+
+    private func clearTranslationFailure(for session: UUID) {
+        dismissTranslationFailure(for: session)
+        translationFailures[session] = nil
+    }
+
+    private func recordFailure(_ failure: TranslationFailure, for session: UUID) {
+        guard workspace.index(of: session) != nil else { return }
+        dismissTranslationFailure(for: session)
+        translationFailures[session] = failure
+        showTranslationFailure(for: session)
+    }
+
+    func report(_ error: Error, fallback: String) {
+        errorMessage = failureMessage(error, fallback: fallback, draftFormat: workspace.activeTab?.draftFormat)
+    }
+
+    private func failureMessage(_ error: Error, fallback: String, draftFormat: ContentFormat?) -> String {
         switch error {
-        case WorkspaceStore.PlanningError.documentTooLarge: errorMessage="This text creates a document larger than the 20 MiB file limit. Shorten the original; your previous document and draft were kept."
-        case TranslationCoordinator.CoordinatorError.documentTooLarge: errorMessage="The document reached the 20 MiB file limit. Completed translations were kept."
-        case DocumentFileService.FileError.oversized: errorMessage="This document exceeds the 20 MiB file limit. Existing documents were kept."
-        case CoreError.inputTooLarge: errorMessage="The original exceeds the 1 MiB text limit. Shorten it before applying."
-        case CoreError.unsupportedInput where workspace.activeTab?.draftFormat != .plainText:
-            errorMessage = "The Markdown cannot be planned within the supported limits. Edit the original or choose Plain Text."
-        case let error as GatewayError: errorMessage = translationFailureMessage(error)
-        default: errorMessage=fallback
+        case WorkspaceStore.PlanningError.documentTooLarge: return "This text creates a document larger than the 20 MiB file limit. Shorten the original; your previous document and draft were kept."
+        case TranslationCoordinator.CoordinatorError.documentTooLarge: return "The document reached the 20 MiB file limit. Completed translations were kept."
+        case let TranslationCoordinator.CoordinatorError.incompleteUnits(units):
+            let ranges = units.rangeView
+            var numbers = ranges.prefix(8).map { range in
+                range.count == 1 ? String(range.lowerBound) : "\(range.lowerBound)–\(range.upperBound - 1)"
+            }
+            if ranges.count > numbers.count { numbers.append("…") }
+            return String(format: text("Unfinished translation units (%lld): %@. Retry translates only these units."), units.count, numbers.joined(separator: ", "))
+        case DocumentFileService.FileError.oversized: return "This document exceeds the 20 MiB file limit. Existing documents were kept."
+        case CoreError.inputTooLarge: return "The original exceeds the 1 MiB text limit. Shorten it before applying."
+        case CoreError.unsupportedInput where draftFormat != .plainText:
+            return "The Markdown cannot be planned within the supported limits. Edit the original or choose Plain Text."
+        case let error as GatewayError: return translationFailureMessage(error)
+        default: return fallback
         }
     }
 
@@ -915,10 +899,10 @@ public final class AppRuntime: ObservableObject {
         case .missingContent: reason = "The model returned no text."
         case .invalidJSON: reason = "The model response is not valid JSON."
         case .translationShape: reason = "The response does not match the translation format."
-        case .unitMismatch: reason = "The response does not match the requested translation units and order."
+        case .unitMismatch: reason = "The response does not contain each requested translation unit exactly once."
         case .invalidTranslationText: reason = "The response contains invalid translation text."
         case .outputTooLarge: reason = "The translated output exceeds the size limit."
-        case .alignmentShape: reason = "The response does not match the correspondence format."
+        case .alignmentShape: reason = "The model returned an invalid response."
         case .markdownStructureMismatch: reason = "The model changed the Markdown structure. Completed translations were kept."
         case nil:
             switch error.code {
@@ -936,17 +920,6 @@ public final class AppRuntime: ObservableObject {
         return text("Translation stopped. Completed paragraphs were kept.") + "\n\n" + details.joined(separator: "\n")
     }
 
-    public func hover(_ selection: ReadingSelection?, session:UUID) {
-        if reading[session]?.hover != selection { reading[session,default:.init()].hover = selection }
-    }
-    public func pin() {
-        guard let session = activeSession else { return }
-        reading[session,default:.init()].pinned = reading[session]?.selection ?? reading[session]?.hover
-        reading[session]?.pinnedPhraseRanges = reading[session]?.phraseRanges ?? []
-    }
-    public func clearPin() { if let session = activeSession { reading[session]?.pinned = nil } }
-    public func reveal() { if let session = activeSession { reading[session,default:.init()].revealGeneration += 1 } }
-
     /// Transmission acknowledgement, recorded locally per provider and
     /// canonical origin; consent for one gateway never authorizes another.
     private func consent(provider: String, origin: String) async -> Bool {
@@ -956,7 +929,7 @@ public final class AppRuntime: ObservableObject {
         let host = CanonicalBaseURL.host(of: origin) ?? origin
         let task = Task {
             let answer = await alert(String(format: text("Send text to %@?"), host),
-                detail:String(format: text("Translation sends source and context to %@. Selection analysis sends the selected unit and its translation. Hovering makes no request."), host),
+                detail:String(format: text("Translation sends source and context to %@."), host),
                 buttons:["Continue","Cancel"])
             if answer == 0 { defaults.set(true,forKey:key); return true }
             return false

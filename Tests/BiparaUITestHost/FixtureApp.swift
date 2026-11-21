@@ -15,20 +15,52 @@ final class FixtureKeys: CredentialStore {
     func legacyCredential(provider:String)throws->String?{nil}
     func deleteLegacyKey(provider:String)throws{}
 }
+private enum SampleArticle {
+    static let excerpt = """
+        ```diff
+        @@ -8,3 +8,3 @@
+         Cover the dough with a damp towel.
+        -Let it rest for 10 minutes.
+        +Let it rest for 20 minutes.
+         Divide it into four equal pieces.
+        ```
+        """
+    static let passages = [
+        ("# ", "Reading a Git diff", "读懂 Git 差异"),
+        ("", "A recipe and its introduction changed in the same edit. You want to know whether the ingredients changed or whether dinner just takes longer. Start with the lines that Git marks as changed, then read the instructions around them.", "一份食谱的做法和前言一起改了。是换了配料，还是这顿饭得晚点上桌？先看 Git 标出的改动，再读一读前后两步，就能找到答案。"),
+        ("## ", "Start with one file", "从一个文件开始"),
+        ("", "Run `git diff -- notes.md` to compare the edits in your working copy with the staged version of the recipe. The two file headers name the versions being compared. Each block below them shows one stretch of the file.", "运行 `git diff -- notes.md`，把工作区里的食谱和暂存区的版本做对比。开头两行写着参与对比的文件名，下面的每一块都对应文件里的一段连续内容。"),
+        ("", excerpt, excerpt),
+        ("## ", "Read the change in context", "把改动放回上下文"),
+        ("", "The line starting with `-` gives the old resting time. The line starting with `+` gives the new one. The unchanged instructions tell you which wait got longer: the dough rests under a towel for ten extra minutes before you divide it.", "以 `-` 开头的一行写的是原来的静置时间，以 `+` 开头的一行写的是新的时间。前后两行说明了到底哪一步要多等：面团盖上湿毛巾以后，要多放十分钟才能分成四份。"),
+        ("", "To review what will go into your next commit, use `git diff --staged`. The [Git reference](https://git-scm.com/docs/git-diff) describes both comparisons.", "想确认下次提交会包含哪些改动，可以运行 `git diff --staged`。两种对比方式都可以在 [Git 参考手册](https://git-scm.com/docs/git-diff)里查到。")
+    ]
+    static let source = passages.map { $0.0 + $0.1 }.joined(separator: "\n\n")
+    static let translations = Dictionary(uniqueKeysWithValues: passages.map { ($0.1, $0.2) })
+}
+
 actor FixtureGateway:ModelGateway {
     let translationDelay:Duration
     private var translationFailures: [GatewayError]
-    init(translationDelay: Duration = .milliseconds(80), translationFailures: [GatewayError] = []) {
+    let failureGate: URL?
+    init(translationDelay: Duration = .milliseconds(80), failureGate: URL? = nil, translationFailures: [GatewayError] = []) {
+        self.failureGate = failureGate
         self.translationDelay = translationDelay
         self.translationFailures = translationFailures
     }
     func translateBatch(_ request:TranslateBatchRequest,configuration:ModelConfiguration)async throws->TranslateBatchResult {
         try await Task.sleep(for:translationDelay)
+        if let failureGate {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(60))
+            while !FileManager.default.fileExists(atPath: failureGate.path), ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(25))
+            }
+        }
         if !translationFailures.isEmpty { throw translationFailures.removeFirst() }
         return .init(translations: request.units.map { unit in
             let text: String
             if WorkerContract.markdownTranslationPromptVersions.contains(request.promptVersion) {
-                text = unit.text
+                text = SampleArticle.translations[unit.text] ?? unit.text
                     .replacingOccurrences(of: "Setup", with: "准备")
                     .replacingOccurrences(of: "Open the", with: "打开")
                     .replacingOccurrences(of: "window", with: "窗户")
@@ -58,39 +90,62 @@ actor FixtureGateway:ModelGateway {
         let defaults=UserDefaults(suiteName:"dev.bipara.ui-tests")!
         defaults.removePersistentDomain(forName:"dev.bipara.ui-tests")
         let args=ProcessInfo.processInfo.arguments
+        func argument(_ key:String)->String?{guard let i=args.firstIndex(of:key),i+1<args.count else{return nil};return args[i+1]}
         let keys=FixtureKeys()
-        let testsDiagnostics = args.contains("--translation-diagnostics")
+        let testsDiagnostics = args.contains("--translation-diagnostics") || args.contains("--background-failure")
         let gateway = FixtureGateway(
             translationDelay: args.contains("--slow-translation") ? .seconds(90) : .milliseconds(80),
+            failureGate: argument("--failure-gate").map { URL(fileURLWithPath: $0) },
             translationFailures: testsDiagnostics ? [
                 .init(code: .authentication, httpStatus: 401, providerCode: "1001"),
                 .init(code: .invalidOutput, validationFailure: .invalidJSON),
             ] : []
         )
-        let value = AppRuntime(gateway: gateway, keychain: keys, defaults: defaults)
+        let pasteboard = argument("--pasteboard").map { NSPasteboard(name: .init($0)) } ?? .general
+        let configurations: [ModelConfigurationRecord]
         if args.contains("--legacy-models") {
-            value.settings.updateDraft { draft in
-                draft.modelConfigurations = [ModelConfigurationRecord(displayName: "OpenAI", provider: "openai",
-                    profile: ModelProfileID.openaiV2, modelID: "gpt-4.1-mini-2025-04-14", effort: .auto,
-                    baseURL: WorkerContract.openAIStandardBaseURL)]
-                draft.defaultModelConfigurationID = draft.modelConfigurations.first?.id
-            }
-            try! value.settings.saveDraft()
+            configurations = [.init(displayName: "OpenAI", provider: "openai", profile: ModelProfileID.openaiV2,
+                modelID: "gpt-4.1-mini-2025-04-14", effort: .auto, baseURL: WorkerContract.openAIStandardBaseURL)]
+        } else if args.contains("--configured-models") {
+            configurations = [
+                .init(displayName: "OpenAI", provider: "openai", profile: ModelAPIProtocol.openai.profile,
+                      modelID: "gpt-6-luna", effort: .low, baseURL: WorkerContract.openAIStandardBaseURL,
+                      vendorLabel: "OpenAI", requestOptions: ModelRequestOptions(), revision: UUID()),
+                .init(displayName: "GLM", provider: "openai", profile: ModelAPIProtocol.openai.profile,
+                      modelID: "glm-5.3-flash", effort: .low, baseURL: WorkerContract.glmStandardBaseURL,
+                      vendorLabel: "GLM", requestOptions: ModelRequestOptions(), revision: UUID()),
+            ]
+        } else {
+            configurations = []
         }
-        if let id=value.settings.record.defaultConfiguration?.id{keys.keys[id]="SYNTHETIC_UI_FIXTURE"}
+        if !configurations.isEmpty {
+            let preferences = PreferencesRecord(modelConfigurations: configurations)
+            defaults.set(try! JSONEncoder().encode(preferences), forKey: SettingsStore.defaultsKey)
+        }
+        let value = AppRuntime(gateway: gateway, keychain: keys, defaults: defaults, pasteboard: pasteboard)
         for configuration in value.settings.record.modelConfigurations{keys.keys[configuration.id]="SYNTHETIC_UI_FIXTURE"}
         defaults.set(true,forKey:"dev.bipara.disclosure.openai|https://api.openai.com")
         defaults.set(true,forKey:"dev.bipara.disclosure.openai|https://open.bigmodel.cn")
         defaults.set(true,forKey:"dev.bipara.disclosure.glm|https://open.bigmodel.cn")
-        func argument(_ key:String)->String?{guard let i=args.firstIndex(of:key),i+1<args.count else{return nil};return args[i+1]}
         value.settings.updateDraft{
             $0.appearance=AppearanceMode(rawValue:argument("--appearance") ?? "system") ?? .system
             $0.typography.size=Double(argument("--font") ?? "17") ?? 17
             $0.interfaceLanguage=InterfaceLanguage(rawValue:argument("--language") ?? "en") ?? .english
         }
         try! value.settings.saveDraft();value.appearance.apply(value.settings.record.appearance)
+        if args.contains("--reading-article") {
+            value.settings.updateDraft {
+                $0.typography.family = .system
+                $0.typography.lineHeight = .compact
+            }
+            try! value.settings.saveDraft()
+            _ = try! value.workspace.newTab(source: SampleArticle.source, direction: .enToZh)
+        }
         if testsDiagnostics {
             _ = try! value.workspace.newTab(source: "The window is open. It rained today.", direction: .enToZh)
+        }
+        if args.contains("--overflow-tabs") {
+            for _ in 0..<11 { _ = try! value.workspace.newTab() }
         }
         if args.contains("--corpus") {
             for i in 1...5 {
@@ -126,17 +181,9 @@ actor FixtureGateway:ModelGateway {
         _runtime=StateObject(wrappedValue:value)
     }
     var body:some Scene{
-        Window("Bipara — UI Fixture",id:"main"){
+        Window(ProcessInfo.processInfo.arguments.contains("--reading-article") ? "Bipara" : "Bipara — UI Fixture",id:"main"){
             WorkspaceView(runtime:runtime).onAppear{
                 delegate.runtime=runtime;NSApp.activate(ignoringOtherApps:true)
-                // Keep fixture coordinates on the primary display, including multi-display hosts.
-                if let window=runtime.mainWindow,let screen=NSScreen.screens.first {
-                    window.setFrameOrigin(NSPoint(x:screen.visibleFrame.midX-window.frame.width/2,y:screen.visibleFrame.midY-window.frame.height/2))
-                    window.makeKeyAndOrderFront(nil)
-                }
-                if ProcessInfo.processInfo.arguments.contains("--compact") {
-                    NSApp.windows.first(where:{$0.isVisible})?.setContentSize(NSSize(width:900,height:650))
-                }
                 let args=ProcessInfo.processInfo.arguments
                 if let i=args.firstIndex(of:"--menu-report"),i+1<args.count {
                     Task{
@@ -186,9 +233,43 @@ actor FixtureGateway:ModelGateway {
                     }
                 }
             }
+            .task {
+                // SwiftUI attaches the window delegate after the view can appear.
+                while runtime.mainWindow == nil {
+                    do { try await Task.sleep(for: .milliseconds(20)) } catch { return }
+                }
+                guard let window = runtime.mainWindow, let screen = NSScreen.screens.first else { return }
+                let args = ProcessInfo.processInfo.arguments
+                let visible = screen.visibleFrame
+                let requested: NSSize
+                if args.contains("--wide-window") {
+                    requested = NSSize(width: 1860, height: 770)
+                } else if args.contains("--compact") {
+                    requested = NSSize(width: 900, height: 650)
+                } else if args.contains("--reading-article") {
+                    requested = NSSize(width: 1080, height: 880)
+                } else {
+                    requested = NSSize(width: 1000, height: 720)
+                }
+                window.setContentSize(NSSize(width: min(requested.width, visible.width), height: min(requested.height, visible.height - 60)))
+                window.setFrameOrigin(NSPoint(x: visible.midX - window.frame.width / 2, y: visible.midY - window.frame.height / 2))
+                window.makeKeyAndOrderFront(nil)
+            }
         }.defaultSize(width:1000,height:720).commands{AppCommands(runtime:runtime)}
         Window("Settings",id:"settings"){
             SettingsContent(runtime:runtime)
+                .task {
+                    while !Task.isCancelled {
+                        if let window = NSApp.windows.first(where: { $0.accessibilityIdentifier() == "Bipara.Settings" }),
+                           let screen = NSScreen.screens.first {
+                            let visible = screen.visibleFrame
+                            window.setFrameOrigin(NSPoint(x: visible.midX - window.frame.width / 2, y: visible.midY - window.frame.height / 2))
+                            window.makeKeyAndOrderFront(nil)
+                            return
+                        }
+                        do { try await Task.sleep(for: .milliseconds(20)) } catch { return }
+                    }
+                }
         }.defaultSize(width:560,height:700).windowResizability(.contentSize)
     }
 }
@@ -197,25 +278,6 @@ actor FixtureGateway:ModelGateway {
 @MainActor private func measureFixture(runtime:AppRuntime,output:URL) async {
     let activity=ProcessInfo.processInfo.beginActivity(options:[.userInitiatedAllowingIdleSystemSleep,.latencyCritical],reason:"Measure foreground native interactions")
     defer{ProcessInfo.processInfo.endActivity(activity)}
-    func contrastRatios() throws -> [String:Double] {
-        func luminance(_ values:[Double]) -> Double {
-            let linear=values.map{$0 <= 0.04045 ? $0/12.92:pow(($0+0.055)/1.055,2.4)}
-            return 0.2126*linear[0]+0.7152*linear[1]+0.0722*linear[2]
-        }
-        var result:[String:Double]=[:]
-        for name:NSAppearance.Name in [.aqua,.darkAqua,.accessibilityHighContrastAqua,.accessibilityHighContrastDarkAqua] {
-            guard let appearance=NSAppearance(named:name) else {throw NSError(domain:"appearance unavailable",code:8)}
-            appearance.performAsCurrentDrawingAppearance {
-                guard let fg=NSColor.labelColor.usingColorSpace(.sRGB),let bg=NSColor(named:"CorrespondenceBackground")?.usingColorSpace(.sRGB) else {return}
-                let background=[bg.redComponent,bg.greenComponent,bg.blueComponent].map(Double.init)
-                let foreground=[fg.redComponent,fg.greenComponent,fg.blueComponent].enumerated().map{Double($0.element*fg.alphaComponent)+background[$0.offset]*Double(1-fg.alphaComponent)}
-                let a=luminance(foreground),b=luminance(background)
-                result[name.rawValue]=(max(a,b)+0.05)/(min(a,b)+0.05)
-            }
-        }
-        guard result.count == 4 else {throw NSError(domain:"compiled correspondence color unavailable",code:9)}
-        return result
-    }
     func sourceView(_ view:NSView?) -> NSTextView? {
         guard let view else{return nil}
         if let text=view as? NSTextView,text.accessibilityIdentifier()=="reader.source"{return text}
@@ -225,7 +287,7 @@ actor FixtureGateway:ModelGateway {
     func render() async throws {
         func surfaceIsCurrent() -> Bool {
             guard let tab=runtime.workspace.activeTab else { return false }
-            let expected="reader.surface.\(tab.sessionID).\(tab.document.sourceRevision).\(tab.layout.rawValue).\(runtime.reading[tab.sessionID]?.selectionGeneration ?? 0)"
+            let expected="reader.surface.\(tab.sessionID).\(tab.document.sourceRevision).\(tab.layout.rawValue)"
             func contains(_ view:NSView?) -> Bool {
                 guard let view else { return false }
                 return (view as? any NativeReadingRenderState)?.renderedIdentity == expected || view.subviews.contains(where:{contains($0)})
@@ -237,7 +299,7 @@ actor FixtureGateway:ModelGateway {
             guard ContinuousClock.now < deadline else { throw NSError(domain:"native surface did not acknowledge state",code:4) }
             try await Task.sleep(for:.milliseconds(1))
         }
-        // Native owner/layout/selection acknowledgement precedes one display interval and completed drawing.
+        // Native owner and layout acknowledgement precedes one display interval and completed drawing.
         try await Task.sleep(for:.milliseconds(16))
         runtime.mainWindow?.contentView?.layoutSubtreeIfNeeded()
         runtime.mainWindow?.displayIfNeeded();CATransaction.flush()
@@ -291,7 +353,6 @@ actor FixtureGateway:ModelGateway {
             "tabs":runtime.workspace.tabs.count,"source_bytes":runtime.workspace.tabs.map{$0.document.source.utf8.count},
             "frame_wait_ms":16,"configuration":configuration,
             "cancelled_state":"paused",
-            "contrast_ratios":try contrastRatios(),
         ]
         try JSONSerialization.data(withJSONObject:report,options:[.sortedKeys,.prettyPrinted]).write(to:output,options:.atomic)
     } catch {

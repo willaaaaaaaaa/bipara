@@ -2,7 +2,7 @@
 
 ## Product purpose
 
-Bipara uses large language models for translation and correspondence within a native bilingual reading experience. Prioritize translation fidelity, understandable correspondence, and reading comfort. Evaluate features by the user problem they solve.
+Bipara uses large language models for translation within a native bilingual reading experience. Prioritize translation fidelity and reading comfort. Evaluate features by the user problem they solve.
 
 ## Simplicity
 
@@ -31,11 +31,11 @@ Use native Apple window, toolbar, menu, shortcut, selection, focus, and accessib
 
 Typography is core functionality: choose appropriate system fonts and Chinese/English fallbacks, and tune text size, line spacing, paragraph spacing, readable column width, and visual hierarchy. Preserve system accessibility settings and provide a useful range of reading sizes. Evaluate both light and dark appearances.
 
-Highlighting should be readable, subtle, and distinguishable from text selection. Avoid moving the document unexpectedly during hover. Treat stable scrolling, selection, and reading position as acceptance criteria. Use animation only when it helps explain a state change.
+Treat stable scrolling, selection, and reading position as acceptance criteria. Use animation only when it helps explain a state change.
 
 ## Trust and responsiveness
 
-Preserve the user's original text. Distinguish translation, correspondence, and optional explanatory content. Explain uncertain correspondence instead of presenting invented precision.
+Preserve the user's original text. Keep original and translated text visually distinct.
 
 Keep the interface responsive during model calls. Show progress at a useful granularity, support cancellation, and preserve completed work when a later segment fails. Measure actual behavior before promising speed, memory use, or maximum document length.
 

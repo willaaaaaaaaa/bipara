@@ -62,7 +62,7 @@ struct PythonModelGatewayTests {
         FileManager.default.isExecutableFile(atPath: Self.fixtureExecutable.path)
     }
 
-    @Test(arguments: ["translation.v1", "translation.v2"])
+    @Test(arguments: ["translation.v1", "translation.v2", "translation.v3"])
     func fixtureTranslateRoundTrip(promptVersion: String) async throws {
         guard skipUnlessFixtureBuilt() else {
             Issue.record("fixture bundle not built; run script/build_worker.sh")

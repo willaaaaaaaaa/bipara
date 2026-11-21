@@ -116,7 +116,11 @@ struct MarkdownSource {
         if metadata != nil { signs.append("metadata") }
         for node in roots { Self.visitSyntax(node) { token, _ in signs.append(token) } }
         syntax = signs
-        detectsMarkdown = translated ? true : Self.detect(roots, coordinates: coordinates)
+        let metadataText = metadata.flatMap { source.substring(utf16: $0) }
+        let hasMetadataFields = metadataText?.split(whereSeparator: \.isNewline).contains { line in
+            line.range(of: #"^[A-Za-z_][A-Za-z0-9_-]*:(?:[ \t]|$)"#, options: .regularExpression) != nil
+        } ?? false
+        detectsMarkdown = translated || hasMetadataFields || Self.detect(roots, coordinates: coordinates)
     }
 
     private static func metadata(_ source: String) -> TextRange? {

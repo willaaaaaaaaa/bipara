@@ -16,11 +16,11 @@ struct NativeReadingSurface: NSViewRepresentable {
     let presentation: ReadingPresentation
     let language: InterfaceLanguage
     var readingWidth: ReadingWidth = .wide
-    var correspondenceColor: CorrespondenceColor = .defaultPreset
     var jobState: JobState = .idle
     var markdown: MarkdownReadingProjection? = nil
-    let onSelect: (ReadingSelection?) -> Void
-    let onHover: (ReadingSelection?) -> Void
+    var translationOnly = false
+    var reduceMotion = false
+    var onMount: ((ParallelReader) -> Void)?
     let onAnchor: (ReadingAnchor) -> Void
 
     func makeNSView(context: Context) -> ParallelReader { ParallelReader() }
@@ -44,7 +44,8 @@ final class ReadingMarksView: NSView {
 
 @MainActor
 final class ReaderTextView: NSTextView {
-    var hover: ((Int?) -> Void)?
+    override var canBecomeKeyView: Bool { isSelectable && !isHiddenOrHasHiddenAncestor }
+
     var linkAt: ((Int) -> (title: String, action: () -> Void)?)?
     var copyText: ((NSRange) -> String?)?
     private var contextLinkAction: (() -> Void)?
@@ -60,25 +61,13 @@ final class ReaderTextView: NSTextView {
         marks.frame = bounds; marks.rules = rules; marks.unfinished = unfinished; marks.needsDisplay = true
     }
     override func layout() { super.layout(); updateMarks() }
-    private var tracking: NSTrackingArea?
-    override func updateTrackingAreas() {
-        if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
-        addTrackingArea(area); tracking = area
-        super.updateTrackingAreas()
-    }
-    override func mouseMoved(with event: NSEvent) {
-        hover?(characterIndexForInsertion(at: convert(event.locationInWindow, from: nil)))
-    }
-    override func mouseExited(with event: NSEvent) { hover?(nil) }
-
     override func menu(for event: NSEvent) -> NSMenu? {
-        let menu = super.menu(for: event)
+        let menu = super.menu(for: event) ?? NSMenu()
         let offset = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
         contextLinkAction = nil
         guard let link = linkAt?(offset) else { return menu }
         contextLinkAction = link.action
-        let updated = menu ?? NSMenu()
+        let updated = menu
         let item = NSMenuItem(title: link.title, action: #selector(openContextLink), keyEquivalent: "")
         item.target = self
         updated.insertItem(item, at: 0)
@@ -99,25 +88,28 @@ final class ReaderTextView: NSTextView {
 }
 
 @MainActor
-final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState {
+final class ParallelReader: NSView, NativeReadingRenderState {
     private(set) var renderedIdentity:String?
     private var parent: NativeReadingSurface?
     private var index: RenderedTextIndex?
     private var renderedDocument: BiparaDocument?
+    private var renderedTranslationOnly = false
+    private struct ViewportLine {
+        let paragraph: UUID
+        let offset: Int
+        let distanceFromTop: CGFloat
+    }
+    private var arrivalFade: Task<Void, Never>?
     private var renderedSessionID: UUID?
     private var renderedTypography: ReadingTypography?
     private var renderedLayout: LayoutMode?
     private var renderedLanguage: InterfaceLanguage?
     private var renderedWidth: ReadingWidth?
-    private var renderedColor: CorrespondenceColor?
     private var renderedState: JobState?
     private var renderedMarkdown: MarkdownReadingProjection?
     private var updating = false
-    private var revealGeneration = 0
     private var lastAnchor: ReadingAnchor?
     private var anchorPublication: DispatchWorkItem?
-    private var appliedHighlights: [[NSRange]] = [[],[]]
-    private var markdownAttributes: [NSAttributedString] = []
     private var stackedTables: Set<UUID> = []
     private struct MarkdownPosition {
         let span: RenderedSpan
@@ -147,8 +139,6 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
         emptyMessage.isSelectable = false; emptyMessage.isHidden = true
         emptyMessage.setAccessibilityIdentifier("reader.emptyTranslation")
         addSubview(emptyMessage)
-        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(contrastChanged),
-            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
     }
     required init?(coder: NSCoder) { nil }
 
@@ -158,16 +148,12 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
         texts = (0...1).map { i in
             let text = ReaderTextView(usingTextLayoutManager: !markdown)
             text.isEditable = false; text.isSelectable = true; text.isRichText = false
-            text.drawsBackground = false; text.delegate = self; text.textContainerInset = NSSize(width: 28, height: 24)
+            text.drawsBackground = false; text.textContainerInset = NSSize(width: 28, height: 24)
             text.isVerticallyResizable = true; text.isHorizontallyResizable = false
             text.minSize = .zero; text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
             text.autoresizingMask = [.width]; text.textContainer?.widthTracksTextView = false
             text.textContainer?.lineFragmentPadding = 0
             text.setAccessibilityIdentifier(i == 0 ? "reader.source" : "reader.translation")
-            text.hover = { [weak self] offset in
-                guard let self, !self.updating else { return }
-                self.parent?.onHover(offset.flatMap { self.index?.selection(column: i, range: NSRange(location: $0, length: 0)) })
-            }
             if markdown {
                 text.linkAt = { [weak self] offset in self?.contextLink(column: i, offset: offset) }
                 text.copyText = { [weak self] range in self?.markdownCopy(column: i, range: range) }
@@ -178,63 +164,79 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
     }
 
     func update(_ value: NativeReadingSurface) {
-        parent = value
+        value.onMount?(self)
+        let wasReader = renderedTranslationOnly
+        let sameResult = renderedSessionID == value.sessionID && renderedDocument?.sourceRevision == value.document.sourceRevision
+            && renderedDocument?.jobSnapshot?.jobID == value.document.jobSnapshot?.jobID
+            && renderedMarkdown?.isSourceMode == value.markdown?.isSourceMode
+        let viewChanged = wasReader != value.translationOnly
         let identityChanged = renderedSessionID != value.sessionID || renderedDocument?.sourceRevision != value.document.sourceRevision
-        let changed = identityChanged || renderedDocument != value.document || renderedTypography != value.typography || renderedLayout != value.layout || renderedLanguage != value.language || renderedWidth != value.readingWidth || renderedMarkdown != value.markdown
-        let decorationChanged = renderedColor != value.correspondenceColor || renderedState != value.jobState
+        let changed = identityChanged || viewChanged || (parent?.reduceMotion != value.reduceMotion && value.translationOnly) || renderedDocument != value.document || renderedTypography != value.typography || renderedLayout != value.layout || renderedLanguage != value.language || renderedWidth != value.readingWidth || renderedMarkdown != value.markdown
+        let decorationChanged = renderedState != value.jobState
+        let oldAnchor = changed ? visibleAnchor(for: value.sessionID) : nil
+        let incrementalReader = changed && wasReader && value.translationOnly && sameResult
+        let selections = changed && !viewChanged && sameResult && renderedLayout == value.layout ? captureSelections() : []
+        let viewport = incrementalReader ? viewportLine(anchor: oldAnchor) : nil
+        let previousIDs = incrementalReader ? Set(index?.paragraphs[0].map(\.paragraphID) ?? []) : nil
+        parent = value
+        renderedTranslationOnly = value.translationOnly
         if changed {
             anchorPublication?.cancel()
             updating = true
-            let anchor: ReadingAnchor?
-            if identityChanged {
-                anchor = value.presentation.anchors[value.layout] ?? value.document.readingAnchor
-                lastAnchor = nil; revealGeneration = value.presentation.revealGeneration
-            } else if renderedLayout != value.layout {
-                anchor = lastAnchor ?? value.presentation.anchors[value.layout] ?? value.document.readingAnchor
-            } else { anchor = lastAnchor ?? value.presentation.anchors[value.layout] ?? value.document.readingAnchor }
+            let saved = value.translationOnly ? value.presentation.readerAnchor : value.presentation.anchors[value.layout]
+            var anchor = identityChanged ? saved ?? value.document.readingAnchor : oldAnchor ?? lastAnchor ?? saved ?? value.document.readingAnchor
+            if identityChanged { lastAnchor = nil }
+            if !identityChanged, renderedMarkdown?.isSourceMode != value.markdown?.isSourceMode { anchor?.offset = nil }
+            arrivalFade?.cancel()
             if (renderedMarkdown == nil) != (value.markdown == nil) { installTextViews(markdown: value.markdown != nil) }
+            if value.translationOnly {
+                texts[1].string = ""
+                texts[1].setAccessibilityElement(false)
+            } else { texts[1].setAccessibilityElement(true) }
+            texts[0].setAccessibilityIdentifier(value.translationOnly ? "reader.translation" : "reader.source")
+            texts[1].setAccessibilityIdentifier(value.translationOnly ? nil : "reader.translation")
             stackedTables = []
-            index = RenderedTextIndex(document: value.document, layout: value.layout, markdown: value.markdown)
+            index = RenderedTextIndex(document: value.document, layout: value.layout, markdown: value.markdown, translationOnly: value.translationOnly)
             renderedMarkdown = value.markdown
             renderedSessionID = value.sessionID; renderedDocument = value.document; renderedTypography = value.typography; renderedLayout = value.layout; renderedLanguage = value.language
             renderedWidth = value.readingWidth
             needsLayout = true
             layoutSubtreeIfNeeded()
+            if value.translationOnly, let incoming = anchor {
+                anchor = index?.targetAnchor(nearest: incoming, in: value.document)
+            }
             layoutText(anchor: anchor)
+            if let viewport, let span = index?.paragraphs[0].first(where: { $0.paragraphID == viewport.paragraph }),
+               viewport.offset < span.range.length, let rect = caretRect(at: span.range.location + viewport.offset) {
+                scrollMarkdown(column: 0, to: rect.minY - viewport.distanceFromTop)
+            }
+            restoreSelections(selections)
+            if let previousIDs, !value.reduceMotion { fadeNewPassages(previousIDs: previousIDs) }
             updating = false
         }
-        renderedColor = value.correspondenceColor; renderedState = value.jobState
-        highlight(force: decorationChanged)
+        renderedState = value.jobState
         if changed || decorationChanged { decorate() }
-        if revealGeneration != value.presentation.revealGeneration {
-            revealGeneration = value.presentation.revealGeneration
-            if let selection = value.presentation.pinned ?? value.presentation.selection ?? value.presentation.hover,
-               let (column, ranges) = index?.highlightedRanges(selection, counterpart: true, ranges: value.presentation.displayedPhraseRanges),
-               let range = ranges.first {
-                updating=true
-                texts[column].scrollRangeToVisible(range)
-                if index?.isMarkdown == true { markdownScrolled(column: column) }
-                updating=false
-            }
-        }
-        renderedIdentity="reader.surface.\(value.sessionID).\(value.document.sourceRevision).\(value.layout.rawValue).\(value.presentation.selectionGeneration)"
+        renderedIdentity="reader.surface.\(value.sessionID).\(value.document.sourceRevision).\(value.layout.rawValue)"
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if window == nil { anchorPublication?.cancel() }
         if window != nil, index != nil {
-            updating = true; layoutText(anchor: lastAnchor); updating = false
-            highlight(force: true); decorate()
+            let selections = captureSelections()
+            updating = true
+            layoutText(anchor: lastAnchor)
+            restoreSelections(selections)
+            updating = false
+            decorate()
         }
     }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        highlight(force: true)
         texts.forEach { $0.needsDisplay = true }
     }
 
-    @objc private func contrastChanged() { highlight(force: true); decorate() }
 
     override func layout() {
         let oldWidth = scrolls[0].frame.width
@@ -248,13 +250,19 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
         emptyMessage.frame = NSRect(x: (columns == 2 ? width : 0) + inset, y: bounds.height - 52,
                                     width: max(0, width - inset * 2), height: 24)
         if abs(oldWidth - width) > 0.5, !updating, index != nil {
-            updating = true; layoutText(anchor: lastAnchor); updating = false
-            highlight(force: true); decorate()
+            let selections = captureSelections()
+            updating = true
+            layoutText(anchor: lastAnchor)
+            restoreSelections(selections)
+            updating = false
+            decorate()
         }
     }
 
     private func layoutText(anchor: ReadingAnchor?, stabilizeScrollers: Bool = true) {
         guard let parent, let index, scrolls[0].contentSize.width > 0 else { return }
+        arrivalFade?.cancel()
+        arrivalFade = nil
         let count = parent.layout == .sideBySide ? 2 : 1
         let font = ReadingTextStyle.font(for: parent.typography)
         let style = ReadingTextStyle.paragraphStyle(for: parent.typography); style.paragraphSpacing = 20
@@ -330,16 +338,6 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
             layoutText(anchor: anchor, stabilizeScrollers: false)
             return
         }
-        for col in 0...1 {
-            var range = NSRange(location:0,length:0)
-            if col < count, let selection = parent.presentation.selection,
-               let (column, ranges) = index.displayRanges(selection, counterpart: false, ranges: [selection.range]),
-               column == col, let projected = ranges.first {
-                if NSMaxRange(projected) <= texts[col].string.utf16.count { range = projected }
-            }
-            texts[col].setSelectedRange(range)
-        }
-        appliedHighlights=[[],[]]
         if let anchor { restore(anchor) }
         else {
             for col in 0..<count { scrolls[col].contentView.scroll(to:.zero);scrolls[col].reflectScrolledClipView(scrolls[col].contentView) }
@@ -364,7 +362,7 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
         if stack != stackedTables {
             stackedTables = stack
             index = RenderedTextIndex(document: parent.document, layout: parent.layout, markdown: projection,
-                                      stackedTables: stack, columnLabel: AppLocalization.text("Column", language: parent.language))
+                                      stackedTables: stack, columnLabel: AppLocalization.text("Column", language: parent.language), translationOnly: parent.translationOnly)
         }
         guard let index else { return }
         let attributed = widths.indices.map { column in
@@ -410,7 +408,6 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
                 storage.endEditing()
             }
         }
-        markdownAttributes = attributed
         markdownPositions = [[], []]
         for column in widths.indices {
             let text = texts[column]
@@ -434,17 +431,6 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
             let height = max(texts[0].frame.height, texts[1].frame.height)
             for text in texts { text.setFrameSize(NSSize(width: text.frame.width, height: height)) }
         }
-        for column in 0...1 {
-            var restoredRange = NSRange(location: 0, length: 0)
-            if column < widths.count, let selection = parent.presentation.selection,
-               let (selectedColumn, ranges) = index.displayRanges(selection, counterpart: false, ranges: [selection.range]),
-               selectedColumn == column, let first = ranges.first, let last = ranges.last,
-               NSMaxRange(last) - first.location == selection.range.length {
-                restoredRange = NSUnionRange(first, last)
-            }
-            texts[column].setSelectedRange(restoredRange)
-        }
-        appliedHighlights = [[], []]
         if let anchor { restoreMarkdown(anchor) }
         else { for column in widths.indices { scrollMarkdown(column: column, to: 0) } }
     }
@@ -504,7 +490,8 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
     private func publishMarkdownAnchor(_ anchor: ReadingAnchor) {
         lastAnchor = anchor
         anchorPublication?.cancel()
-        let publication = DispatchWorkItem { [weak self] in self?.parent?.onAnchor(anchor) }
+        let publish = parent?.onAnchor
+        let publication = DispatchWorkItem { publish?(anchor) }
         anchorPublication = publication
         // Persist after a short idle period; dragging only touches cached geometry.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: publication)
@@ -514,7 +501,7 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
         guard let parent, let index else { return }
         let count = parent.layout == .sideBySide ? 2 : 1
         for column in 0..<count where only == nil || only == column {
-            let side = count == 2 ? (column == 0 ? ReadingSide.source : .translation) : anchor.side
+            let side = parent.translationOnly ? .translation : count == 2 ? (column == 0 ? ReadingSide.source : .translation) : anchor.side
             let positions = markdownPositions[column]
             let match = positions.first { $0.span.paragraphID == anchor.paragraphID && $0.span.side == side }
                 ?? (count == 1 ? positions.first { $0.span.paragraphID == anchor.paragraphID && $0.span.side == .source } : nil)
@@ -545,7 +532,7 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
         for column in 0...1 {
             var rules: [NSRect] = []
             var unfinished: [NSRect] = []
-            if parent.layout == .paragraphs {
+            if parent.layout == .paragraphs && !parent.translationOnly {
                 for group in index.markdownGroups[column] where group.span.side == .translation && group.span.range.length > 0 {
                     let first = markdownRect(at: group.span.range.location, column: column)
                     let last = markdownRect(at: NSMaxRange(group.span.range) - 1, column: column)
@@ -561,6 +548,139 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
             texts[column].rules = rules
             texts[column].unfinished = unfinished
             texts[column].needsDisplay = true
+        }
+    }
+
+    func visibleAnchor(for session: UUID) -> ReadingAnchor? {
+        guard session == renderedSessionID, let index, let parent else { return nil }
+        let column = parent.layout == .sideBySide && lastAnchor?.side == .translation ? 1 : 0
+        let y = scrolls[column].contentView.bounds.minY
+        let span: RenderedSpan, frame: NSRect, group: UUID?
+        if index.isMarkdown {
+            let positions = markdownPositions[column]
+            guard let item = positions.first(where: { $0.frame.minY <= y + 4 && $0.frame.maxY > y + 4 })
+                    ?? positions.last(where: { $0.frame.minY <= y + 4 }) ?? positions.first else { return nil }
+            span = item.span; frame = item.frame; group = item.groupID
+        } else {
+            let spans = index.paragraphs[column].filter { $0.range.length > 0 }
+            guard let i = spans.lastIndex(where: { rect($0, column: column).minY <= y + 4 }) ?? spans.indices.first else { return nil }
+            span = spans[i]
+            let top = rect(span, column: column).minY
+            let bottom = i + 1 < spans.count ? rect(spans[i + 1], column: column).minY : rect(span, column: column).maxY
+            frame = NSRect(x: 0, y: top, width: 0, height: max(1, bottom - top)); group = nil
+        }
+        let fraction = max(0, min(1, (y - frame.minY) / max(1, frame.height)))
+        let offset = texts[column].characterIndexForInsertion(at: NSPoint(x: texts[column].textContainerOrigin.x + 1, y: max(y, frame.minY) + 1)) - span.range.location
+        return .init(paragraphID: span.paragraphID, side: span.side, fraction: fraction,
+                     offset: index.isMarkdown && parent.markdown?.isSourceMode == false && offset >= 0 && offset < span.range.length ? offset : nil,
+                     sectionID: group)
+    }
+
+    private struct SelectionPosition {
+        let paragraphID: UUID
+        let side: ReadingSide
+        let offset: Int
+
+        init(_ span: RenderedSpan, at location: Int) {
+            paragraphID = span.paragraphID
+            side = span.side
+            offset = location - span.range.location
+        }
+    }
+
+    private enum Endpoints {
+        case endOfText
+        case entireText
+        case blocks(start: SelectionPosition, end: SelectionPosition)
+    }
+    private func caretRect(at offset: Int) -> NSRect? {
+        let text = texts[0]
+        guard let window, offset >= 0, offset <= text.string.utf16.count else { return nil }
+        let rect = text.firstRect(forCharacterRange: NSRange(location: offset, length: 0), actualRange: nil)
+        guard rect.height > 0 else { return nil }
+        var attachment = text.convert(window.convertFromScreen(rect), from: nil)
+        attachment.size.width = max(1, attachment.width)
+        return attachment
+    }
+
+    private func viewportLine(anchor: ReadingAnchor?) -> ViewportLine? {
+        guard let anchor, let span = index?.paragraphs[0].first(where: { $0.paragraphID == anchor.paragraphID }),
+              span.range.length > 0 else { return nil }
+        let y = scrolls[0].contentView.bounds.minY
+        let text = texts[0]
+        let position = text.characterIndexForInsertion(at: NSPoint(x: text.textContainerOrigin.x + 1, y: y + 2))
+        let offset = min(max(span.range.location, position), NSMaxRange(span.range) - 1)
+        guard let rect = caretRect(at: offset) else { return nil }
+        return ViewportLine(paragraph: span.paragraphID, offset: offset - span.range.location, distanceFromTop: rect.minY - y)
+    }
+
+    private func selectionEndpoints(in column: Int) -> Endpoints? {
+        guard let index else { return nil }
+        let range = texts[column].selectedRange(), length = index.strings[column].utf16.count
+        guard length > 0, range.location <= length, range.length <= length - range.location else { return nil }
+        if range.location == length { return .endOfText }
+        if range.length == length { return .entireText }
+        let spans = index.paragraphs[column]
+        func owner(at character: Int) -> RenderedSpan? {
+            if index.isMarkdown {
+                return index.markdownBlocks[column].last { $0.paragraphRange.location <= character }?.span
+            }
+            return spans.last { $0.range.location <= character }
+        }
+        guard let start = owner(at: range.location),
+              let end = owner(at: max(range.location, NSMaxRange(range) - 1)) else { return nil }
+        return .blocks(start: SelectionPosition(start, at: range.location), end: SelectionPosition(end, at: NSMaxRange(range)))
+    }
+
+    private func nativeRange(_ ends: Endpoints, in column: Int) -> NSRange? {
+        guard let index else { return nil }
+        let length = index.strings[column].utf16.count
+        switch ends {
+        case .entireText: return NSRange(location: 0, length: length)
+        case .endOfText: return NSRange(location: length, length: 0)
+        case let .blocks(startPosition, endPosition):
+            func position(_ endpoint: SelectionPosition) -> Int? {
+                let spans = index.paragraphs[column]
+                guard let i = spans.firstIndex(where: { $0.paragraphID == endpoint.paragraphID && $0.side == endpoint.side }) else { return nil }
+                let lower = index.isMarkdown ? index.markdownBlocks[column][i].paragraphRange.location : spans[i].range.location
+                let upper: Int
+                if i + 1 == spans.count { upper = length }
+                else { upper = index.isMarkdown ? index.markdownBlocks[column][i+1].paragraphRange.location : spans[i+1].range.location }
+                return min(upper, max(lower, spans[i].range.location + endpoint.offset))
+            }
+            guard let start = position(startPosition), let end = position(endPosition), start <= end else { return nil }
+            return NSRange(location: start, length: end - start)
+        }
+    }
+
+    private func captureSelections() -> [Endpoints?] {
+        texts.indices.map { selectionEndpoints(in: $0) }
+    }
+
+    private func restoreSelections(_ selections: [Endpoints?]) {
+        for column in texts.indices {
+            let range = selections.indices.contains(column) ? selections[column].flatMap { nativeRange($0, in: column) } : nil
+            texts[column].setSelectedRange(range ?? NSRange(location: 0, length: 0))
+        }
+    }
+
+    private func fadeNewPassages(previousIDs: Set<UUID>) {
+        guard let index, let storage = texts[0].textStorage, storage.length == index.strings[0].utf16.count else { return }
+        var colors: [(NSRange, NSColor)] = []
+        for span in index.paragraphs[0] where span.range.length > 0 && !previousIDs.contains(span.paragraphID) {
+            storage.enumerateAttribute(.foregroundColor, in: span.range) { color, range, _ in
+                if let color = color as? NSColor { colors.append((range, color)) }
+            }
+        }
+        guard !colors.isEmpty else { return }
+        arrivalFade = Task {
+            for step in 1...6 {
+                guard !Task.isCancelled, colors.allSatisfy({ NSMaxRange($0.0) <= storage.length }) else { return }
+                storage.beginEditing()
+                for (range, color) in colors { storage.addAttribute(.foregroundColor, value: step == 6 ? color : color.withAlphaComponent(color.alphaComponent * CGFloat(step) / 6), range: range) }
+                storage.endEditing()
+                if step < 6 { try? await Task.sleep(for: .milliseconds(25)) }
+            }
         }
     }
 
@@ -593,58 +713,18 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
         return (title, { NSWorkspace.shared.open(url) })
     }
 
-    func textViewDidChangeSelection(_ notification: Notification) {
-        guard !updating, let text = notification.object as? NSTextView, let column = texts.firstIndex(where: { $0 === text }) else { return }
-        let range = text.selectedRange()
-        parent?.onSelect(range.length > 0 ? index?.selection(column: column, range: range) : nil)
-    }
-
-    private func highlight(force: Bool = false) {
-        guard let parent, let index else { return }
-        let selection = parent.presentation.pinned ?? parent.presentation.selection ?? parent.presentation.hover
-        updating = true
-        defer { updating = false }
-        var desired:[[NSRange]]=[[],[]]
-        if let selection {
-            for counterpart in [false,true] {
-                let phrases=parent.presentation.displayedPhraseRanges
-                guard let (column, ranges) = index.highlightedRanges(selection, counterpart: counterpart, ranges: counterpart ? phrases : []) else { continue }
-                desired[column] += ranges
-            }
-        }
-        let color = ThemeColors.correspondence(parent.correspondenceColor)
-        let underline: NSUnderlineStyle = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? .thick : .single
-        for col in 0...1 where force || desired[col] != appliedHighlights[col] {
-            guard let storage=texts[col].textStorage else { continue }
-            storage.beginEditing()
-            for range in appliedHighlights[col] where NSMaxRange(range) <= storage.length {
-                for key in [NSAttributedString.Key.backgroundColor,.underlineStyle,.underlineColor] {
-                    storage.removeAttribute(key,range:range)
-                    if index.isMarkdown, markdownAttributes.indices.contains(col), NSMaxRange(range) <= markdownAttributes[col].length {
-                        markdownAttributes[col].enumerateAttribute(key, in: range) { value, original, _ in
-                            if let value { storage.addAttribute(key, value: value, range: original) }
-                        }
-                    }
-                }
-            }
-            for range in desired[col] where NSMaxRange(range) <= storage.length {
-                storage.addAttributes([.backgroundColor:color,.underlineStyle:underline.rawValue,.underlineColor:NSColor.labelColor],range:range)
-            }
-            storage.endEditing();texts[col].needsDisplay=true
-            appliedHighlights[col]=desired[col]
-        }
-    }
-
     private func decorate() {
         guard let parent, let index else { return }
-        let combined = parent.layout == .paragraphs
-        texts[0].setAccessibilityLabel(AppLocalization.text(combined ? "Original and translation" : "Original text", language: parent.language))
+        let combined = parent.layout == .paragraphs && !parent.translationOnly
+        texts[0].setAccessibilityLabel(AppLocalization.text(parent.translationOnly ? "Translation" : combined ? "Original and translation" : "Original text", language: parent.language))
         let help = index.isMarkdown ? "Each original section is followed by its translation." : "Each original paragraph is followed by its translation."
         texts[0].setAccessibilityHelp(combined ? AppLocalization.text(help, language: parent.language) : nil)
         texts[1].setAccessibilityLabel(AppLocalization.text("Translation", language: parent.language))
         emptyMessage.stringValue = AppLocalization.text("Translation will appear here", language: parent.language)
-        emptyMessage.isHidden = parent.layout != .sideBySide || parent.jobState != .idle ||
-            !parent.document.translations.isEmpty || (index.isMarkdown && index.markdownGroups[1].contains { $0.span.range.length > 0 })
+        emptyMessage.isHidden = parent.translationOnly
+            ? parent.jobState != .idle || !index.strings[0].isEmpty
+            : parent.layout != .sideBySide || parent.jobState != .idle || !parent.document.translations.isEmpty ||
+                (index.isMarkdown && index.markdownGroups[1].contains { $0.span.range.length > 0 })
         if index.isMarkdown {
             decorateMarkdown(parent, index: index)
             return
@@ -652,9 +732,9 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
         for col in 0...1 {
             texts[col].rules = []; texts[col].unfinished = []
             for span in index.paragraphs[col] {
-                if parent.layout == .paragraphs, span.side == .translation, span.range.length > 0 {
+                if parent.layout == .paragraphs, !parent.translationOnly, span.side == .translation, span.range.length > 0 {
                     let first = rect(span, column: col)
-                    let last = rect(.init(paragraphID: span.paragraphID, unitID: nil, side: span.side,
+                    let last = rect(.init(paragraphID: span.paragraphID, side: span.side,
                         range: NSRange(location: NSMaxRange(span.range) - 1, length: 1)), column: col)
                     texts[col].rules.append(NSRect(x: first.minX - 12, y: first.minY, width: 2, height: max(12, last.maxY - first.minY)))
                 }
@@ -704,7 +784,7 @@ final class ParallelReader: NSView, NSTextViewDelegate, NativeReadingRenderState
                 && !spans.contains(where: { $0.paragraphID == anchor.paragraphID && $0.side == .translation && $0.range.length > 0 }) ? ReadingSide.source : anchor.side
             guard let i = spans.firstIndex(where: { $0.paragraphID == anchor.paragraphID && (parent?.layout == .sideBySide || $0.side == side) }) else { continue }
             let top = rect(spans[i], column: col).minY
-            let bottom = i+1 < spans.count ? rect(spans[i+1], column: col).minY : texts[col].bounds.height
+            let bottom = i+1 < spans.count ? rect(spans[i+1], column: col).minY : rect(spans[i], column: col).maxY
             let y = min(max(0,top + anchor.fraction*max(1,bottom-top)),max(0,texts[col].bounds.height-scrolls[col].contentSize.height))
             scrolls[col].contentView.scroll(to: NSPoint(x:0,y:y));scrolls[col].reflectScrolledClipView(scrolls[col].contentView)
         }

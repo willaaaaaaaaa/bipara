@@ -11,7 +11,7 @@
 | Framework | LangChain first; explicitly authored LangGraph orchestration deferred |
 | UI | Native reading, Settings and multiple document tabs; English-default interface; System-default appearance with Light/Dark overrides |
 | Markdown | Local detection, Swift-owned translation planning, rendered bilingual sections, and native selection. [Native design](design/technical-design.md#markdown-structure-and-rendering) |
-| Implementation baseline | Swift 6, arm64/x86_64 and CPython 3.13; compatibility targets are macOS 26/27 on Apple Silicon and macOS 26 on compatible Intel Macs, with minimum deployment version 26.0 and local-machine acceptance |
+| Implementation baseline | Swift 6, arm64/x86_64 and CPython 3.13; compatibility targets are macOS 14.0 or later on compatible Apple silicon and Intel Macs and local-machine acceptance |
 | Validation | Native app and packaged worker run on the development machine; M0 feasibility passed, M1 native acceptance partial; see [current evidence](validation.md) |
 | Distribution | MIT; tagged formal DMGs; separate arm64/x86_64 installers; mobile and App Store qualification remain separate |
 
@@ -34,7 +34,7 @@ Swift owns source identity, segmentation, whole-document scheduling, task state,
 
 `ModelGateway` has two operations: translate a bounded batch and analyze a selection against existing translated text. Its real adapter owns child-process/credential details; a fixture adapter supplies deterministic tests. Versioned profiles encapsulate concrete differences in provider parameters and output modes. No planner, tools, agent team, generic plugin platform, message queue, or database is needed.
 
-Global preferences are independent of document state. Jobs retain provider/model/prompt snapshots. Every async result is tied to its tab session, document revision, job/attempt and request. Both layouts read the same canonical text and correspondence data. Hover is local; only eligible committed selections may request additional analysis.
+Global preferences are independent of document state. Jobs retain provider/model/prompt snapshots. Every async result is tied to its tab session, document revision, job/attempt and request. Reading layouts share the same canonical text. Text selection stays in the active pane.
 
 The [model configuration contract](design/model-settings.md) freezes endpoint/effort and local credential bindings in runtime job snapshots. It uses the worker and LangChain boundary, preferences schema 2, pipe protocol 2 and portable document schema 3 with v1/v2 reading compatibility. Supported profiles and prompt versions are explicit runtime contracts; see the linked specifications below.
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -48,6 +49,7 @@ def main() -> int:
         delay_translate=args.delay_translate,
         delay_align=args.delay_align,
         fail_code=args.fail,
+        unit_reply=os.environ.get("BIPARA_FIXTURE_UNIT_REPLY"),
     )
     return asyncio.run(
         serve(operation, invocation_timeout=args.invocation_timeout, on_shutdown=aclose)

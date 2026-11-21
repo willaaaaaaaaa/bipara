@@ -47,9 +47,7 @@ public struct ModelConfigurationRecord: Codable, Sendable, Equatable, Identifiab
     }
 }
 
-/// Vendor labels and seed connections for fresh preferences. The model
-/// editor does not expose presets or use these values to prefill fields.
-enum ModelVendor: String, CaseIterable {
+enum ModelVendor: String {
     case openai, kimi, glm, deepseek, anthropic
 
     var name: String {
@@ -59,26 +57,6 @@ enum ModelVendor: String, CaseIterable {
         case .glm: "GLM"
         case .deepseek: "DeepSeek"
         case .anthropic: "Anthropic"
-        }
-    }
-
-    var models: [String] {
-        switch self {
-        case .openai: ["gpt-6-luna", "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra"]
-        case .kimi: ["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed", "kimi-k3"]
-        case .glm: ["glm-5.3-flash", "glm-5.3"]
-        case .deepseek: ["deepseek-flash", "deepseek-v4-pro"]
-        case .anthropic: ["claude-sonnet-4-6"]
-        }
-    }
-
-    var baseURL: String {
-        switch self {
-        case .openai: WorkerContract.openAIStandardBaseURL
-        case .kimi: "https://api.moonshot.cn/v1/"
-        case .glm: WorkerContract.glmStandardBaseURL
-        case .deepseek: "https://api.deepseek.com/"
-        case .anthropic: "https://api.anthropic.com/"
         }
     }
 }
@@ -99,8 +77,34 @@ extension ModelConfigurationRecord {
                             requestOptions: requestOptions, credentialIdentity: credentialIdentity)
     }
 
+    static func interfaceLabel(profile: String, provider: String) -> String {
+        if let api = ModelAPIProtocol.from(profile: profile) { return api.displayName }
+        let vendor = ModelVendor(rawValue: provider)?.name ?? provider
+        return WorkerContract.accepts(provider: provider, profile: profile) ? "\(vendor) Chat Completions" : profile
+    }
+
+    func summary(effortLabel: String) -> String {
+        let interface = Self.interfaceLabel(profile: profile, provider: provider)
+        let fields = [vendorLabel, interface, modelID, effortLabel].compactMap { $0 }
+        return fields.joined(separator: " · ")
+    }
+
+    func selectionLabel(in entries: [Self], effortLabel: String) -> String {
+        let duplicate = entries.contains { $0.id != id && $0.resolvedName.lowercased() == resolvedName.lowercased() }
+        return duplicate ? "\(resolvedName) · \(effortLabel)" : resolvedName
+    }
+
     func pickerLabel(effortLabel: String) -> String {
-        "\(resolvedName) · \(vendorName) · \(modelID) · \(effortLabel)"
+        "\(resolvedName) · \(summary(effortLabel: effortLabel))"
+    }
+}
+
+extension ModelAPIProtocol {
+    var displayName: String {
+        switch self {
+        case .openai: "OpenAI Responses"
+        case .anthropic: "Anthropic Messages"
+        }
     }
 }
 

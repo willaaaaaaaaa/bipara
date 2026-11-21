@@ -15,6 +15,7 @@ struct AcceptanceRepairTests {
     }
     private func preparedRuntime(_ gateway:ScriptedGateway = ScriptedGateway(),files:DocumentFileService = DocumentFileService()) -> AppRuntime {
         let keys=FaultCredentials(),defs=UserDefaults(suiteName:"dev.bipara.test.\(UUID())")!
+        SavedResponsesFixture.install(defs)
         let app=AppRuntime(gateway:gateway,keychain:keys,defaults:defs,files:files)
         keys.prepareDefault(app.settings,defaults:defs)
         return app
@@ -43,6 +44,20 @@ struct AcceptanceRepairTests {
         #expect(app.settingsRequested)
         #expect(app.workspace.tabs[0].document == before)
         #expect(gateway.dispatchCount == 1)
+    }
+
+    @Test func incompleteTranslationReportsSourceUnitNumbers() async throws {
+        let gateway = ScriptedGateway()
+        let app = preparedRuntime(gateway)
+        let index = try app.workspace.newTab(source: "First.\nSecond.\nThird.", direction: .enToZh)
+        gateway.failureForRequest = { request in
+            request.units.contains { $0.text == "Second." } ? .init(code: .invalidOutput, validationFailure: .unitMismatch) : nil
+        }
+        await app.translate(app.workspace.tabs[index].sessionID)
+        let ids = app.workspace.tabs[index].document.units.map(\.id)
+        try #require(ids.count == 3)
+        #expect(app.workspace.tabs[index].document.translations.map(\.unitID) == [ids[0], ids[2]])
+        #expect(app.errorMessage == String(format: app.text("Unfinished translation units (%lld): %@. Retry translates only these units."), 1, "2"))
     }
 
     @Test(arguments:[""," \n\t"])
@@ -79,21 +94,6 @@ struct AcceptanceRepairTests {
         await #expect(throws:WorkspaceStore.PlanningError.documentTooLarge){try await app.apply(session)}
         #expect(app.workspace.tabs[0].document == before)
         #expect(app.workspace.tabs[0].draftText == draft);#expect(app.workspace.tabs[0].isDirty)
-    }
-
-    @Test func existingPinCanBeReplacedWithoutChangingItsDisplayedGranularity() throws {
-        let app=runtime();try app.workspace.newTab(source:"Hello there. Another sentence.",direction:.enToZh)
-        let tab=app.workspace.tabs[0],first=try #require(tab.document.units.first),last=try #require(tab.document.units.last)
-        let a=ReadingSelection(paragraphID:first.paragraphID,unitID:first.id,side:.source,range:.init(location:0,length:5))
-        let b=ReadingSelection(paragraphID:last.paragraphID,unitID:last.id,side:.source,range:.init(location:0,length:7))
-        #expect(a != b)
-        app.reading[tab.sessionID,default:.init()].selection=a
-        app.reading[tab.sessionID]?.phraseRanges=[.init(location:0,length:2)];app.pin()
-        app.reading[tab.sessionID]?.selection=b;app.reading[tab.sessionID]?.phraseRanges=[]
-        #expect(app.reading[tab.sessionID]?.canPin == true)
-        #expect(app.reading[tab.sessionID]?.displayedPhraseRanges == [.init(location:0,length:2)])
-        app.pin();#expect(app.reading[tab.sessionID]?.pinned == b)
-        #expect(app.reading[tab.sessionID]?.displayedPhraseRanges == [])
     }
 
     @Test func partialTranslationExportRequiresExplicitChoice() throws {
@@ -133,6 +133,250 @@ struct AcceptanceRepairTests {
         #expect(coordinator.waitingCallerCount == 0)
     }
 
+    @Test(arguments: ["source edit", "new attempt", "discard"])
+    func waitingResumeCannotStartOnChangedDocumentOrAttempt(_ change: String) async throws {
+        let gateway = ScriptedGateway(), barrier = TestBarrier()
+        gateway.barrier = barrier
+        gateway.waitsForReplyAfterCancellation = true
+        let app = preparedRuntime(gateway)
+        let index = try app.workspace.newTab(source: "Original source.", direction: .enToZh)
+        let session = app.workspace.tabs[index].sessionID
+        let original = Task { await app.translate(session) }
+        try await appWaitUntil { await barrier.count == 1 }
+        app.coordinator.cancel(tabIndex: index, workspace: app.workspace)
+        let resume = Task { await app.translate(session) }
+        defer { Task { await barrier.release(1) } }
+        try await appWaitUntil { app.coordinator.waitingCallerCount == 1 }
+
+        switch change {
+        case "source edit":
+            app.workspace.withTab(index) { $0.draftText = "New source." }
+            #expect(try await app.apply(session))
+        case "new attempt":
+            try app.coordinator.resume(tabIndex: index, workspace: app.workspace)
+        default:
+            app.discardTranslations(session)
+        }
+
+        let expected = app.workspace.tabs[index]
+        gateway.barrier = nil
+        await barrier.release(1)
+        await original.value
+        await resume.value
+        #expect(gateway.dispatchCount == 1)
+        #expect(app.workspace.tabs[index] == expected)
+        #expect(!app.hasTranslationFailure(for: session))
+    }
+
+    @Test(arguments: [false, true])
+    func retryWhileFailedSiblingDrainsCoalescesLiveCallers(cancelAll: Bool) async throws {
+        let gateway = ScriptedGateway(), barrier = TestBarrier()
+        gateway.barrier = barrier
+        gateway.waitsForReplyAfterCancellation = true
+        gateway.failAtDispatch = 1
+        let app = preparedRuntime(gateway)
+        let source = (0..<80).map { "Sentence number \($0)." }.joined(separator: "\n")
+        let index = try app.workspace.newTab(source: source, direction: .enToZh)
+        let session = app.workspace.tabs[index].sessionID
+        let original = Task { await app.translate(session) }
+        try await appWaitUntil { await barrier.count == 2 }
+        defer { Task { await barrier.release(2) } }
+        let failedIDs = gateway.requests[0].units.map(\.unitID)
+        await barrier.release(1)
+        try await appWaitUntil { app.workspace.tabs[index].job.state == .failed }
+
+        let retries = (0..<3).map { _ in Task { await app.translate(session) } }
+        try await appWaitUntil { app.coordinator.waitingCallerCount == retries.count }
+        retries[0].cancel()
+        if cancelAll {
+            for retry in retries.dropFirst() { retry.cancel() }
+            gateway.barrier = nil
+        }
+        await barrier.release(2)
+        if cancelAll {
+            await original.value
+        } else {
+            try await appWaitUntil { await barrier.count >= 3 }
+            await original.value
+            #expect(app.workspace.tabs[index].job.state == .running)
+            #expect(!app.hasTranslationFailure(for: session))
+            #expect(app.errorMessage == nil)
+            gateway.barrier = nil
+            await barrier.release(3)
+        }
+        for retry in retries { await retry.value }
+
+        let tab = app.workspace.tabs[index]
+        if cancelAll {
+            #expect(gateway.dispatchCount == 2)
+            #expect(tab.job.state == .failed)
+            #expect(app.hasTranslationFailure(for: session))
+        } else {
+            #expect(gateway.dispatchCount == 3)
+            #expect(gateway.requests.dropFirst(2).flatMap(\.units).map(\.unitID) == failedIDs)
+            #expect(tab.job.state == .completed)
+            #expect(tab.document.translations.count == tab.document.units.count)
+            #expect(!app.hasTranslationFailure(for: session))
+            #expect(app.errorMessage == nil)
+        }
+        #expect(app.coordinator.waitingCallerCount == 0)
+    }
+
+    @Test(arguments: ["edit", "retry"])
+    func previousFailureLosesOwnershipBeforePresentation(_ change: String) async throws {
+        let gateway = ScriptedGateway(), app = preparedRuntime(gateway)
+        let index = try app.workspace.newTab(source: "Original source.", direction: .enToZh)
+        let tab = app.workspace.tabs[index], snapshot = DispatchFixtures.snapshot()
+        gateway.failAtDispatch = 1
+        do {
+            try await app.coordinator.translate(tab: tab, workspace: app.workspace, snapshot: snapshot,
+                binding: DispatchFixtures.binding(), credential: DispatchFixtures.credential())
+            Issue.record("Expected a failed attempt")
+        } catch let failure as TranslationCoordinator.Failure {
+            #expect(failure.isCurrent())
+            if change == "edit" {
+                app.workspace.withTab(index) { $0.draftText = "Changed source." }
+                #expect(try await app.apply(tab.sessionID))
+            } else {
+                try await app.coordinator.translate(tabIndex: index, workspace: app.workspace, snapshot: snapshot,
+                    binding: DispatchFixtures.binding(), credential: DispatchFixtures.credential())
+                #expect(app.workspace.tabs[index].job.state == .completed)
+            }
+            #expect(!failure.isCurrent())
+        }
+    }
+
+    @Test func mismatchedSnapshotRevisionCannotDispatch() async throws {
+        let gateway = ScriptedGateway(), app = preparedRuntime(gateway)
+        let index = try app.workspace.newTab(source: "New source.", direction: .enToZh)
+        let before = app.workspace.tabs[index]
+        try await app.coordinator.translate(tabIndex: index, workspace: app.workspace,
+            snapshot: DispatchFixtures.snapshot(revision: before.document.sourceRevision - 1),
+            binding: DispatchFixtures.binding(), credential: DispatchFixtures.credential())
+        #expect(gateway.dispatchCount == 0)
+        #expect(app.workspace.tabs[index] == before)
+    }
+
+    @Test func cancelledRetranslationImmediatelyAcceptsResume() async throws {
+        let gateway = ScriptedGateway(), barrier = TestBarrier()
+        let app = preparedRuntime(gateway)
+        let index = try app.workspace.newTab(source: "Translate again.", direction: .enToZh)
+        let session = app.workspace.tabs[index].sessionID
+        await app.translate(session)
+        let firstJob = try #require(app.workspace.tabs[index].job.snapshot)
+        gateway.barrier = barrier
+        gateway.waitsForReplyAfterCancellation = true
+        app.alertHandler = { _, _, buttons in
+            #expect(buttons.first == "Retranslate")
+            #expect(app.replacing.contains(session))
+            #expect(!app.showsCompletionCopy(app.workspace.tabs[index]))
+            return 0
+        }
+        let replacement = Task { await app.translate(session, retranslate: true) }
+        try await appWaitUntil { await barrier.count == 2 }
+        defer { Task { await barrier.release(2) } }
+        let replacementJob = try #require(app.workspace.tabs[index].job.snapshot)
+        #expect(replacementJob.jobID != firstJob.jobID)
+        app.primaryAction()
+        #expect(app.workspace.tabs[index].job.state == .paused)
+        let resume = Task { await app.translate(session) }
+        try await appWaitUntil { app.coordinator.waitingCallerCount == 1 }
+        gateway.barrier = nil
+        await barrier.release(2)
+        await replacement.value
+        await resume.value
+        #expect(gateway.dispatchCount == 3)
+        #expect(app.workspace.tabs[index].job.snapshot == replacementJob)
+        #expect(app.workspace.tabs[index].job.state == .completed)
+        #expect(app.showsCompletionCopy(app.workspace.tabs[index]))
+    }
+
+    @Test func closeTargetsOriginalSessionAfterStopConfirmationMovesTabs() async throws {
+        let gateway = ScriptedGateway(), barrier = TestBarrier()
+        gateway.barrier = barrier
+        let app = preparedRuntime(gateway)
+        _ = try app.workspace.newTab()
+        let closing = try app.workspace.newTab(source: "Closing document.")
+        let closingSession = app.workspace.tabs[closing].sessionID
+        let firstJob = Task { await app.translate(closingSession) }
+        try await appWaitUntil { await barrier.count == 1 }
+        let surviving = try app.workspace.newTab(source: "Surviving document.")
+        let survivingSession = app.workspace.tabs[surviving].sessionID
+        let otherJob = Task { await app.translate(survivingSession) }
+        try await appWaitUntil { await barrier.count == 2 }
+        app.alertHandler = { _, _, buttons in
+            if buttons.first == "Stop and Close" {
+                app.workspace.closeTab(at: 0)
+                return 0
+            }
+            #expect(buttons == ["Save", "Discard", "Cancel"])
+            return 1
+        }
+        #expect(await app.close(closingSession))
+        await barrier.release(1)
+        await barrier.release(2)
+        await firstJob.value
+        await otherJob.value
+        #expect(app.workspace.tabs.map(\.sessionID) == [survivingSession])
+        #expect(app.workspace.activeTab?.job.state == .completed)
+    }
+
+    @Test func backgroundFailuresKeepSeparateReopenableDetails() async throws {
+        let gateway = ScriptedGateway(), barrier = TestBarrier()
+        gateway.barrier = barrier
+        gateway.failureForRequest = { request in
+            request.units.first?.text == "Plain source." ? .init(code: .network, httpStatus: 503) : nil
+        }
+        let app = preparedRuntime(gateway)
+        let plain = try app.workspace.newTab(source: "Plain source.", direction: .enToZh)
+        let plainSession = app.workspace.tabs[plain].sessionID
+        let plainJob = Task { await app.translate(plainSession) }
+        try await appWaitUntil { await barrier.count == 1 }
+        let markdown = try app.workspace.newTab(source: "# Setup\n\nOpen the **window**.", direction: .enToZh)
+        let markdownSession = app.workspace.tabs[markdown].sessionID
+        let markdownJob = Task { await app.translate(markdownSession) }
+        try await appWaitUntil { await barrier.count == 2 }
+        _ = try app.workspace.newTab()
+        await barrier.release(1)
+        await barrier.release(2)
+        await plainJob.value
+        await markdownJob.value
+        #expect(app.hasTranslationFailure(for: plainSession))
+        #expect(app.hasTranslationFailure(for: markdownSession))
+        app.showTranslationFailure(for: markdownSession)
+        #expect(app.errorMessage == nil)
+        #expect(app.markdownFailure == nil)
+
+        app.workspace.switchTab(to: markdown)
+        app.showTranslationFailure(for: markdownSession)
+        let report = try #require(app.markdownFailure)
+        #expect(report.title == app.workspace.tabs[markdown].document.title)
+        #expect(report.failure.passages.first?.input == "Open the **window**.")
+        app.workspace.switchTab(to: plain)
+        #expect(app.markdownFailure == nil)
+        app.showTranslationFailure(for: plainSession)
+        #expect(app.errorMessage?.contains("HTTP 503") == true)
+        app.errorMessage = nil
+        app.showTranslationFailure(for: plainSession)
+        #expect(app.errorMessage?.contains("HTTP 503") == true)
+
+        gateway.barrier = nil
+        gateway.failureForRequest = nil
+        await app.translate(plainSession)
+        #expect(app.workspace.tabs[plain].job.state == .completed)
+        #expect(!app.hasTranslationFailure(for: plainSession))
+        #expect(app.errorMessage == nil)
+        #expect(app.hasTranslationFailure(for: markdownSession))
+        app.workspace.withTab(markdown) { $0.draftText = "# New source\n\nOpen the **door**." }
+        #expect(try await app.apply(markdownSession))
+        #expect(!app.hasTranslationFailure(for: markdownSession))
+        await app.translate(markdownSession)
+        #expect(app.hasTranslationFailure(for: markdownSession))
+        app.alertHandler = { _, _, _ in 1 }
+        #expect(await app.close(markdownSession))
+        #expect(!app.hasTranslationFailure(for: markdownSession))
+    }
+
     @Test func explicitRetranslateDiscardsPartialSnapshot() async throws {
         let g=ScriptedGateway();g.failAtDispatch=2
         let app=runtime(g);try app.workspace.newTab(source:String(repeating:"Hello there. ",count:100),direction:.enToZh)
@@ -152,36 +396,6 @@ struct AcceptanceRepairTests {
         #expect(!completed.isDisjoint(with:g.requests.dropFirst(2).flatMap(\.units).map(\.unitID)))
         #expect(g.configurations.dropFirst(2).allSatisfy{$0.provider == "glm" && $0.model == "changed-default"})
         #expect(app.workspace.tabs[0].job.state == .completed)
-    }
-
-    @Test func combinedAlignmentLimitMakesNoTask() throws {
-        let app=runtime();try app.workspace.newTab(source:"Hello there.",direction:.enToZh)
-        let doc=app.workspace.tabs[0].document,unit=try #require(doc.units.first),paragraph=try #require(doc.paragraphs.first)
-        let binding=RuntimeModelBinding(configurationID:try #require(app.settings.record.defaultConfiguration?.id),baseURL:WorkerContract.openAIStandardBaseURL, provider: "openai")
-        app.workspace.withTab(0){$0.document.jobSnapshot=snapshot(doc);$0.runtimeBinding=binding;$0.document.translations=[.init(unitID:unit.id,text:String(repeating:"x",count:8192),returnedModel:nil,completedAt:Date())]}
-        let selection=ReadingSelection(paragraphID:paragraph.id,unitID:unit.id,side:.source,range:.init(location:0,length:5))
-        app.selected(selection,session:app.workspace.tabs[0].sessionID)
-        #expect(!app.hasSelectionTask(for:app.workspace.tabs[0].sessionID))
-        #expect(app.reading[app.workspace.tabs[0].sessionID]?.selection == selection)
-    }
-
-    @Test func phraseCacheIsBoundedLRUAndSeparatesConfiguration() throws {
-        let unit=UUID(),source=Data("Hello".utf8),target=Data("你好".utf8),date=Date()
-        func key(_ offset:Int,model:String="original",effort:String="auto",bindingID:UUID=UUID()) -> SelectionCache.Key {
-            .init(sourceRevision:1,unit:unit,source:source,target:target,targetCompletedAt:date,
-                  side:"source",location:offset,length:1,provider:"openai",model:model,profile:WorkerContract.currentProfiles["openai"]!,effort:effort,bindingID:bindingID,promptVersion:"alignment.v1")
-        }
-        var cache=SelectionCache()
-        let identity=UUID()
-        for i in 0..<128 { cache.insert([],for:key(i,bindingID:identity)) }
-        #expect(cache.value(for:key(0,bindingID:identity)) == [])
-        cache.insert([.init(location:0,length:1)],for:key(128,bindingID:identity))
-        #expect(cache.count == 128);#expect(cache.value(for:key(1,bindingID:identity)) == nil)
-        #expect(cache.value(for:key(0,bindingID:identity)) == [])
-        #expect(cache.value(for:key(0,model:"changed",bindingID:identity)) == nil)
-        #expect(cache.value(for:key(0,effort:"low",bindingID:identity)) == nil)
-        #expect(cache.value(for:key(0,bindingID:UUID())) == nil)
-        #expect(cache.value(for:key(128,bindingID:identity)) == [.init(location:0,length:1)])
     }
 
     @Test func failedNewDestinationDoesNotRemainOwned() async throws {
@@ -204,7 +418,8 @@ struct AcceptanceRepairTests {
         let app=runtime();try app.workspace.newTab(source:(1...3000).map{"Example sentence \($0)."}.joined(separator:"\n"),direction:.enToZh)
         var doc=app.workspace.tabs[0].document
         let pending=32,completed=doc.units.count-pending,date=Date()
-        doc.jobSnapshot=snapshot(doc);doc.resolvedDirection = .enToZh
+        let retained = snapshot(doc)
+        doc.jobSnapshot=retained;doc.resolvedDirection = .enToZh
         doc.translations=doc.units.prefix(completed).map{.init(unitID:$0.id,text:"",returnedModel:nil,completedAt:date)}
         let overhead=try DocumentCodec.encode(doc).count
         let bytesPerUnit=(WorkerContract.documentFileByteLimit-overhead-(64 << 10))/completed
@@ -218,7 +433,7 @@ struct AcceptanceRepairTests {
         let g=ScriptedGateway();g.replyPrefix=String(repeating:"y",count:3900)
         let coordinator=TranslationCoordinator(gateway:g)
         await #expect(throws:TranslationCoordinator.CoordinatorError.documentTooLarge){
-            try await coordinator.translate(tabIndex:0,workspace:app.workspace,snapshot:DispatchFixtures.snapshot(model:"original"),binding:DispatchFixtures.binding(),credential:DispatchFixtures.credential())
+            try await coordinator.translate(tabIndex:0,workspace:app.workspace,snapshot:retained,binding:DispatchFixtures.binding(),credential:DispatchFixtures.credential())
         }
         #expect(g.dispatchCount == 1);#expect(app.workspace.tabs[0].document.translations == doc.translations)
         #expect(app.workspace.tabs[0].job.state == .failed)
@@ -230,6 +445,7 @@ struct AcceptanceRepairTests {
     @Test func settingsEditsDoNotMutateJobAndDeletionBlocksLaterDispatches() async throws {
         let g=ScriptedGateway(),barrier=TestBarrier();g.barrier=barrier
         let keys=FaultCredentials(),defs=UserDefaults(suiteName:"dev.bipara.test.\(UUID())")!
+        SavedResponsesFixture.install(defs)
         let app=AppRuntime(gateway:g,keychain:keys,defaults:defs)
         keys.prepareDefault(app.settings,defaults:defs)
         try app.workspace.newTab(source:String(repeating:"Hello there.\n\n",count:WorkerContract.maxUnitsPerBatch * 4),direction:.enToZh)
@@ -269,6 +485,7 @@ struct AcceptanceRepairTests {
     @Test func openedDocumentRequiresExplicitBindingBeforeResume() async throws {
         let g=ScriptedGateway()
         let keys=FaultCredentials(),defs=UserDefaults(suiteName:"dev.bipara.test.\(UUID())")!
+        SavedResponsesFixture.install(defs)
         let app=AppRuntime(gateway:g,keychain:keys,defaults:defs)
         keys.prepareDefault(app.settings,defaults:defs)
         try app.workspace.newTab(source:"First sentence here.\n\nSecond sentence follows.",direction:.enToZh)
@@ -311,8 +528,6 @@ struct AcceptanceRepairTests {
     @Test func emptyConfigurationListPreflightOffersSettingsWithoutDispatch() async throws {
         let g=ScriptedGateway(),defs=UserDefaults(suiteName:"dev.bipara.test.\(UUID())")!
         let app=AppRuntime(gateway:g,keychain:FaultCredentials(),defaults:defs)
-        app.settings.updateDraft{$0.modelConfigurations=[];$0.defaultModelConfigurationID=nil}
-        try app.settings.saveDraft()
         try app.workspace.newTab(source:"The window is open.",direction:.enToZh)
         let session=app.workspace.tabs[0].sessionID
         var offered:[String]=[]

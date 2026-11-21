@@ -76,7 +76,7 @@ actor WriteCounter {var count=0;func next()->Int{count+=1;return count}}
 struct RepairTests {
     private func defaults()->UserDefaults{UserDefaults(suiteName:"dev.bipara.test.\(UUID())")!}
     @Test func keyOnlyDraftCanSaveCancelAndCompensate()throws{
-        let keys=FaultCredentials(),settings=SettingsStore(defaults:defaults(),keychain:FaultCredentials())
+        let keys=FaultCredentials(),settings=SettingsStore(defaults:defaults(),keychain:FaultCredentials(),record:SavedResponsesFixture.record())
         let openai=try #require(settings.record.modelConfigurations.first{ $0.provider == "openai" })
         let glm=try #require(settings.record.modelConfigurations.first{ $0.vendorLabel == "GLM" })
         keys.keys[openai.id]="OLD_OPENAI";keys.keys[glm.id]="OLD_GLM"

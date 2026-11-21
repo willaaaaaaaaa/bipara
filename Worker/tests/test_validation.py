@@ -32,26 +32,49 @@ class TestTranslationOutput:
         with pytest.raises(WorkerError):
             validate_translation_output(raw, T01_IDS)
 
-    def test_count_mismatch_rejected(self):
-        with pytest.raises(WorkerError):
-            validate_translation_output(translation([]), T01_IDS)
+    @pytest.mark.parametrize("items", [[], None, {}])
+    def test_absent_rows_are_recoverable(self, items):
+        with pytest.raises(WorkerError) as exc:
+            validate_translation_output(translation(items), T01_IDS)
+        assert exc.value.validation_reason == "unit_mismatch"
 
-    def test_reordered_ids_rejected(self):
+    @pytest.mark.parametrize("line_feeds", [None, [0, 1]])
+    def test_reordered_results_follow_requested_ids(self, line_feeds):
         ids = ["22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333"]
+        second_text = "b" if line_feeds is None else "b  \nnext"
         raw = translation([
-            {"unit_id": ids[1], "text": "b"},
+            {"unit_id": ids[1], "text": second_text},
             {"unit_id": ids[0], "text": "a"},
         ])
-        with pytest.raises(WorkerError):
-            validate_translation_output(raw, ids)
-
-    def test_duplicate_ids_rejected(self):
-        raw = translation([
-            {"unit_id": T01_IDS[0], "text": "a"},
-            {"unit_id": T01_IDS[0], "text": "b"},
+        assert validate_translation_output(raw, ids, source_line_feeds=line_feeds) == translation([
+            {"unit_id": ids[0], "text": "a"},
+            {"unit_id": ids[1], "text": second_text},
         ])
-        with pytest.raises(WorkerError):
+
+    def test_reordered_results_do_not_borrow_another_units_line_budget(self):
+        ids = ["one", "two"]
+        raw = translation([{"unit_id": "two", "text": "b"}, {"unit_id": "one", "text": "a\nb"}])
+        with pytest.raises(WorkerError) as exc:
+            validate_translation_output(raw, ids, source_line_feeds=[0, 1])
+        assert exc.value.validation_reason == "invalid_translation_text"
+
+    def test_uuid_hex_case_keeps_identity_and_cannot_hide_duplicates(self):
+        ids = ["abcdefab-1234-4123-8123-abcdefabcdef", "fedcbafe-1234-4123-8123-abcdefabcdef"]
+        rows = [{"unit_id": ids[1].upper(), "text": "second"}, {"unit_id": ids[0], "text": "first"}]
+        assert validate_translation_output(translation(rows), ids) == translation([
+            {"unit_id": ids[0], "text": "first"}, {"unit_id": ids[1], "text": "second"},
+        ])
+        for bad_id in [ids[0].upper(), ids[1].replace("-", ""), " " + ids[1]]:
+            with pytest.raises(WorkerError) as exc:
+                validate_translation_output(translation([{**rows[0], "unit_id": bad_id}, rows[1]]), ids)
+            assert exc.value.validation_reason == "unit_mismatch"
+
+    @pytest.mark.parametrize("identity", [{"unit_id": T01_IDS[0]}, {"unit_id": "unknown"}, {"unit_id": []}, {}])
+    def test_duplicate_unknown_or_missing_id_is_recoverable(self, identity):
+        raw = translation([{"unit_id": T01_IDS[0], "text": "a"}, {**identity, "text": "b"}])
+        with pytest.raises(WorkerError) as exc:
             validate_translation_output(raw, T01_IDS + ["33333333-3333-4333-8333-333333333333"])
+        assert exc.value.validation_reason == "unit_mismatch"
 
     def test_blank_or_whitespace_text_rejected(self):
         for bad in ("", "  ", " padded"):

@@ -7,11 +7,6 @@ that the worker verifies before reporting ready. The fixture-only entry
 point is deliberately absent from this bundle.
 """
 
-import hashlib
-import json
-import atexit
-import shutil
-import tempfile
 import os
 import re
 import sys
@@ -19,35 +14,10 @@ from pathlib import Path
 
 worker_dir = Path(SPECPATH).resolve()
 root = worker_dir.parent
-prompts_dir = root / "prompts"
+sys.path.insert(0, str(root / "script"))
+from worker_assets import worker_asset_data
 
-asset_names = [
-    "translation.v1.txt",
-    "translation.v2.txt",
-    "translation.markdown.v1.txt",
-    "translation.markdown.v2.txt",
-    "translation.markdown.v3.txt",
-    "alignment.v1.txt",
-    "translation-output.v1.schema.json",
-    "alignment-output.v1.schema.json",
-]
-manifest = {
-    "files": {
-        name: hashlib.sha256((prompts_dir / name).read_bytes()).hexdigest()
-        for name in asset_names
-    }
-}
-
-staging = Path(tempfile.mkdtemp(prefix="bipara-worker-assets-"))
-atexit.register(shutil.rmtree, staging, True)
-for name in asset_names:
-    shutil.copyfile(prompts_dir / name, staging / name)
-(staging / "asset_manifest.json").write_text(
-    json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-    encoding="utf-8",
-)
-
-datas = [(str(staging / name), "prompts") for name in asset_names + ["asset_manifest.json"]]
+datas = worker_asset_data()
 licenses = root / "build" / "third-party"
 if not (licenses / "README.md").is_file():
     raise RuntimeError("Generate dependency licenses before packaging")
@@ -68,7 +38,6 @@ a = Analysis(
     excludes=[],
     noarchive=False,
 )
-sys.path.insert(0, str(root / "script"))
 from generate_notices import collect_native
 collect_native(a.binaries, licenses)
 known_data = {name for name, _, _ in a.datas}

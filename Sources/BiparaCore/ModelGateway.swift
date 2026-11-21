@@ -81,6 +81,8 @@ public struct TranslateBatchRequest: Sendable, Equatable {
     public var ownerSessionID: UUID?
     /// Local deadline for waiting through a shared GLM cooldown on replay.
     public var rateLimitReplayDeadline: ContinuousClock.Instant?
+    /// Request a text-only model reply for the sole unit of a recovery request.
+    public var singleTextRecovery = false
     /// Frozen job version; retries and resumed legacy jobs retain it.
     public var promptVersion: String
     public var sourceLanguage: Language

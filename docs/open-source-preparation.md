@@ -2,7 +2,7 @@
 
 ## Delivery contract
 
-Bipara is an LLM-powered native macOS translation and bilingual reading app. It uses the MIT license and targets Apple silicon on macOS 26/27 plus compatible Intel Macs on macOS 26. Intel installers receive build/integrity checks without maintainer runtime acceptance. Source publication and formal installer qualification are separate gates. Every formal version requires a protected `vMAJOR.MINOR.PATCH` tag and an installable GitHub Release DMG built from that tag. Experimental maturity is disclosed independently of whether an installation package is provided.
+Bipara is an LLM-powered native macOS translation and bilingual reading app. It uses the MIT license and targets macOS 14.0 or later on Apple silicon and compatible Intel Macs. Intel installers receive build/integrity checks without maintainer runtime acceptance. Source publication and formal installer qualification are separate gates. Every formal version requires a protected `vMAJOR.MINOR.PATCH` tag and an installable GitHub Release DMG built from that tag. Experimental maturity is disclosed independently of whether an installation package is provided.
 
 ## Source publication gates
 

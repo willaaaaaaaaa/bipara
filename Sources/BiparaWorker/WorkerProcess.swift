@@ -106,7 +106,7 @@ final class WorkerInstance: @unchecked Sendable {
         configuration: ModelConfiguration,
         requestID: String
     ) {
-        writer.write(frame: [
+        var frame: [String: Any] = [
             "v": 2,
             "type": "request",
             "id": requestID,
@@ -127,7 +127,9 @@ final class WorkerInstance: @unchecked Sendable {
                     ] as [String: Any]
                 },
             ] as [String: Any],
-        ])
+        ]
+        if request.singleTextRecovery { frame["recovery"] = WorkerContract.singleTextRecoveryVersion }
+        writer.write(frame: frame)
     }
 
     func sendAlign(

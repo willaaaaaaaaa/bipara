@@ -5,12 +5,14 @@ import json
 from pathlib import Path
 import plistlib
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 import shutil
 
 SCRIPT = Path(__file__).resolve().parents[2] / "script/release.py"
+sys.path.insert(0, str(SCRIPT.parent))
 spec = importlib.util.spec_from_file_location("release", SCRIPT)
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
@@ -86,8 +88,8 @@ class ReleaseTests(unittest.TestCase):
         with patch.object(release, "source", return_value=("0.1.0", "1", self.commit)), patch.object(release, "distribution", return_value="ad-hoc"), patch.object(release, "command") as network:
             for checks, os_version in ((["local-install"], "27.0.1"), (["upgrade"], "26.0"),
                                        (["clean-install", "upgrade", "minimum-os"], "27.0.1"),
-                                       (list(release.REQUIRED_CHECKS), ""), (list(release.REQUIRED_CHECKS), "15.8"),
-                                       (list(release.REQUIRED_CHECKS), "28.0"), (list(release.REQUIRED_CHECKS), "27.0.1\ninjected")):
+                                       (list(release.REQUIRED_CHECKS), ""), (list(release.REQUIRED_CHECKS), "14"),
+                                       (list(release.REQUIRED_CHECKS), "14.x"), (list(release.REQUIRED_CHECKS), "27.0.1\ninjected")):
                 with self.subTest(checks=checks, os_version=os_version), self.assertRaises(release.ReleaseError):
                     release.github_release("v0.1.0", publish=True, expected_sha="a" * 64, verified=checks, tested_macos=os_version)
             network.assert_not_called()
@@ -107,14 +109,18 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaises(release.ReleaseError):
             release.distribution(self.root)
 
-    def test_dual_architecture_assets_verify_both_packages(self):
-        folder = self.prepare_assets()
+    def add_intel_assets(self, folder):
         names = release.assets("v0.1.0", "x86_64")
         (folder / names[0]).write_bytes(b"intel disk image")
         manifest = json.loads((folder / "release-manifest.json").read_text())
         manifest.update(architecture="x86_64", dmg_sha256=release.digest(folder / names[0]))
         (folder / names[2]).write_text(json.dumps(manifest))
         (folder / names[1]).write_text("".join(f"{release.digest(folder / n)}  {n}\n" for n in (names[0], names[2])))
+        return names
+
+    def test_dual_architecture_assets_verify_both_packages(self):
+        folder = self.prepare_assets()
+        names = self.add_intel_assets(folder)
         release.verify_assets(folder, "v0.1.0", self.commit, "ad-hoc")
         (folder / names[0]).write_bytes(b"tampered intel disk image")
         with self.assertRaisesRegex(release.ReleaseError, "DMG checksum"):
@@ -149,7 +155,7 @@ class ReleaseTests(unittest.TestCase):
                 release.command("synthetic-tool", secret)
             self.assertNotIn(secret, str(failure.exception))
 
-    def test_public_ca_bundle_is_allowed_but_private_pem_is_rejected(self):
+    def prepare_bundle(self):
         app = self.root / ".local/Bipara.app"
         helper = app / "Contents/Helpers/BiparaWorker.app/Contents"
         (helper / "MacOS").mkdir(parents=True)
@@ -159,17 +165,36 @@ class ReleaseTests(unittest.TestCase):
         notices = helper / "Resources/ThirdPartyLicenses"
         notices.mkdir(parents=True)
         (notices / "README.md").write_text("Fixture notices")
+        prompts = helper / "Frameworks/prompts"
+        shutil.copytree(SCRIPT.parents[1] / "prompts", prompts, ignore=shutil.ignore_patterns("README.md", "cases.json"))
+        (prompts / "asset_manifest.json").write_text(json.dumps({"files": {p.name: release.digest(p) for p in prompts.iterdir()}}))
+        return app, helper
+
+    def test_public_ca_bundle_is_allowed_but_private_pem_is_rejected(self):
+        app, helper = self.prepare_bundle()
         cert = helper / "Frameworks/certifi/cacert.pem"
         cert.parent.mkdir(parents=True)
         cert.write_bytes(b"-----BEGIN CERTIFICATE-----\nsynthetic certificate\n")
         result = subprocess.CompletedProcess([], 0, '{"type":"ready"}\n{"type":"stopped"}\n', '')
-        with patch.object(release, "ROOT", self.root), patch.object(release, "command", return_value="arm64"), patch.object(release.subprocess, "run", return_value=result):
+        with patch.object(release, "command", return_value="arm64"), patch.object(release.subprocess, "run", return_value=result):
             release.verify_bundle(app, "27.0.1")
             with self.assertRaisesRegex(release.ReleaseError, "minimum macOS differs"):
                 release.verify_bundle(app, "27.0.2")
             cert.write_bytes(b"-----BEGIN " + b"PRIVATE KEY-----\nsynthetic forbidden content\n")
             with self.assertRaisesRegex(release.ReleaseError, "private material"):
                 release.verify_bundle(app, "27.0.1")
+
+    def test_release_bundle_requires_canonical_recovery_schema(self):
+        app, helper = self.prepare_bundle()
+        schema = helper / "Frameworks/prompts/single-text-output.v1.schema.json"
+        schema.write_text("{}")
+        with patch.object(release, "command", return_value="arm64"), patch.object(release.subprocess, "run") as launch:
+            with self.assertRaisesRegex(release.ReleaseError, r"asset differs.*single-text-output"):
+                release.verify_bundle(app, "27.0.1")
+            schema.unlink()
+            with self.assertRaisesRegex(release.ReleaseError, r"could not read worker asset: single-text-output"):
+                release.verify_bundle(app, "27.0.1")
+            launch.assert_not_called()
 
     def test_release_rejects_native_dependencies_above_the_deployment_target(self):
         binary = self.root / "fixture.so"
@@ -212,8 +237,10 @@ class ReleaseTests(unittest.TestCase):
 
     def test_publish_binds_installation_declarations_to_downloaded_bytes(self):
         folder = self.prepare_assets()
+        self.add_intel_assets(folder)
         calls = []
         minimum = "26.0"
+        tested = "27.0.1"
 
         def fake_command(*args, **kwargs):
             calls.append(args)
@@ -221,7 +248,7 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(args[2], "refs/tags/v0.1.0:Config/Version.xcconfig")
                 return f"BIPARA_RELEASE_MINIMUM_MACOS = {minimum}\n"
             if args[:3] == ("gh", "release", "view"):
-                return json.dumps({"isDraft": True, "assets": [{"name": name} for name in release.assets("v0.1.0")], "body": "Existing trust and release notes."})
+                return json.dumps({"isDraft": True, "assets": [{"name": path.name} for path in folder.iterdir()], "body": "Existing trust and release notes."})
             if args[:3] == ("gh", "release", "download"):
                 target = Path(args[-1])
                 for item in folder.iterdir():
@@ -231,10 +258,12 @@ class ReleaseTests(unittest.TestCase):
                 self.assertIn("Existing trust and release notes.", notes)
                 if minimum == "26.0":
                     self.assertIn("macOS 26 and 27 on Apple Silicon", notes)
+                    self.assertIn("Intel Macs running macOS 26 only", notes)
                 else:
-                    self.assertIn("package minimum: macOS 27.0.1", notes)
+                    self.assertIn(f"package minimum: macOS {minimum}", notes)
                     self.assertNotIn("macOS 26 and 27", notes)
-                self.assertIn("validated on macOS 27.0.1", notes)
+                    self.assertIn(f"Intel Macs running macOS {minimum} or later", notes)
+                self.assertIn(f"validated on macOS {tested}", notes)
                 self.assertIn("not clean-machine or cross-version qualification", notes)
                 self.assertIn(release.digest(folder / release.assets("v0.1.0")[0]), notes)
             return ""
@@ -251,9 +280,9 @@ class ReleaseTests(unittest.TestCase):
             self.assertFalse(any(args[0] in {"xcrun", "spctl", "security"} for args in calls))
             self.assertTrue(any(args[:2] == ("hdiutil", "verify") for args in calls))
             self.assertEqual(sum(args[:3] == ("gh", "release", "edit") for args in calls), 1)
-            minimum = "27.0.1"
-            with contextlib.redirect_stdout(io.StringIO()):
-                release.github_release("v0.1.0", publish=True, expected_sha=sha, verified=list(release.REQUIRED_CHECKS), tested_macos="27.0.1")
+            for minimum, tested in (("27.0.1", "27.0.1"), ("14.0", "14.0"), ("14.0", "28.0")):
+                with self.subTest(minimum=minimum, tested=tested), contextlib.redirect_stdout(io.StringIO()):
+                    release.github_release("v0.1.0", publish=True, expected_sha=sha, verified=list(release.REQUIRED_CHECKS), tested_macos=tested)
 
 
 if __name__ == "__main__":

@@ -28,16 +28,27 @@ step() {
   echo "==> $1"
 }
 
+LOCAL_SIGNING_IDENTITY=""
+if [ "$MODE" = --install ]; then
+  LOCAL_SIGNING_IDENTITY="${BIPARA_LOCAL_CODESIGN_IDENTITY:-}"
+fi
+if [ -n "$LOCAL_SIGNING_IDENTITY" ]; then
+  case "$LOCAL_SIGNING_IDENTITY" in
+    'Apple Development: '*) ;;
+    *) fail 'BIPARA_LOCAL_CODESIGN_IDENTITY must name an Apple Development certificate' ;;
+  esac
+  IDENTITIES="$(/usr/bin/security find-identity -v -p codesigning)"
+  if ! grep -Fq -- "\"$LOCAL_SIGNING_IDENTITY\"" <<< "$IDENTITIES"; then
+    fail 'the configured local signing identity is unavailable'
+  fi
+fi
+
 verify_bundle() {
   local app="$1"
   local helper="$app/Contents/Helpers/BiparaWorker.app"
   [ -x "$app/Contents/MacOS/Bipara" ] || fail "app executable missing: $app"
   [ -x "$helper/Contents/MacOS/BiparaWorker" ] || fail "embedded worker missing: $app"
-  for asset in translation.v1.txt translation.v2.txt translation.markdown.v1.txt translation.markdown.v2.txt translation.markdown.v3.txt alignment.v1.txt \
-    translation-output.v1.schema.json alignment-output.v1.schema.json; do
-    cmp -s "prompts/$asset" "$helper/Contents/Frameworks/prompts/$asset" \
-      || fail "bundled asset differs from canonical prompts/$asset"
-  done
+  python3 script/worker_assets.py "$helper"
   /usr/bin/codesign --verify --deep --strict "$app" \
     || fail "signature verification failed: $app"
 }
@@ -64,6 +75,10 @@ xcodebuild -project Bipara.xcodeproj -scheme Bipara -configuration Release \
   -derivedDataPath "$DERIVED" -clonedSourcePackagesDirPath "$ROOT/build/SourcePackages" -onlyUsePackageVersionsFromResolvedFile build
 
 APP_PATH="$DERIVED/Build/Products/Release/Bipara.app"
+if [ -n "$LOCAL_SIGNING_IDENTITY" ]; then
+  step "Sign local Bipara app"
+  /usr/bin/codesign --force --sign "$LOCAL_SIGNING_IDENTITY" --timestamp=none --options runtime "$APP_PATH"
+fi
 verify_bundle "$APP_PATH"
 if [ "$MODE" = --install ]; then
   "$APP_PATH/Contents/MacOS/Bipara" --install-local-build

@@ -22,7 +22,10 @@ struct OpenModelConfigurationTests {
         for effort in ModelEffort.editable {
             let (store, keys, defaults) = setup()
             let custom = record(effort)
-            store.updateDraft { $0.modelConfigurations.append(custom) }
+            store.updateDraft {
+                $0.modelConfigurations.append(custom)
+                $0.defaultModelConfigurationID = custom.id
+            }
             try store.saveDraft()
             let reloaded = SettingsStore(defaults: defaults, keychain: keys)
             #expect(reloaded.configuration(custom.id) == custom)
@@ -63,7 +66,10 @@ struct OpenModelConfigurationTests {
             let committed = store.record
             var custom = record()
             custom.vendorLabel = label
-            store.updateDraft { $0.modelConfigurations.append(custom) }
+            store.updateDraft {
+                $0.modelConfigurations.append(custom)
+                $0.defaultModelConfigurationID = custom.id
+            }
             store.setKeyDraft(.set("SYNTHETIC_CUSTOM_KEY"), configurationID: custom.id)
             #expect(throws: SettingsStore.SettingsError.self) { try store.saveDraft() }
             #expect(store.record == committed)
@@ -137,7 +143,9 @@ struct OpenModelConfigurationTests {
 
     @Test func restoringCommittedOptionsRestoresTheirRevision() throws {
         let (store, _, _) = setup()
-        let original = try #require(store.record.defaultConfiguration)
+        let original = record()
+        store.updateDraft { $0 = PreferencesRecord(modelConfigurations: [original]) }
+        try store.saveDraft()
         store.updateDraft {
             $0.modelConfigurations[0].requestOptions?.translationTokens = 1000
             $0.modelConfigurations[0].revision = UUID()
@@ -194,6 +202,23 @@ struct OpenModelConfigurationTests {
         for json in ["{\"Host\":\"other\"}", "{\"X-Key\":\"line\\r\\nvalue\"}", "{\"X-Key\":\"a\",\"x-key\":\"b\"}"] {
             #expect(throws: (any Error).self) { try ModelCredentials.parseHeaders(json) }
         }
+    }
+}
+
+@MainActor enum SavedResponsesFixture {
+    static func record() -> PreferencesRecord {
+        PreferencesRecord(modelConfigurations: [
+            ModelConfigurationRecord(displayName: "OpenAI", provider: "openai", profile: ModelAPIProtocol.openai.profile,
+                modelID: "gpt-6-luna", effort: .low, baseURL: WorkerContract.openAIStandardBaseURL,
+                vendorLabel: "OpenAI", requestOptions: ModelRequestOptions(), revision: UUID()),
+            ModelConfigurationRecord(displayName: "GLM", provider: "openai", profile: ModelAPIProtocol.openai.profile,
+                modelID: "glm-5.3-flash", effort: .low, baseURL: WorkerContract.glmStandardBaseURL,
+                vendorLabel: "GLM", requestOptions: ModelRequestOptions(), revision: UUID()),
+        ])
+    }
+
+    static func install(_ defaults: UserDefaults) {
+        defaults.set(try! JSONEncoder().encode(record()), forKey: SettingsStore.defaultsKey)
     }
 }
 

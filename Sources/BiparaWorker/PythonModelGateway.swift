@@ -41,6 +41,7 @@ public final class PythonModelGateway: ModelGateway, @unchecked Sendable {
         ]
         let markdown = WorkerContract.markdownTranslationPromptVersions.contains(request.promptVersion)
         guard WorkerContract.translationPromptVersions.contains(request.promptVersion),
+              !request.singleTextRecovery || request.units.count == 1,
               request.sourceLanguage != request.targetLanguage,
               (1...WorkerContract.maxUnitsPerBatch).contains(request.units.count),
               Set(request.units.map(\.unitID)).count == request.units.count,

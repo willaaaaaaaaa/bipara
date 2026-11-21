@@ -1,6 +1,6 @@
 # Privacy
 
-Bipara runs document and task logic locally. Translation sends the selected document's bounded source units and neighboring source context to the configured API endpoint. Selection analysis sends the selected unit and its existing counterpart text. Hovering uses local mappings. Transmission acknowledgement is scoped to the provider and destination origin; a custom Base URL changes the destination. API use requires network access and may incur provider charges.
+Bipara runs document and task logic locally. Translation sends the selected document's bounded source units and neighboring source context to the configured API endpoint. Selecting and copying text stay on the device. Transmission acknowledgement is scoped to the provider and destination origin; a custom Base URL changes the destination. API use requires network access and may incur provider charges.
 
 API keys are stored in configuration-scoped macOS Keychain items. They travel to the bundled worker over local pipes and to the configured HTTPS endpoint as authentication, outside model messages. Endpoint changes invalidate the saved credential binding. Credentials, endpoint URLs, local configuration IDs and display aliases are excluded from portable `.bipara` documents.
 

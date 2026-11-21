@@ -1,5 +1,5 @@
 {
-  "corpus_version": "5",
+  "corpus_version": "6",
   "provenance": "Original synthetic examples authored for Bipara; no private user text.",
   "cases": [
     {
@@ -670,6 +670,21 @@
       ]
     },
     {
+      "id": "T21-release-slip",
+      "op": "translate",
+      "input": {"source_language": "en", "target_language": "zh", "context_before": "Shipment slips use the exact wording of each stamp.", "context_after": "", "units": [{"unit_id": "t21", "kind": "sentence", "text": "Do not stamp Cleared for Dispatch on the slip until both inspectors have signed off on the lot."}]},
+      "sample_output": {"translations": [{"unit_id": "t21", "text": "两名检验员都签字放行这批货后，才能在单据上盖 Cleared for Dispatch 印章。"}]},
+      "semantic_checks": ["The lot is a batch of goods. Both inspectors must approve it before the slip can be stamped.", "Retain the stamp wording in ordinary unquoted prose. Translate the surrounding action naturally."],
+      "literal_checks": [{"unit_id": "t21", "literal": "Cleared for Dispatch", "count": 1}]
+    },
+    {
+      "id": "T22-expressive-imagery",
+      "op": "translate",
+      "input": {"source_language": "zh", "target_language": "en", "context_before": "", "context_after": "", "units": [{"unit_id": "t22", "kind": "sentence", "text": "夜色像墨水一样，慢慢洇进院子。"}]},
+      "sample_output": {"translations": [{"unit_id": "t22", "text": "Night slowly seeped into the courtyard like ink."}]},
+      "semantic_checks": ["Keep the author's ink simile, the gradual spreading motion and the courtyard in idiomatic English. A factual summary that it got dark loses the image."]
+    },
+    {
       "id": "A01-repeated-source-word",
       "op": "align",
       "input": {"reading_text": "I can can fruit.", "counterpart_text": "我会把水果装罐。", "selection": {"before": "I can ", "text": "can", "after": " fruit."}},
@@ -733,6 +748,7 @@
       "id": "M03-conditional-code-span-order",
       "op": "translate",
       "prompt_version": "translation.markdown.v3",
+      "also_applies_to": ["translation.markdown.v4"],
       "input": {"source_language": "en", "target_language": "zh", "context_before": "", "context_after": "", "units": [{"unit_id": "m03", "kind": "markdown_inline", "text": "Use `Bash` with `rg` if both `Grep` and `Glob` are unavailable."}]},
       "sample_output": {"translations": [{"unit_id": "m03", "text": "如果 `Grep` 和 `Glob` 都不可用，就在 `Bash` 中使用 `rg`。"}]},
       "semantic_checks": ["Keep the fallback conditional on both tools being unavailable. Keep the roles of the shell and search command when moving the condition."],
@@ -742,10 +758,28 @@
       "id": "M04-code-before-strong",
       "op": "translate",
       "prompt_version": "translation.markdown.v3",
+      "also_applies_to": ["translation.markdown.v4"],
       "input": {"source_language": "en", "target_language": "zh", "context_before": "", "context_after": "", "units": [{"unit_id": "m04", "kind": "markdown_inline", "text": "Before saving, run `check` from `toolkit`. Before publishing, **review**."}]},
       "sample_output": {"translations": [{"unit_id": "m04", "text": "保存前，运行 `toolkit` 中的 `check`。发布前，**请审阅**。"}]},
       "semantic_checks": ["Preserve the command and its toolkit when reversing their order. Keep review emphasized in the separate publishing instruction."],
       "literal_checks": [{"unit_id": "m04", "literal": "`check`", "count": 1}, {"unit_id": "m04", "literal": "`toolkit`", "count": 1}, {"unit_id": "m04", "literal": "**", "count": 2}]
+    },
+    {
+      "id": "M05-index-and-ordinary-label",
+      "op": "translate",
+      "prompt_version": "translation.markdown.v4",
+      "input": {"source_language": "en", "target_language": "zh", "context_before": "The printed index lists each exhibit under its original title.", "context_after": "", "units": [{"unit_id": "m05", "kind": "markdown_inline", "text": "Look up **Winter Light** in the index, then read [the curator's notes](https://example.org/notes)."}]},
+      "sample_output": {"translations": [{"unit_id": "m05", "text": "在索引中查找 **Winter Light**，然后阅读[策展人手记](https://example.org/notes)。"}]},
+      "semantic_checks": ["The reader can look up the exhibit by its original spelling. A short translation of the title is optional.", "Translate the descriptive link label, retain its destination and keep the sequence of actions and the existing emphasis."],
+      "literal_checks": [{"unit_id": "m05", "literal": "Winter Light", "count": 1}, {"unit_id": "m05", "contains": "](https://example.org/notes)"}]
+    },
+    {
+      "id": "M06-balance-instructions",
+      "op": "translate",
+      "prompt_version": "translation.markdown.v4",
+      "input": {"source_language": "zh", "target_language": "en", "context_before": "将空容器放在天平上。", "context_after": "", "units": [{"unit_id": "m06", "kind": "markdown_inline", "text": "即使显示屏已经亮起，也要等**两个读数都稳定**后再给天平去皮。"}]},
+      "sample_output": {"translations": [{"unit_id": "m06", "text": "Even if the display is on, wait until **both readings are stable** before taring the balance."}]},
+      "semantic_checks": ["Use the weighing sense of 去皮. A lit display is insufficient. Keep the emphasis and the requirement to wait for both readings. Do not repeat the contextual instruction about the container."]
     }
   ]
 }

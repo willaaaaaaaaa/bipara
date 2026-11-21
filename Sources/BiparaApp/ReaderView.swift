@@ -6,6 +6,10 @@ public struct WorkspaceView: View {
     @ObservedObject private var workspace: WorkspaceStore
     @ObservedObject private var settings: SettingsStore
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var tabStripWidth: CGFloat?
     @State private var projectedMarkdown: ProjectedMarkdown?
 
     private struct ProjectionKey: Equatable {
@@ -23,9 +27,37 @@ public struct WorkspaceView: View {
 
     public init(runtime: AppRuntime) { self.runtime = runtime; workspace = runtime.workspace; settings = runtime.settings }
     private func t(_ key:String) -> String { runtime.text(key) }
+    private var theme: AppTheme { settings.record.theme }
+
+    private var documentGradient: LinearGradient {
+        let hue = Double(workspace.activeTab?.document.documentID.uuid.0 ?? 0) / 256
+        let dark = colorScheme == .dark
+        return LinearGradient(colors: [hue, (hue + 0.19).truncatingRemainder(dividingBy: 1)].map {
+            Color(hue: $0, saturation: dark ? 0.38 : 0.24, brightness: dark ? 0.38 : 0.98)
+        }, startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+
+    private var toolbarStyle: AnyShapeStyle {
+        switch theme {
+        case .dynamicCapsule: AnyShapeStyle(.bar)
+        case .gradientFrame: AnyShapeStyle(documentGradient)
+        case .smokedGlass: reduceTransparency ? AnyShapeStyle(Color(nsColor: .controlBackgroundColor)) : AnyShapeStyle(.regularMaterial)
+        }
+    }
+
     public var body: some View {
         VStack(spacing:0) {
             tabs
+                .background {
+                    switch theme {
+                    case .dynamicCapsule: Color.clear
+                    case .gradientFrame: documentGradient
+                    case .smokedGlass:
+                        if reduceTransparency { Color(nsColor: .controlBackgroundColor) }
+                        else if #available(macOS 26.0, *) { Rectangle().fill(.clear).glassEffect(.regular.tint(.gray.opacity(0.18)), in: .rect) }
+                        else { Rectangle().fill(.regularMaterial) }
+                    }
+                }
             Divider()
             if let tab = workspace.activeTab {
                 if runtime.editing.contains(tab.sessionID) { input(tab).id(tab.sessionID) }
@@ -47,42 +79,72 @@ public struct WorkspaceView: View {
             }
         }
         .background(Color(nsColor: .textBackgroundColor))
+        .padding([.horizontal, .bottom], theme == .gradientFrame ? 4 : 0)
+        .background { if theme == .gradientFrame { documentGradient } }
         .frame(minWidth:800,minHeight:560)
         .toolbar {
-            ToolbarItem(placement:.navigation) { Button(action:runtime.newTab){Label(t("New Translation"),systemImage:"plus")}.accessibilityIdentifier("new.tab") }
-            ToolbarItemGroup(placement:.primaryAction) {
-                if let tab = workspace.activeTab {
-                    Picker(t("Reading layout"),selection:Binding(get:{tab.layout},set:{runtime.setLayout($0)})) {
-                        Image(systemName:"rectangle.split.2x1").accessibilityLabel(t("Side by side")).tag(LayoutMode.sideBySide)
-                        Image(systemName: "rectangle.split.1x2").accessibilityLabel(t(tab.document.isMarkdown ? "Sections" : "Paragraphs")).tag(LayoutMode.paragraphs)
-                    }.pickerStyle(.segmented).frame(width: 86).help(t(tab.document.isMarkdown ? "Side by side / Sections" : "Side by side / Paragraphs"))
+            if let tab = workspace.activeTab {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Picker(t("Reading layout"), selection: Binding(
+                        get: { tab.readingView },
+                        set: { choice in
+                            Task { @MainActor in
+                                guard runtime.activeSession == tab.sessionID else { return }
+                                runtime.setReadingView(choice)
+                            }
+                        }
+                    )) {
+                        layoutIcon("Side by side", systemImage: "rectangle.split.2x1")
+                            .tag(ReadingViewChoice.paired(.sideBySide))
+                        layoutIcon(tab.document.isMarkdown ? "Sections" : "Paragraphs", systemImage: "rectangle.split.1x2")
+                            .tag(ReadingViewChoice.paired(.paragraphs))
+                        if tab.document.canUseMarkdownPlan {
+                            layoutIcon("Translation Reader", systemImage: "doc.text")
+                                .accessibilityIdentifier("reading.layout.translationReader").tag(ReadingViewChoice.translationReader)
+                        }
+                    }.pickerStyle(.segmented).frame(width: 124)
                         .accessibilityIdentifier("reading.layout").disabled(runtime.editing.contains(tab.sessionID))
                     if tab.document.isMarkdown && tab.document.canUseMarkdownPlan && !runtime.editing.contains(tab.sessionID) {
                         Picker(t("Reading mode"), selection: Binding(
                             get: { tab.document.readingMode },
-                            set: { runtime.changeReadingMode($0, session: tab.sessionID) }
+                            set: { mode in
+                                Task { @MainActor in
+                                    guard runtime.activeSession == tab.sessionID else { return }
+                                    runtime.changeReadingMode(mode, session: tab.sessionID)
+                                }
+                            }
                         )) {
-                            Text(t("Rendered")).tag(MarkdownReadingMode.rendered)
+                            Text(t("Preview")).tag(MarkdownReadingMode.rendered)
                             Text(t("Source")).tag(MarkdownReadingMode.source)
                         }
                         .pickerStyle(.segmented)
                         .accessibilityIdentifier("reading.mode")
                     }
+                }
+                if #available(macOS 26.0, *) {
+                    ToolbarSpacer(.fixed, placement: .primaryAction)
+                }
+                ToolbarItemGroup(placement: .primaryAction) {
                     activeModelMenu
                     Button(primaryTitle(tab),action:runtime.primaryAction)
                         .disabled(runtime.closing.contains(tab.sessionID) || (tab.hasNoProseToTranslate && !runtime.editing.contains(tab.sessionID)) || (![.queued,.running].contains(tab.job.state) && (runtime.composing.contains(tab.sessionID) || tab.draftText.isWhitespaceOnly || tab.draftText.isEmpty)))
                         .accessibilityIdentifier("translation.primary")
                     Menu {
-                        Button(t("Edit Original")){runtime.editing.insert(tab.sessionID)}
+                        Button(t("Edit Original")){runtime.editOriginal(tab.sessionID)}
                         Button(t("Copy Original")){runtime.copy(original:true)}
-                        Button(t("Copy Translation")) { runtime.copy(original: false) }.disabled(!tab.canCopyTranslation)
+                        Button(t("Copy Translation")) { runtime.copy(original: false) }.disabled(!tab.canCopyTranslation || runtime.replacing.contains(tab.sessionID))
                         formatPicker(tab)
-                        Button(t("Retranslate")) { Task { await runtime.translate(tab.sessionID, retranslate: true) } }
-                            .disabled([.queued, .running].contains(tab.job.state) || tab.hasNoProseToTranslate)
+                        if tab.job.state != .completed {
+                            Button(t("Retranslate")) { Task { await runtime.translate(tab.sessionID, retranslate: true) } }
+                                .disabled([.queued, .running].contains(tab.job.state) || tab.hasNoProseToTranslate)
+                                .accessibilityIdentifier("document.retranslate")
+                        }
                     } label:{Image(systemName:"ellipsis.circle")}.accessibilityLabel(t("Document actions"))
                 }
             }
         }
+        .toolbarBackground(toolbarStyle, for: .windowToolbar)
+        .toolbarBackground(theme == .dynamicCapsule ? Visibility.automatic : .visible, for: .windowToolbar)
         .background(WindowLifecycle(runtime:runtime,settings:false))
         .environment(\.locale,Locale(identifier:settings.record.interfaceLanguage.rawValue))
         .onChange(of:settings.record){_, record in runtime.appearance.apply(record.appearance)}
@@ -100,7 +162,6 @@ public struct WorkspaceView: View {
         .alert(t("Unable to complete the action"),isPresented:Binding(get:{runtime.errorMessage != nil},set:{if !$0{runtime.errorMessage=nil}})) {
             Button(t("OK")){runtime.errorMessage=nil}
         } message:{Text(t(runtime.errorMessage ?? ""))}
-        .onExitCommand { runtime.clearPin() }
     }
 
     private func markdownFailureSheet(_ report: AppRuntime.MarkdownFailurePresentation) -> some View {
@@ -109,33 +170,71 @@ public struct WorkspaceView: View {
         }
         .id(report.id)
     }
-    private var tabs: some View {
-        ScrollView(.horizontal,showsIndicators:false) {
-            HStack(spacing:4) {
-                ForEach(workspace.tabs,id:\.sessionID){tab in
-                    HStack(spacing:7) {
-                        Button {
-                            if let i=workspace.index(of:tab.sessionID){workspace.switchTab(to:i)}
-                        } label:{
-                            HStack(spacing:5){
-                                Text(tab.document.title).lineLimit(1)
-                                if tab.isDirty {Image(systemName:"circle.fill").font(.system(size:5))}
-                                if [.queued,.running].contains(tab.job.state){ProgressView().controlSize(.mini)}
-                            }.frame(maxWidth:180)
-                        }.buttonStyle(.plain).accessibilityIdentifier("tab.\(tab.sessionID)")
-                            .help(tab.document.title)
-                            .accessibilityLabel(tab.document.title)
-                            .accessibilityValue(t(tab.job.state.rawValue.capitalized) + (tab.isDirty ? ", " + t("Unsaved changes") : ""))
-                            .accessibilityAddTraits(workspace.activeTab?.sessionID == tab.sessionID ? .isSelected:[])
-                        Button {Task{_ = await runtime.close(tab.sessionID)}} label:{Image(systemName:"xmark").font(.system(size:9,weight:.semibold))}
-                            .buttonStyle(.plain).accessibilityLabel(t("Close tab")+": "+tab.document.title)
-                    }.padding(.horizontal,12).padding(.vertical,8)
-                     .background(workspace.activeTab?.sessionID==tab.sessionID ? Color.accentColor.opacity(0.12) : .clear,in:RoundedRectangle(cornerRadius:6))
-                }
-                Button(action:runtime.newTab){Image(systemName:"plus")}.buttonStyle(.borderless).accessibilityLabel(t("New Translation"))
-            }.padding(.horizontal,12).padding(.vertical,6)
-        }.accessibilityIdentifier("workspace.tabs")
+    private func layoutIcon(_ key: String, systemImage: String) -> some View {
+        let title = t(key)
+        return Image(systemName: systemImage)
+            .accessibilityLabel(title)
+            .help(title)
     }
+
+    private var tabs: some View {
+        HStack(spacing: 4) {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(workspace.tabs, id: \.sessionID) { tab in
+                            tabItem(tab).id(tab.sessionID)
+                        }
+                    }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { tabStripWidth = $0 }
+                }
+                .frame(maxWidth: tabStripWidth)
+                .accessibilityIdentifier("workspace.tabs")
+                .onChange(of: workspace.activeTab?.sessionID, initial: true) { _, session in
+                    if let session { proxy.scrollTo(session) }
+                }
+            }
+            .layoutPriority(1)
+            Button(action: runtime.newTab) { Image(systemName: "plus") }
+                .fixedSize().layoutPriority(2)
+                .buttonStyle(.borderless)
+                .accessibilityLabel(t("New Translation")).accessibilityIdentifier("new.tab")
+                .help(t("New Translation"))
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+    }
+
+    private func tabItem(_ tab: TabState) -> some View {
+        let selected = workspace.activeTab?.sessionID == tab.sessionID
+        let failed = runtime.hasTranslationFailure(for: tab.sessionID)
+        let status = t(failed ? "Translation failed" : tab.job.state.rawValue.capitalized)
+        return HStack(spacing: 7) {
+            Button {
+                if let index = workspace.index(of: tab.sessionID) { workspace.switchTab(to: index) }
+            } label: {
+                HStack(spacing: 5) {
+                    Text(tab.document.title).lineLimit(1)
+                    if tab.isDirty { Image(systemName: "circle.fill").font(.system(size: 5)) }
+                    if failed { Image(systemName: "exclamationmark.triangle.fill") }
+                    if [.queued, .running].contains(tab.job.state) {
+                        ProgressView().controlSize(.mini).accessibilityHidden(true)
+                    }
+                }.frame(maxWidth: 180)
+            }
+            .buttonStyle(.plain).accessibilityIdentifier("tab.\(tab.sessionID)")
+            .help(tab.document.title).accessibilityLabel(tab.document.title)
+            .accessibilityValue(status + (tab.isDirty ? ", " + t("Unsaved changes") : ""))
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            Button { Task { _ = await runtime.close(tab.sessionID) } } label: {
+                Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+            }
+            .buttonStyle(.plain).accessibilityLabel(t("Close tab") + ": " + tab.document.title)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(selected ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6))
+    }
+
     private var activeModelMenu: some View {
         let active = settings.record.defaultConfiguration
         return Menu {
@@ -153,10 +252,10 @@ public struct WorkspaceView: View {
                 Button(t("Add Model in Settings…")) { openWindow(id: "settings") }
             }
         } label: {
-            Text(active?.resolvedName ?? t("Active Model")).lineLimit(1)
+            Text(active.map { $0.selectionLabel(in: settings.record.modelConfigurations, effortLabel: $0.effort.label(t)) } ?? t("Active Model")).lineLimit(1)
         }
         .accessibilityLabel(t("Active Model"))
-        .accessibilityValue(active?.resolvedName ?? t("No configurations"))
+        .accessibilityValue(active.map { $0.pickerLabel(effortLabel: $0.effort.label(t)) } ?? t("No configurations"))
         .accessibilityIdentifier("translation.activeModel")
         .help(activeModelHelp(active))
     }
@@ -172,10 +271,13 @@ public struct WorkspaceView: View {
 
     private func readingKey(_ tab: TabState) -> some View {
         GeometryReader { geometry in
-            let pane = geometry.size.width / (tab.layout == .sideBySide ? 2 : 1)
-            let inset = ReadingMetrics.inset(pane:pane,layout:tab.layout,preference:settings.record.readingWidth,window:geometry.size.width)
+            let layout: LayoutMode = tab.isTranslationReader ? .paragraphs : tab.layout
+            let pane = geometry.size.width / (layout == .sideBySide ? 2 : 1)
+            let inset = ReadingMetrics.inset(pane:pane,layout:layout,preference:settings.record.readingWidth,window:geometry.size.width)
             HStack(spacing:0) {
-                if tab.layout == .sideBySide {
+                if tab.isTranslationReader {
+                    Text(t("Translation")).padding(.horizontal, inset)
+                } else if tab.layout == .sideBySide {
                     Text(t("Original")).padding(.horizontal,inset).frame(width:pane,alignment:.leading)
                     Text(t("Translation")).padding(.horizontal,inset).frame(width:pane,alignment:.leading)
                 } else {
@@ -195,17 +297,19 @@ public struct WorkspaceView: View {
         let key = ProjectionKey(session: tab.sessionID, revision: document.sourceRevision, translationCount: document.translations.count,
                                 jobID: document.jobSnapshot?.jobID, mode: document.readingMode)
         let projection = projectedMarkdown.flatMap { value in
-            value.key.session == key.session && value.key.revision == key.revision ? value.value : nil
+            value.key.session == key.session && value.key.revision == key.revision && value.key.jobID == key.jobID && value.key.mode == key.mode && value.key.translationCount <= key.translationCount ? value.value : nil
         }
         Group {
             if !document.isMarkdown || projection != nil {
-                NativeReadingSurface(sessionID: tab.sessionID, document: document, layout: tab.layout, typography: settings.record.typography,
+                NativeReadingSurface(sessionID: tab.sessionID, document: document, layout: tab.isTranslationReader ? .paragraphs : tab.layout, typography: settings.record.typography,
                     presentation: runtime.reading[tab.sessionID] ?? .init(), language: settings.record.interfaceLanguage,
-                    readingWidth: settings.record.readingWidth, correspondenceColor: settings.record.correspondenceColor, jobState: tab.job.state,
-                    markdown: projection,
-                    onSelect: { runtime.selected($0, session: tab.sessionID) }, onHover: { runtime.hover($0, session: tab.sessionID) },
+                    readingWidth: settings.record.readingWidth, jobState: tab.job.state,
+                    markdown: projection, translationOnly: tab.isTranslationReader, reduceMotion: reduceMotion,
+                    onMount: { runtime.nativeReader = $0 },
                     onAnchor: { anchor in
-                        if runtime.reading[tab.sessionID]?.anchors[tab.layout] != anchor {
+                        if tab.isTranslationReader {
+                            if runtime.reading[tab.sessionID]?.readerAnchor != anchor { runtime.reading[tab.sessionID, default: .init()].readerAnchor = anchor }
+                        } else if runtime.reading[tab.sessionID]?.anchors[tab.layout] != anchor {
                             runtime.reading[tab.sessionID, default: .init()].anchors[tab.layout] = anchor
                         }
                     })
@@ -239,7 +343,10 @@ public struct WorkspaceView: View {
     private func input(_ tab:TabState)->some View {
         VStack(alignment:.leading,spacing:16) {
             Text(t(tab.document.source.isEmpty ? "New Translation" : "Edit Original")).font(.title2.weight(.semibold))
-            Text(t("Paste Chinese or English text to get started.")).foregroundStyle(.secondary)
+            HStack {
+                Text(t("Paste Chinese or English text to get started.")).foregroundStyle(.secondary)
+                failureDetails(tab)
+            }
             SourceEditorView(text:Binding(get:{workspace.tabs.first(where:{$0.sessionID==tab.sessionID})?.draftText ?? ""},set:{value in mutate(tab.sessionID){$0.draftText=value}}),
                 isComposing:Binding(get:{runtime.composing.contains(tab.sessionID)},set:{value in if value != runtime.composing.contains(tab.sessionID) {if value{runtime.composing.insert(tab.sessionID)}else{runtime.composing.remove(tab.sessionID)}}}), language:settings.record.interfaceLanguage, typography:settings.record.typography)
             HStack {
@@ -276,32 +383,54 @@ public struct WorkspaceView: View {
         let composing: Bool
     }
 
+    @ViewBuilder private func failureDetails(_ tab: TabState) -> some View {
+        if runtime.hasTranslationFailure(for: tab.sessionID) {
+            Button(t("Show Failure Details")) { runtime.showTranslationFailure(for: tab.sessionID) }
+                .accessibilityIdentifier("translation.failureDetails")
+        }
+    }
+
     private func status(_ tab:TabState)->some View {
-        let state=runtime.reading[tab.sessionID] ?? .init(), match=state.pinned ?? state.selection ?? state.hover
-        return HStack(spacing:12) {
+        let capsule = theme == .dynamicCapsule
+        return HStack(spacing:10) {
             if !tab.document.canUseMarkdownPlan {
                 Text(t("This Markdown plan is unavailable. Retranslate to rebuild it."))
             } else if tab.document.isMarkdown && tab.document.units.isEmpty {
                 Text(t("No prose to translate"))
-            } else if state.analyzing {ProgressView().controlSize(.small);Text(t("Analyzing selection…"))}
-            else if let match {
-                Text(t(matchTitle(match, tab: tab, hasPhrase: !state.displayedPhraseRanges.isEmpty)))
-                Button(t("Pin"),action:runtime.pin).disabled(!state.canPin)
-                if state.pinned != nil {Button(t("Clear pin"),action:runtime.clearPin)}
-                Button(t("Reveal counterpart"),action:runtime.reveal)
-            } else {Text(t("Select text to explore correspondence."))}
-            Spacer()
+            }
+            if !capsule { Spacer() }
+            if runtime.copyFeedback?.session == tab.sessionID, runtime.copyFeedback?.succeeded == false {
+                Text(t("Copy failed")).foregroundStyle(.secondary)
+            }
+            failureDetails(tab)
+            if runtime.showsCompletionCopy(tab) {
+                Button(t(runtime.copyFeedback?.succeeded == true ? "Copied" : "Copy Translation")) {
+                    runtime.copy(original: false)
+                }
+                .fixedSize().layoutPriority(2)
+                .accessibilityIdentifier("reader.copyTranslation")
+            }
             TranslationJobStatus(tab:tab,configuration:tab.runtimeBinding.flatMap{settings.record.configuration(id:$0.configurationID)},language:settings.record.interfaceLanguage)
-        }.font(.caption).controlSize(.small).padding(.horizontal,20).padding(.vertical,10).background(.bar)
+        }.font(.caption).controlSize(.small)
+            .padding(.horizontal, capsule ? 16 : 20)
+            .padding(.vertical, capsule ? 5 : 8)
+            .background {
+                if capsule {
+                    Capsule().fill(Color(nsColor: .controlBackgroundColor))
+                        .overlay { Capsule().strokeBorder(.primary.opacity(0.16)) }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 44)
+            .background {
+                if theme == .smokedGlass && !reduceTransparency {
+                    Rectangle().fill(.regularMaterial).overlay { Color.gray.opacity(0.10) }
+                } else if !capsule {
+                    Color(nsColor: .windowBackgroundColor)
+                }
+            }
             .accessibilityElement(children:.contain).accessibilityIdentifier("reading.status")
     }
-    private func matchTitle(_ match: ReadingSelection, tab: TabState, hasPhrase: Bool) -> String {
-        if hasPhrase { return "Suggested phrase correspondence" }
-        if tab.document.isMarkdown { return match.isSection ? "Section match" : "Block match" }
-        guard let unitID = match.unitID else { return "Paragraph match" }
-        return tab.document.units.first(where: { $0.id == unitID })?.kind == .fragment ? "Fragment match" : "Sentence match"
-    }
-
     private func primaryTitle(_ tab:TabState)->String {
         if !tab.document.canUseMarkdownPlan { return t("Retranslate") }
         return t([JobState.running:"Cancel",.queued:"Cancel",.paused:"Resume",.failed:"Retry",.completed:"Retranslate"][tab.job.state] ?? "Translate")
@@ -325,10 +454,10 @@ private struct TranslationJobStatus: View {
     private var content: some View {
         let snapshot = tab.job.snapshot ?? tab.document.jobSnapshot
         let name = configuration?.modelID == snapshot?.model ? configuration?.resolvedName : snapshot?.model
-        let detail = snapshot.map { "\(ModelVendor(rawValue:$0.provider)?.name ?? $0.provider) · \($0.model) · \($0.effort.label(t))" } ?? ""
-        let timeHelp = t(tab.elapsed.sinceOpen ? "Active translation time since this file was opened; paused time and selection analysis are excluded." : "Active translation time, including queueing and retries; paused time and selection analysis are excluded.")
+        let detail = snapshot.map { "\(ModelConfigurationRecord.interfaceLabel(profile: $0.profile, provider: $0.provider)) · \($0.model) · \($0.effort.label(t))" } ?? ""
+        let timeHelp = t(tab.elapsed.sinceOpen ? "Active translation time since this file was opened, excluding pauses." : "Active translation time includes queueing and retries and excludes pauses.")
         return ViewThatFits(in:.horizontal) {
-            HStack(spacing:7) { if let name { Text(name).lineLimit(1); Text("·") }; progress; elapsed }
+            HStack(spacing:7) { if let name { Text(name).fixedSize(); Text("·") }; progress; elapsed }
             HStack(spacing:7) { Image(systemName:"info.circle").help(detail); progress; elapsed }
         }
         .foregroundStyle(.primary).monospacedDigit()

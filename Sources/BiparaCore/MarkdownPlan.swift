@@ -6,7 +6,7 @@ public struct MarkdownPlan: Equatable, Sendable {
     public static let version = "markdown-plan.v4"
     static let supportedVersions = ["markdown-plan.v1", "markdown-plan.v2", "markdown-plan.v3", version]
     public let planVersion: String
-    public static let detectorVersion = "markdown-detection.v1"
+    public static let detectorVersion = "markdown-detection.v2"
 
     struct Block: Equatable, Sendable {
         var id = UUID()
@@ -20,7 +20,7 @@ public struct MarkdownPlan: Equatable, Sendable {
         var marker: String?
         var literal: String?
         var continuation = ""
-        var metadataScalar = false
+        var metadataKey: String?
     }
 
     struct Top: Equatable, Sendable {
@@ -307,7 +307,7 @@ public struct MarkdownPlan: Equatable, Sendable {
         blocks.compactMap { block -> (range: TextRange, text: String, units: [UUID])? in
             guard !block.units.isEmpty, let edit = block.edit, let local = edit.offset(by: -offset),
                   let payload = translatedPayload(block, values: values, language: language) else { return nil }
-            if block.metadataScalar {
+            if block.metadataKey != nil {
                 return (local, TextIdentity.equal(payload, block.payload) ? source.substring(utf16: edit)! : MarkdownMetadata.quoted(payload), block.units)
             }
             return (local, payload.replacingOccurrences(of: "\n", with: "\n" + block.continuation), block.units)

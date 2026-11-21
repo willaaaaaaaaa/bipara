@@ -21,7 +21,7 @@ on:
         required: true
         default: false
       tested_macos:
-        description: 'Exact macOS version used for local install and upgrade checks (26.x or 27.x)'
+        description: 'Exact macOS version used for local install and upgrade checks'
         type: string
         required: true
 permissions:

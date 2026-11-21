@@ -74,7 +74,7 @@ struct WorkspaceStoreTests {
 struct SettingsStoreTests {
     @Test func toolbarSelectionPersistsWithoutSavingOtherSettingsDraftFields() throws {
         let defaults = UserDefaults(suiteName: "dev.bipara.test.\(UUID())")!
-        let store = SettingsStore(defaults: defaults)
+        let store = SettingsStore(defaults: defaults, record: SavedResponsesFixture.record())
         let first = store.record.modelConfigurations[0].id
         let second = store.record.modelConfigurations[1].id
         store.updateDraft { $0.preferredTranslationDirection = .zhToEn }
@@ -95,7 +95,7 @@ struct SettingsStoreTests {
     @Test func toolbarSelectionOfDraftDeletedEntryRequiresReplacementUntilRefresh() throws {
         let defaults = UserDefaults(suiteName: "dev.bipara.test.\(UUID())")!
         let keys = FaultCredentials()
-        let store = SettingsStore(defaults: defaults, keychain: keys)
+        let store = SettingsStore(defaults: defaults, keychain: keys, record: SavedResponsesFixture.record())
         let first = store.record.modelConfigurations[0].id
         let second = store.record.modelConfigurations[1].id
         keys.keys[first] = "OLD_FIRST"
@@ -124,7 +124,7 @@ struct SettingsStoreTests {
     @Test func sameURLProtocolEditCannotReuseOldCredentialOrBinding() throws {
         let defaults = UserDefaults(suiteName: "dev.bipara.test.\(UUID())")!
         let keys = FaultCredentials()
-        let store = SettingsStore(defaults: defaults, keychain: keys)
+        let store = SettingsStore(defaults: defaults, keychain: keys, record: SavedResponsesFixture.record())
         let entry = try #require(store.record.defaultConfiguration)
         try keys.setKey("SYNTHETIC_OLD", configurationID: entry.id)
         let frozen = entry.runtimeBinding
@@ -162,7 +162,7 @@ struct SettingsStoreTests {
 
     @Test func draftSaveCommitsAndPersists() throws {
         let defaults = freshDefaults()
-        let store = SettingsStore(defaults: defaults)
+        let store = SettingsStore(defaults: defaults, record: SavedResponsesFixture.record())
         let glmID = try #require(store.draft.modelConfigurations.first { $0.vendorLabel == "GLM" }?.id)
         store.updateDraft { draft in
             draft.appearance = .dark
@@ -194,7 +194,7 @@ struct SettingsStoreTests {
     }
 
     @Test func invalidFieldsAbortSave() throws {
-        let store = SettingsStore(defaults: freshDefaults())
+        let store = SettingsStore(defaults: freshDefaults(), record: SavedResponsesFixture.record())
         store.updateDraft { $0.typography.size = 40 }
         #expect(throws: SettingsStore.SettingsError.self) { try store.saveDraft() }
         store.cancelDraft()
@@ -235,7 +235,7 @@ struct SettingsStoreTests {
     }
 
     @Test func emptyListModelListIsValidButRequiresNoDefaultMismatch() throws {
-        let store = SettingsStore(defaults: freshDefaults())
+        let store = SettingsStore(defaults: freshDefaults(), record: SavedResponsesFixture.record())
         store.updateDraft { draft in
             draft.modelConfigurations = []
             draft.defaultModelConfigurationID = nil
@@ -257,6 +257,11 @@ struct SettingsStoreTests {
         let defaults = freshDefaults()
         installLegacyV1(defaults, model: "user-kept-model", defaultProvider: "glm")
         let store = SettingsStore(defaults: defaults)
+        #expect(store.loadFailure?.kind == .migrationPending)
+        #expect(store.record.interfaceLanguage == .simplifiedChinese)
+        #expect(store.record.appearance == .dark)
+        #expect(store.record.typography.size == 21)
+        store.retryMigration()
         #expect(store.loadFailure == nil)
         #expect(store.maintenanceNotice == nil)
         #expect(store.record.modelConfigurations.count == 2)
@@ -290,8 +295,10 @@ struct SettingsStoreTests {
         installLegacyV1(defaults)
         let keychain = FaultCredentials()
         keychain.legacy = ["openai": "LEGACY_OPENAI"] // glm key missing: stays missing
-        _ = SettingsStore(defaults: defaults, keychain: keychain)
         let store = SettingsStore(defaults: defaults, keychain: keychain)
+        #expect(keychain.keys.isEmpty)
+        #expect(keychain.legacy["openai"] == "LEGACY_OPENAI")
+        store.retryMigration()
         let openai = try #require(store.record.modelConfigurations.first { $0.provider == "openai" })
         let glm = try #require(store.record.modelConfigurations.first { $0.provider == "glm" })
         // Independent configuration-scoped copies; a missing key stays missing.
@@ -319,6 +326,7 @@ struct SettingsStoreTests {
         installLegacyV1(defaults)
         let keychain = FailingKeychain()
         let store = SettingsStore(defaults: defaults, keychain: keychain)
+        store.retryMigration()
         #expect(store.loadFailure?.kind == .migrationFailed)
         // v1 remains authoritative and readable; v2 was not persisted.
         #expect(defaults.data(forKey: SettingsStore.defaultsKey) == nil)
@@ -348,15 +356,57 @@ struct SettingsStoreTests {
         #expect(SettingsStore(defaults: corrupt).loadFailure != nil)
     }
 
-    @Test func freshInstallSeedsResponsesAndPersistsStableIDs() throws {
+    @Test func freshInstallStartsWithoutAnActiveModelAcrossLaunches() throws {
         let defaults = freshDefaults()
         let store = SettingsStore(defaults: defaults)
-        #expect(store.record.modelConfigurations.map(\.vendorLabel) == ["OpenAI", "GLM"])
-        #expect(store.record.modelConfigurations.allSatisfy { $0.profile == ModelAPIProtocol.openai.profile && $0.effort == .low && $0.requestOptions != nil })
-        #expect(store.record.modelConfigurations.allSatisfy { ModelProfileID.all.contains($0.profile) })
+        #expect(store.loadFailure == nil)
+        #expect(store.record.modelConfigurations.isEmpty)
+        #expect(store.record.defaultModelConfigurationID == nil)
+        store.updateDraft { $0.appearance = .dark }
+        try store.saveDraft()
         let reloaded = SettingsStore(defaults: defaults)
-        // IDs stay stable across launches from the first run.
-        #expect(reloaded.record.modelConfigurations.map(\.id) == store.record.modelConfigurations.map(\.id))
+        #expect(reloaded.record.appearance == .dark)
+        #expect(reloaded.record.modelConfigurations.isEmpty)
+        #expect(reloaded.record.defaultModelConfigurationID == nil)
+    }
+
+    @Test func savedFormerPresetsKeepTheirIdentitiesAndActiveSelection() throws {
+        let defaults = freshDefaults()
+        var saved = SavedResponsesFixture.record()
+        saved.defaultModelConfigurationID = saved.modelConfigurations[1].id
+        defaults.set(try JSONEncoder().encode(saved), forKey: SettingsStore.defaultsKey)
+
+        let store = SettingsStore(defaults: defaults)
+        #expect(store.loadFailure == nil)
+        #expect(store.record == saved)
+        #expect(store.record.defaultConfiguration?.modelID == "glm-5.3-flash")
+    }
+
+    @Test func themesDefaultForFreshAndOlderPreferencesAndUseDraftTransactions() throws {
+        let defaults = freshDefaults()
+        let fresh = SettingsStore(defaults: defaults)
+        #expect(fresh.record.theme == .dynamicCapsule)
+        var legacy = fresh.record
+        legacy.appearance = .dark
+        let data = try JSONEncoder().encode(legacy)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["preferredTheme"] == nil)
+        defaults.set(data, forKey: SettingsStore.defaultsKey)
+
+        let store = SettingsStore(defaults: defaults)
+        #expect(store.loadFailure == nil)
+        #expect(store.record == legacy)
+        store.updateDraft { $0.theme = .smokedGlass }
+        #expect(store.record.theme == .dynamicCapsule)
+        store.cancelDraft()
+        #expect(store.draft == legacy)
+        for theme in [AppTheme.gradientFrame, .smokedGlass, .dynamicCapsule] {
+            store.updateDraft { $0.theme = theme }
+            try store.saveDraft()
+            var expected = legacy
+            expected.theme = theme
+            #expect(SettingsStore(defaults: defaults).record == expected)
+        }
     }
 
     // MARK: Runtime binding resolution (JOB-04 / PRIV-03)
@@ -364,7 +414,7 @@ struct SettingsStoreTests {
     @Test func resolveCredentialEnforcesFrozenEndpointAndKeyRotation() throws {
         let defaults = freshDefaults()
         let keychain = FaultCredentials()
-        let store = SettingsStore(defaults: defaults, keychain: keychain)
+        let store = SettingsStore(defaults: defaults, keychain: keychain, record: SavedResponsesFixture.record())
         let openai = try #require(store.record.modelConfigurations.first { $0.provider == "openai" })
         let binding = openai.runtimeBinding
         #expect(throws: SettingsStore.SettingsError.missingCredential) { try store.resolveCredential(binding) }
@@ -389,7 +439,7 @@ struct SettingsStoreTests {
     }
 
     @Test func matchingConfigurationsFilterByProviderModelProfileEffort() throws {
-        let store = SettingsStore(defaults: freshDefaults())
+        let store = SettingsStore(defaults: freshDefaults(), record: SavedResponsesFixture.record())
         let current = try #require(store.record.defaultConfiguration)
         let snapshot = JobSnapshot(
             jobID: UUID(), sourceRevision: 1, sourceLanguage: .en, targetLanguage: .zh,

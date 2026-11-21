@@ -22,10 +22,10 @@ case "$BIPARA_TARGET_ARCH" in arm64) PYTHON_PLATFORM=aarch64-apple-darwin ;; x86
 if [ "${BIPARA_RELEASE_BUILD:-0}" = 1 ]; then
   UV_PYTHON="$(python3 script/prepare_release_runtime.py)" || exit 1
   export UV_PYTHON UV_PYTHON_DOWNLOADS=never UV_PYTHON_PREFERENCE=only-system
-  # A newer build host can otherwise select wheels that require a newer OS.
-  export MACOSX_DEPLOYMENT_TARGET=14.0
-  SYNC_OPTIONS+=(--python-platform "$PYTHON_PLATFORM")
 fi
+# Select wheels for the app minimum even when building on a newer Mac.
+export MACOSX_DEPLOYMENT_TARGET="$(awk '$1 == "BIPARA_RELEASE_MINIMUM_MACOS" { print $3 }' Config/Version.xcconfig)"
+SYNC_OPTIONS+=(--python-platform "$PYTHON_PLATFORM")
 case "${1:-}" in ''|--release-only) ;; *) echo 'usage: build_worker.sh [--release-only]' >&2; exit 1 ;; esac
 
 fail() {
@@ -72,13 +72,7 @@ fi
 for app in "${APPS[@]}"; do
   /usr/libexec/PlistBuddy -c "Print :LSUIElement" "$app/Contents/Info.plist" >/dev/null 2>&1 \
     || fail "LSUIElement missing in $app"
-  [ -f "$app/Contents/Frameworks/prompts/asset_manifest.json" ] \
-    || fail "asset manifest missing in $app"
-  for asset in translation.v1.txt translation.v2.txt translation.markdown.v1.txt translation.markdown.v2.txt translation.markdown.v3.txt alignment.v1.txt \
-    translation-output.v1.schema.json alignment-output.v1.schema.json; do
-    cmp -s "prompts/$asset" "$app/Contents/Frameworks/prompts/$asset" \
-      || fail "bundled asset differs from canonical prompts/$asset"
-  done
+  python3 script/worker_assets.py "$app"
 done
 
 echo "==> Worker bundles verified"

@@ -512,7 +512,9 @@ def make_langchain_operation(
     async def operation(request: Request) -> tuple[dict[str, Any], dict[str, Any]]:
         check_capability(request.config)
         prompt_text = assets.prompts[request.prompt_version]
-        schema = assets.schemas[request.prompt_version]
+        if request.recovery:
+            prompt_text += "\n" + assets.prompts[request.recovery]
+        schema = assets.schemas[request.recovery or request.prompt_version]
         payload = serialize_input(request.input.as_input_object())
         # Imported lazily: handshake and fixture paths stay LangChain-free.
         from langchain_core.messages import HumanMessage, SystemMessage
@@ -551,6 +553,7 @@ def make_langchain_operation(
             validated = validate_translation_output(
                 data, [unit.unit_id for unit in request.input.units],
                 source_line_feeds=source_line_feeds,
+                single_text=request.recovery is not None,
             )
         elif isinstance(request.input, AlignInput):
             validated = validate_alignment_output(data, request.input.counterpart_text)

@@ -29,8 +29,8 @@ public enum JobEvent: Equatable, Sendable {
     case batchDispatched(batchID: Int)
     /// A batch committed atomically; all its units are now complete.
     case batchSucceeded(batchID: Int, unitIDs: [UUID])
-    /// Replace an active batch with its two smaller requests.
-    case batchSplit(batchID: Int, replacementIDs: [Int])
+    /// Retire a mismatched batch. Empty replacements leave its units unfinished.
+    case batchNeedsRecovery(batchID: Int, replacementIDs: [Int])
     /// A batch failed; completed work is preserved.
     case batchFailed(batchID: Int)
     /// Cancel: invalidate the attempt, drop queued work, cancel active.
@@ -123,9 +123,10 @@ public struct JobModel: Equatable, Sendable {
             }
             return []
 
-        case let .batchSplit(batchID, replacementIDs):
+        case let .batchNeedsRecovery(batchID, replacementIDs):
             guard state == .running, activeBatchIDs.remove(batchID) != nil else { return [] }
-            queuedBatchIDs.insert(contentsOf: replacementIDs, at: 0)
+            queuedBatchIDs.append(contentsOf: replacementIDs)
+            if queuedBatchIDs.isEmpty && activeBatchIDs.isEmpty { state = .failed }
             return []
 
         case let .batchFailed(batchID):

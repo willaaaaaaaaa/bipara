@@ -9,6 +9,7 @@ struct OpenSourceSafetyTests {
     @Test func retainedJobDoesNotOfferAChangedEndpointBinding() async throws {
         let gateway = ScriptedGateway(), keys = FaultCredentials()
         let defaults = UserDefaults(suiteName: "dev.bipara.test.\(UUID())")!
+        SavedResponsesFixture.install(defaults)
         let app = AppRuntime(gateway: gateway, keychain: keys, defaults: defaults)
         keys.prepareDefault(app.settings, defaults: defaults)
         let configuration = try #require(app.settings.record.defaultConfiguration)
