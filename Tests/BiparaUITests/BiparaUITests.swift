@@ -6,18 +6,20 @@ final class BiparaUITests: XCTestCase {
     var app:XCUIApplication!
     override func setUp()async throws{await MainActor.run{continueAfterFailure=false;app=XCUIApplication()}}
     override func tearDown()async throws{await MainActor.run{app.terminate()}}
-    private func launch(_ arguments:[String]=[]){
+    private func launch(_ arguments:[String]=[], configuredModels: Bool = true){
         // Isolate fixture launches from saved window state left by earlier cases/manual QA.
-        app.launchArguments=["-ApplePersistenceIgnoreState","YES"]+arguments;app.launch();app.activate()
+        let modelArguments = configuredModels ? ["--configured-models"] : []
+        app.launchArguments=["-ApplePersistenceIgnoreState","YES"]+modelArguments+arguments;app.launch();app.activate()
         if !app.windows["Bipara.Main"].waitForExistence(timeout:3) {
-            app.menuBars.menuBarItems["Window"].click()
-            app.menuItems["Bipara"].firstMatch.click()
-            XCTAssertTrue(app.windows["Bipara.Main"].waitForExistence(timeout:5))
+            let windowMenu = app.menuBars.menuBarItems["Window"]
+            windowMenu.click()
+            windowMenu.menuItems["Bipara"].firstMatch.click()
+            XCTAssertTrue(app.windows["Bipara.Main"].waitForExistence(timeout:12))
         }
     }
     private func capture(_ name:String){
         app.activate()
-        let window = name.contains("settings") ? app.windows.containing(.button,identifier:"settings.save").firstMatch : app.windows.firstMatch
+        let window = name.contains("settings") ? app.windows["Bipara.Settings"] : app.windows["Bipara.Main"]
         XCTAssertTrue(window.exists)
         let shot = XCTAttachment(screenshot: window.screenshot())
         shot.name=name;shot.lifetime = .keepAlways;add(shot)
@@ -64,6 +66,93 @@ final class BiparaUITests: XCTestCase {
             XCTAssertFalse(value.contains("SYNTHETIC_UI_FIXTURE"))
             sheet.buttons["action-button-1"].click()
         }
+        XCTAssertEqual(translate.label, "重试")
+        app.menuButtons["文档操作"].click()
+        XCTAssertTrue(app.menuItems["重新翻译"].exists)
+    }
+
+    private func translateArticle(wideWindow: Bool = false) {
+        var arguments = ["--reading-article", "--appearance", "light", "--font", "14"]
+        if wideWindow { arguments.append("--wide-window") }
+        launch(arguments)
+        app.typeKey(.return, modifierFlags: .command)
+        let target = app.textViews["reader.translation"]
+        let complete = NSPredicate(format: "value CONTAINS %@ AND value CONTAINS %@", "读懂 Git", "Git 参考手册")
+        expectation(for: complete, evaluatedWith: target)
+        waitForExpectations(timeout: 20)
+        XCTAssertTrue((target.value as? String)?.contains("git diff -- notes.md") == true)
+        XCTAssertTrue(app.buttons["reader.copyTranslation"].isHittable)
+    }
+
+    func testBilingualMarkdownArticle() {
+        translateArticle()
+        for column in ["reader.source", "reader.translation"] {
+            let text = app.textViews[column].value as? String ?? ""
+            XCTAssertTrue(text.contains("-Let it rest for 10 minutes."))
+            XCTAssertTrue(text.contains("+Let it rest for 20 minutes."))
+        }
+        capture("bilingual-markdown-reader")
+        enterTranslationReader()
+        XCTAssertTrue((app.textViews["reader.translation"].value as? String)?.contains("从一个文件开始") == true)
+    }
+
+    func testArticleReadingWidthsAndSpacing() {
+        translateArticle(wideWindow: true)
+        enterTranslationReader()
+        let target = app.textViews["reader.translation"]
+        let translated = target.value as? String
+        capture("article-wide-compact")
+        app.typeKey(",", modifierFlags: .command)
+        let settings = app.windows["Bipara.Settings"]
+        let width = settings.popUpButtons["settings.reading.width"]
+        XCTAssertTrue(width.waitForExistence(timeout: 5))
+        width.click()
+        app.menuItems["Standard"].firstMatch.click()
+        let spacing = settings.popUpButtons["settings.reading.lineHeight"]
+        XCTAssertTrue(spacing.waitForExistence(timeout: 5))
+        spacing.click()
+        app.menuItems["Comfortable"].firstMatch.click()
+        settings.buttons["settings.save"].click()
+        settings.buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertEqual(target.value as? String, translated)
+        XCTAssertTrue(app.buttons["reader.copyTranslation"].isHittable)
+        capture("article-standard-comfortable")
+    }
+
+    func testBackgroundFailureBelongsToItsTab() throws {
+        let gate = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: gate) }
+        launch(["--background-failure", "--failure-gate", gate.path])
+        app.typeKey(.return, modifierFlags: .command)
+        let running = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND value CONTAINS[c] %@", "tab.", "running")).firstMatch
+        XCTAssertTrue(running.waitForExistence(timeout: 15))
+        app.typeKey("t", modifierFlags: .command)
+        let editor = app.textViews["source.editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        try Data().write(to: gate)
+        let failedTab = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND value CONTAINS[c] %@", "tab.", "fail")).firstMatch
+        XCTAssertTrue(failedTab.waitForExistence(timeout: 10))
+        XCTAssertTrue(editor.isHittable)
+        XCTAssertFalse(app.sheets.firstMatch.exists)
+        failedTab.click()
+        let details = app.buttons["translation.failureDetails"]
+        XCTAssertTrue(details.waitForExistence(timeout: 5))
+        details.click()
+        let message = app.sheets.firstMatch.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", "HTTP 401")).firstMatch
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+    }
+
+    func testNewTabStaysVisibleWhenTabsOverflow() {
+        launch(["--compact", "--overflow-tabs"])
+        let add = app.buttons["new.tab"]
+        XCTAssertTrue(add.isHittable)
+        add.click()
+        let selected = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "tab.", "Untitled 12")).firstMatch
+        XCTAssertTrue(selected.waitForExistence(timeout: 5))
+        XCTAssertTrue(selected.isHittable)
+        XCTAssertTrue(add.isHittable)
+        add.click()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label == %@", "Untitled 13")).firstMatch.isHittable)
     }
 
     func testInputTranslationBothLayoutsAndSettings(){
@@ -77,14 +166,115 @@ final class BiparaUITests: XCTestCase {
         XCTAssertTrue(app.buttons["settings.save"].waitForExistence(timeout:5))
         capture("settings-light")
     }
+    func testCompletionCopyFromReadingFooter() {
+        let name = UUID().uuidString
+        let pasteboard = NSPasteboard(name: .init(name))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("untouched", forType: .string))
+        launch(["--reading-refinements", "--pasteboard", name])
+
+        let copy = app.buttons["reader.copyTranslation"]
+        let translate = app.buttons["translation.primary"]
+        XCTAssertTrue(translate.waitForExistence(timeout: 5))
+        XCTAssertFalse(copy.exists)
+        XCTAssertEqual(pasteboard.string(forType: .string), "untouched")
+
+        translate.click()
+        XCTAssertTrue(copy.waitForExistence(timeout: 8))
+        XCTAssertEqual(translate.label, "Retranslate")
+        app.menuButtons["Document actions"].click()
+        XCTAssertFalse(app.menuItems["Retranslate"].exists)
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertEqual(pasteboard.string(forType: .string), "untouched")
+        copy.click()
+        let written = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            pasteboard.string(forType: .string)?.contains("好的翻译既保留含义") == true
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [written], timeout: 5), .completed)
+        let copied = pasteboard.string(forType: .string) ?? ""
+        XCTAssertTrue(copied.contains("这是一段用于界面验证的译文。"))
+        XCTAssertFalse(copied.contains("Good translation"))
+    }
+
+    func testTranslationReaderKeepsReadingAndCopyControls() {
+        launch(["--reading-refinements", "--reading-complete"])
+        let original = app.textViews["reader.source"]
+        let translation = app.textViews["reader.translation"]
+        XCTAssertTrue(original.waitForExistence(timeout: 5))
+
+        enterTranslationReader()
+        XCTAssertTrue((translation.value as? String ?? "").hasPrefix("好的翻译"))
+        XCTAssertTrue(app.buttons["reader.copyTranslation"].exists)
+
+        let point = translation.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0))
+            .withOffset(CGVector(dx: 0, dy: 33))
+        point.click()
+        XCTAssertFalse(app.textViews["reader.peek.original"].waitForExistence(timeout: 1))
+        let view = app.menuBars.menuBarItems["View"]
+        view.click()
+        XCTAssertFalse(view.menuItems["Show Original"].exists)
+        app.typeKey(.escape, modifierFlags: [])
+        app.typeKey("2", modifierFlags: .command)
+        XCTAssertTrue(original.waitForExistence(timeout: 5))
+        XCTAssertFalse(translation.exists)
+        XCTAssertTrue(app.buttons["reader.copyTranslation"].exists)
+    }
+
+    func testTranslationReaderWithAllWorkspaceThemes() {
+        launch(["--reading-refinements", "--reading-complete", "--compact", "--appearance", "dark", "--language", "zh-Hans"])
+        let source = app.textViews["reader.source"]
+        XCTAssertTrue(source.waitForExistence(timeout: 5))
+        enterTranslationReader(language: "译文主栏")
+        let target = app.textViews["reader.translation"]
+        let copy = app.buttons["reader.copyTranslation"]
+        XCTAssertTrue(target.waitForExistence(timeout: 5))
+        let text = target.value as? String
+        XCTAssertTrue(text?.contains("好的翻译") == true)
+        XCTAssertTrue(copy.isHittable)
+
+        for theme in ["烟色浮窗", "渐变窗框", "动态胶囊"] {
+            app.typeKey(",", modifierFlags: .command)
+            let picker = app.popUpButtons["settings.theme"]
+            XCTAssertTrue(picker.waitForExistence(timeout: 5))
+            picker.click()
+            app.menuItems[theme].firstMatch.click()
+            let save = app.buttons["settings.save"]
+            XCTAssertTrue(save.isEnabled)
+            save.click()
+            XCTAssertEqual(picker.value as? String, theme)
+            XCTAssertFalse(save.isEnabled)
+            app.windows["Bipara.Settings"].buttons[XCUIIdentifierCloseWindow].click()
+            XCTAssertEqual(target.label, "译文")
+            XCTAssertEqual(target.value as? String, text)
+            XCTAssertFalse(source.exists)
+            XCTAssertTrue(copy.isHittable)
+        }
+    }
+
+    private func enterTranslationReader(language label: String = "Translation Reader") {
+        let segment = app.radioButtons["reading.layout.translationReader"]
+        let reader = segment.exists ? segment : app.radioButtons[label]
+        XCTAssertTrue(reader.waitForExistence(timeout: 5))
+        reader.click()
+        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.textViews["reader.source"])
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
+        XCTAssertTrue(app.textViews["reader.translation"].exists)
+    }
+
     func testMarkdownDetectionTranslationAndReadingModes() throws {
-        launch()
+        let name = UUID().uuidString
+        let pasteboard = NSPasteboard(name: .init(name))
+        defer { pasteboard.releaseGlobally() }
+        launch(["--pasteboard", name])
         app.buttons["new.tab"].click()
         let editor = app.textViews["source.editor"]
         XCTAssertTrue(editor.waitForExistence(timeout: 5))
         settleInputContext()
         editor.click()
-        editor.typeText("# Setup\n\nOpen the **window**.\n\n## Finish\n\nRead the guide.")
+        let markdown = "# Setup\n\nOpen the **window**.\n\n## Finish\n\nRead the guide."
+        editor.typeText(markdown)
+        XCTAssertEqual(editor.value as? String, markdown)
         let detection = app.staticTexts["document.detectedFormat"]
         let detected = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Markdown", "Markdown"),
@@ -105,9 +295,12 @@ final class BiparaUITests: XCTestCase {
         app.radioButtons["Source"].click()
         let markup = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "**window**"), object: source)
         XCTAssertEqual(XCTWaiter.wait(for: [markup], timeout: 5), .completed)
-        app.radioButtons["Rendered"].click()
+        app.radioButtons["Preview"].click()
         app.typeKey("2", modifierFlags: .command)
-        let section = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "准备"), object: source)
+        let section = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@ AND value CONTAINS %@ AND NOT (value CONTAINS %@)", "准备", "Finish", "# Setup"),
+            object: source
+        )
         XCTAssertEqual(XCTWaiter.wait(for: [section], timeout: 5), .completed)
         XCTAssertFalse(target.exists)
         let sections = source.value as? String ?? ""
@@ -116,6 +309,22 @@ final class BiparaUITests: XCTestCase {
         let nextOriginal = try XCTUnwrap(sections.range(of: "Finish"))
         XCTAssertLessThan(firstOriginal.lowerBound, firstTranslation.lowerBound)
         XCTAssertLessThan(firstTranslation.lowerBound, nextOriginal.lowerBound)
+
+        enterTranslationReader()
+        XCTAssertTrue((target.value as? String ?? "").contains("准备"))
+        XCTAssertFalse((target.value as? String ?? "").contains("# 准备"))
+
+        app.radioButtons["Source"].click()
+        let targetMarkup = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", "**窗户**"), object: target
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [targetMarkup], timeout: 5), .completed)
+        app.buttons["reader.copyTranslation"].click()
+        let copied = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            pasteboard.string(forType: .string)?.contains("# 准备") == true
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [copied], timeout: 5), .completed)
+        XCTAssertTrue((pasteboard.string(forType: .string) ?? "").contains("**窗户**"))
     }
 
     func testLocalizedNativeTextAccessibility() {
@@ -216,10 +425,6 @@ final class BiparaUITests: XCTestCase {
         let width=app.popUpButtons["settings.reading.width"]
         XCTAssertTrue(width.waitForExistence(timeout:5))
         width.click();app.menuItems["Window"].firstMatch.click()
-        let highlight=app.popUpButtons["settings.reading.highlight"]
-        XCTAssertEqual(highlight.value as? String,"Amber")
-        highlight.click();app.menuItems["Purple"].firstMatch.click()
-        XCTAssertEqual(highlight.value as? String,"Purple")
         app.buttons["settings.save"].click()
         capture("reading-refinement-settings")
         let skip=app.switches["settings.close.skipSave"]
@@ -262,7 +467,9 @@ final class BiparaUITests: XCTestCase {
         XCTAssertTrue((app.textViews["source.editor"].value as? String)?.contains("window") == true)
     }
     func testIndependentTabs(){
-        launch();enterExample();app.buttons["new.tab"].click()
+        launch();enterExample()
+        XCTAssertFalse(app.toolbars.buttons["New Translation"].exists)
+        app.buttons["new.tab"].click()
         let editor=app.textViews["source.editor"];XCTAssertTrue(editor.waitForExistence(timeout:5));XCTAssertEqual(editor.value as? String,"")
         settleInputContext()
         editor.click();app.textViews["source.editor"].typeText("Second document.")
@@ -274,15 +481,14 @@ final class BiparaUITests: XCTestCase {
         tabs.element(boundBy:1).click();settleInputContext()
         XCTAssertEqual(app.textViews["source.editor"].value as? String,"Second document.")
     }
-    func testNativeSelectionAndReveal(){
+    func testNativeSelectionKeepsReadingIndependent(){
         launch();enterExample();translate()
         let original=app.textViews["reader.source"]
         original.coordinate(withNormalizedOffset:.zero).withOffset(CGVector(dx:90,dy:35)).hover()
-        XCTAssertTrue(app.staticTexts["Sentence match"].waitForExistence(timeout:5))
         original.coordinate(withNormalizedOffset:.zero).withOffset(CGVector(dx:90,dy:35)).doubleClick()
-        XCTAssertTrue(app.staticTexts["Suggested phrase correspondence"].waitForExistence(timeout:5))
-        XCTAssertTrue(app.buttons["Pin"].waitForExistence(timeout:5));app.buttons["Pin"].click()
-        XCTAssertTrue(app.buttons["Reveal counterpart"].exists);app.buttons["Reveal counterpart"].click()
+        XCTAssertTrue(app.textViews["reader.translation"].exists)
+        XCTAssertFalse(app.buttons["Pin"].exists)
+        XCTAssertFalse(app.buttons["Reveal counterpart"].exists)
         capture("native-selection")
     }
     func testAppearanceAndLayoutScreenshots(){
@@ -324,8 +530,6 @@ final class BiparaUITests: XCTestCase {
         XCTAssertLessThanOrEqual(try XCTUnwrap(report["p95_ms"] as? Double),150)
         XCTAssertLessThanOrEqual(try XCTUnwrap(report["local_cancel_ms"] as? Double),200)
         XCTAssertEqual(report["cancelled_state"] as? String,"paused")
-        let contrasts=try XCTUnwrap(report["contrast_ratios"] as? [String:Double])
-        XCTAssertEqual(contrasts.count,4);XCTAssertTrue(contrasts.values.allSatisfy{$0 >= 4.5})
         print("Bipara benchmark: checking the native Resume control");fflush(nil)
         XCTAssertEqual(app.toolbars.buttons["translation.primary"].firstMatch.label,"Resume")
     }
@@ -415,6 +619,46 @@ final class BiparaUITests: XCTestCase {
         app.buttons["settings.cancel"].click()
     }
 
+    func testFreshInstallSavesItsFirstModelAsActive() {
+        launch(configuredModels: false)
+        enterExample()
+        let toolbar = app.descendants(matching: .any)["translation.activeModel"].firstMatch
+        XCTAssertTrue(toolbar.waitForExistence(timeout: 5))
+        XCTAssertEqual(toolbar.value as? String, "No configurations")
+        app.typeKey(",", modifierFlags: .command)
+        let add = app.buttons["settings.models.add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        let empty = app.staticTexts["Add a model configuration to translate."]
+        XCTAssertTrue(empty.exists)
+        let active = app.popUpButtons["settings.model.default"]
+        let rows = app.buttons.matching(identifier: "settings.model.row")
+        for save in [false, true] {
+            add.click()
+            let name = app.textFields["settings.model.name"]
+            XCTAssertTrue(name.waitForExistence(timeout: 5))
+            name.click(); name.typeText("My translator")
+            let model = app.textFields["settings.model.id"]
+            model.click(); model.typeText("my-model")
+            let url = app.textFields["settings.model.url"]
+            url.click(); url.typeText("https://api.openai.com/v1/")
+            let key = app.secureTextFields["settings.model.key.field"]
+            key.click(); key.typeText("SYNTHETIC_UI_FIXTURE")
+            app.buttons["settings.model.confirm"].click()
+            XCTAssertEqual(active.value as? String, "My translator")
+            XCTAssertEqual(rows.count, 1)
+            if save {
+                app.buttons["settings.save"].click()
+            } else {
+                app.buttons["settings.cancel"].click()
+                XCTAssertTrue(empty.waitForExistence(timeout: 5))
+                XCTAssertEqual(rows.count, 0)
+            }
+        }
+        app.windows["Bipara.Settings"].buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertTrue((toolbar.value as? String)?.contains("My translator") == true)
+        translate()
+    }
+
     func testCustomModelDirectionAndSharedActiveSelection() {
         launch()
         let newTab = app.buttons["new.tab"]
@@ -448,6 +692,8 @@ final class BiparaUITests: XCTestCase {
         let active = app.popUpButtons["settings.model.default"]
         XCTAssertTrue(active.waitForExistence(timeout: 5))
         XCTAssertEqual(active.value as? String, "Fast DeepSeek")
+        let activeRow = app.buttons.matching(identifier: "settings.model.row").matching(NSPredicate(format: "label == %@", "Fast DeepSeek")).firstMatch
+        XCTAssertTrue((activeRow.value as? String)?.contains("Active Model") == true)
         XCTAssertTrue((direction.value as? String)?.contains("Chinese → English") == true)
     }
 
@@ -666,7 +912,7 @@ final class BiparaUITests: XCTestCase {
         edit.click()
     }
 
-    // MARK: - Native correspondence and selection regressions
+    // MARK: - Native model configuration regressions
 
     func testReopenedEditorCancelKeyCannotRetainKeyAtChangedEndpoint() {
         // N1 native sequence with a real stored key: commit a key at the
@@ -802,7 +1048,9 @@ final class BiparaUITests: XCTestCase {
     }
     func testCustomModelEditorFieldsAndProtocols() {
         launch(); app.typeKey(",", modifierFlags: .command)
-        app.buttons["settings.models.add"].click()
+        let addModel = app.buttons["settings.models.add"]
+        XCTAssertTrue(addModel.waitForExistence(timeout: 8))
+        addModel.click()
         let name = app.textFields["settings.model.name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         let model = app.textFields["settings.model.id"]
@@ -816,9 +1064,9 @@ final class BiparaUITests: XCTestCase {
         let fields = [name, api, model, app.popUpButtons["settings.model.effort"], url, key]
         for (first, second) in zip(fields, fields.dropFirst()) { XCTAssertLessThan(first.frame.midY, second.frame.midY) }
         capture("settings-custom-blank")
-        api.click(); app.menuItems["Anthropic"].firstMatch.click()
+        api.click(); app.menuItems["Anthropic Messages"].firstMatch.click()
         for field in [name, model, url, key] { XCTAssertEqual(field.value as? String, "") }
-        api.click(); app.menuItems["OpenAI"].firstMatch.click()
+        api.click(); app.menuItems["OpenAI Responses"].firstMatch.click()
         model.click(); model.typeText("unknown-model-2027")
         url.click(); url.typeText("https://gateway.example.com/api/")
         let effort = app.popUpButtons["settings.model.effort"]
@@ -826,7 +1074,7 @@ final class BiparaUITests: XCTestCase {
         for name in ["Off", "Low", "Medium", "High"] { XCTAssertTrue(app.menuItems[name].firstMatch.exists) }
         XCTAssertFalse(app.menuItems["Default"].exists)
         app.menuItems["Medium"].firstMatch.click()
-        api.click(); app.menuItems["Anthropic"].firstMatch.click()
+        api.click(); app.menuItems["Anthropic Messages"].firstMatch.click()
         XCTAssertTrue((effort.value as? String)?.contains("Medium") == true)
         XCTAssertFalse(app.staticTexts["API type"].exists)
         XCTAssertFalse(app.textFields["settings.model.endpoint"].exists)

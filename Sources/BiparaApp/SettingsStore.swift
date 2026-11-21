@@ -15,14 +15,20 @@ public enum AppearanceMode: String, Codable, Sendable, CaseIterable {
     case dark
 }
 
-public enum ReadingWidth: String, Codable, Sendable, CaseIterable {
-    case standard, wide, window
+public enum AppTheme: String, Codable, Sendable, CaseIterable {
+    case dynamicCapsule, smokedGlass, gradientFrame
+
+    var title: String {
+        switch self {
+        case .dynamicCapsule: "Dynamic Capsule"
+        case .smokedGlass: "Smoked Glass"
+        case .gradientFrame: "Gradient Frame"
+        }
+    }
 }
 
-public enum CorrespondenceColor: String, Codable, Sendable, CaseIterable {
-    case blue, teal, amber, purple
-
-    public static let defaultPreset: Self = .amber
+public enum ReadingWidth: String, Codable, Sendable, CaseIterable {
+    case standard, wide, window
 }
 
 /// Reading typography shared across all tabs.
@@ -52,23 +58,6 @@ public struct ReadingTypography: Codable, Sendable, Equatable {
     }
 }
 
-/// Fresh installs use the same open protocol as Add. Existing persisted
-/// configurations are never reseeded or silently converted.
-public func defaultModelConfigurations() -> [ModelConfigurationRecord] {
-    [ModelVendor.openai, .glm].map { vendor in
-        ModelConfigurationRecord(
-            displayName: vendor.name,
-            provider: "openai",
-            profile: ModelAPIProtocol.openai.profile,
-            modelID: vendor.models[0],
-            effort: .low,
-            baseURL: vendor.baseURL,
-            vendorLabel: vendor.name,
-            requestOptions: ModelRequestOptions(),
-            revision: UUID())
-    }
-}
-
 /// The single versioned preferences record persisted in UserDefaults
 /// (schema 2). Layout is per-document and deliberately not part of
 /// preferences.
@@ -76,17 +65,20 @@ public struct PreferencesRecord: Codable, Sendable, Equatable {
     public var schemaVersion: Int
     public var interfaceLanguage: InterfaceLanguage
     public var appearance: AppearanceMode
+    private var preferredTheme: AppTheme?
+    public var theme: AppTheme {
+        get { preferredTheme ?? .dynamicCapsule }
+        set { preferredTheme = newValue == .dynamicCapsule ? nil : newValue }
+    }
     public var typography: ReadingTypography
     public var modelConfigurations: [ModelConfigurationRecord]
     public var defaultModelConfigurationID: UUID?
     public var preferredTranslationDirection: Direction?
     public var preferredReadingWidth: ReadingWidth?
-    public var preferredCorrespondenceColor: CorrespondenceColor?
     public var skipDocumentSavePrompt: Bool?
 
     public var translationDirection: Direction { preferredTranslationDirection ?? .auto }
     public var readingWidth: ReadingWidth { preferredReadingWidth ?? .wide }
-    public var correspondenceColor: CorrespondenceColor { preferredCorrespondenceColor ?? .defaultPreset }
     public var dontAskToSaveOnClose: Bool { skipDocumentSavePrompt ?? false }
 
     public init(
@@ -94,7 +86,7 @@ public struct PreferencesRecord: Codable, Sendable, Equatable {
         interfaceLanguage: InterfaceLanguage = .english,
         appearance: AppearanceMode = .system,
         typography: ReadingTypography = ReadingTypography(),
-        modelConfigurations: [ModelConfigurationRecord] = defaultModelConfigurations(),
+        modelConfigurations: [ModelConfigurationRecord] = [],
         defaultModelConfigurationID: UUID? = nil
     ) {
         self.schemaVersion = schemaVersion
@@ -138,6 +130,8 @@ public struct SettingsLoadFailure: Equatable, Sendable {
         /// A v2 record exists but is corrupt or from a newer schema. Data
         /// is preserved; this build refuses to interpret or overwrite it.
         case corruptOrNewerRecord
+        /// Legacy settings are readable, but migrating credentials waits for user action.
+        case migrationPending
         /// The one-time v1→v2 migration failed and was rolled back; v1
         /// remains authoritative and readable. Retrying re-runs only the
         /// migration.
@@ -172,6 +166,7 @@ public final class SettingsStore: ObservableObject {
 
     // Localization keys for load/maintenance outcomes (surfaced via t()).
     public static let messageCorruptOrNewer = "settings.load.corruptNewer"
+    public static let messageMigrationPending = "settings.load.migrationPending"
     public static let messageMigrationFailed = "settings.load.migrationFailed"
     public static let messageMigrationCompensation = "settings.load.migrationCompensation"
     public static let messageCleanupResidue = "settings.maintenance.cleanupResidue"
@@ -190,8 +185,7 @@ public final class SettingsStore: ObservableObject {
     /// Blocking load/migration failure: preserved data stays authoritative
     /// and ordinary Save is refused (never silently reset).
     @Published public private(set) var loadFailure: SettingsLoadFailure?
-    /// Non-fatal outcomes the UI should surface (for example residual
-    /// legacy-key cleanup that will be retried automatically).
+    /// Non-fatal legacy-key cleanup status for Settings.
     @Published public private(set) var maintenanceNotice: String?
     public var hasDraftChanges: Bool { draft != record || !keyDrafts.isEmpty }
 
@@ -212,13 +206,9 @@ public final class SettingsStore: ObservableObject {
             return
         }
         let loaded = Self.loadOrMigrate(defaults: defaults, keychain: keychain)
-        let initial = loaded.record
-        self.record = initial
-        draft = initial
+        self.record = loaded.record
+        draft = loaded.record
         applyMaintenanceOutcome(loaded)
-        if loaded.persistFreshSeed {
-            persist(initial)
-        }
     }
 
     /// Applies the non-record parts of a load outcome (failure state and
@@ -233,26 +223,32 @@ public final class SettingsStore: ObservableObject {
         }
     }
 
-    /// Re-runs only the v1→v2 migration after a failed attempt. Safe to
-    /// call repeatedly; a still-failing migration keeps the same blocked
-    /// state and preserved data. No-op for corrupt/newer-record failures
-    /// and after a successful load.
+    /// Starts or retries the v1→v2 migration from an explicit user action.
     public func retryMigration() {
-        guard loadFailure?.kind == .migrationFailed else { return }
-        let loaded = Self.loadOrMigrate(defaults: defaults, keychain: keychain)
+        guard loadFailure?.kind == .migrationPending || loadFailure?.kind == .migrationFailed else { return }
+        let loaded = Self.loadOrMigrate(defaults: defaults, keychain: keychain, migrate: true)
         record = loaded.record
         draft = loaded.record
         hasDraftModelSelection = false
         keyDrafts = [:]
         applyMaintenanceOutcome(loaded)
-        if loaded.persistFreshSeed {
-            persist(loaded.record)
+    }
+
+    public func retryLegacyCleanup() {
+        guard loadFailure == nil, let keychain else { return }
+        let remaining = Self.pendingCleanupProviders(from: defaults).filter { provider in
+            do { try keychain.deleteLegacyKey(provider: provider); return false }
+            catch { return true }
         }
+        if remaining.isEmpty { defaults.removeObject(forKey: Self.pendingLegacyCleanupKey) }
+        else { defaults.set(remaining, forKey: Self.pendingLegacyCleanupKey) }
+        maintenanceNotice = remaining.isEmpty ? nil : Self.messageCleanupResidue
     }
 
     // MARK: Draft
 
     public func updateDraft(_ change: (inout PreferencesRecord) -> Void) {
+        guard loadFailure == nil else { return }
         let priorID = draft.defaultModelConfigurationID
         change(&draft)
         if priorID != draft.defaultModelConfigurationID {
@@ -291,6 +287,7 @@ public final class SettingsStore: ObservableObject {
     /// the editor supersedes an inherited key (see the editor contract);
     /// explicit Replace/Delete survives a restored URL.
     public func setKeyDraft(_ change: KeyDraftChange?, configurationID: UUID) {
+        guard loadFailure == nil else { return }
         keyDrafts[configurationID] = change
     }
 
@@ -530,32 +527,28 @@ public final class SettingsStore: ObservableObject {
         var record: PreferencesRecord
         var loadFailure: SettingsLoadFailure?
         var maintenanceNotice: String?
-        var persistFreshSeed = false
-        /// Pending legacy-key cleanup state to persist for a later launch.
+        /// Pending legacy-key cleanup state to persist for an explicit retry.
         var pendingCleanupProviders: [String] = []
         var persistPendingCleanup = false
         var clearPendingCleanup = false
-
-        static func emptyRecord() -> PreferencesRecord {
-            PreferencesRecord(modelConfigurations: [], defaultModelConfigurationID: nil)
-        }
     }
 
-    /// Loads the v2 record; performs the one-time v1→v2 migration when v2
-    /// is absent. Migration is offline and never validates account
+    /// Loads settings without Keychain access unless migration was requested.
+    /// Migration is offline and never validates account
     /// entitlement with a network call. A failed legacy-credential read
     /// aborts the migration before any destructive cleanup, leaving v1
     /// authoritative (S1).
     private static func loadOrMigrate(
         defaults: UserDefaults,
-        keychain: (any CredentialStore)?
+        keychain: (any CredentialStore)?,
+        migrate: Bool = false
     ) -> LoadOutcome {
         // A present v2 value of any type is authoritative evidence the key
         // exists: a present-but-non-Data value blocks (corrupt) instead of
         // being treated as absent and overwritten (N2).
         if defaults.object(forKey: defaultsKey) != nil {
             guard let data = defaults.data(forKey: defaultsKey) else {
-                return LoadOutcome(record: LoadOutcome.emptyRecord(),
+                return LoadOutcome(record: PreferencesRecord(),
                                    loadFailure: SettingsLoadFailure(
                                        kind: .corruptOrNewerRecord, messageKey: messageCorruptOrNewer))
             }
@@ -563,54 +556,33 @@ public final class SettingsStore: ObservableObject {
                 let record = try JSONDecoder().decode(PreferencesRecord.self, from: data)
                 guard record.schemaVersion == schemaVersion else {
                     // Corrupt or newer: preserve data, do not fall back.
-                    return LoadOutcome(record: LoadOutcome.emptyRecord(),
+                    return LoadOutcome(record: PreferencesRecord(),
                                        loadFailure: SettingsLoadFailure(
                                            kind: .corruptOrNewerRecord, messageKey: messageCorruptOrNewer))
                 }
-                // Verified v2 load: retry any pending legacy-key cleanup
-                // independently, without rerunning the migration (S4).
-                var outcome = LoadOutcome(record: record, clearPendingCleanup: true)
-                let pending = pendingCleanupProviders(from: defaults)
-                if !pending.isEmpty {
-                    if let keychain {
-                        var remaining: [String] = []
-                        for provider in pending {
-                            do { try keychain.deleteLegacyKey(provider: provider) }
-                            catch { remaining.append(provider) }
-                        }
-                        if remaining.isEmpty {
-                            defaults.removeObject(forKey: pendingLegacyCleanupKey)
-                        } else {
-                            defaults.set(remaining, forKey: pendingLegacyCleanupKey)
-                            outcome.clearPendingCleanup = false
-                            outcome.maintenanceNotice = messageCleanupResidue
-                        }
-                    } else {
-                        outcome.clearPendingCleanup = false
-                    }
-                }
-                return outcome
+                let notice = pendingCleanupProviders(from: defaults).isEmpty ? nil : messageCleanupResidue
+                return LoadOutcome(record: record, maintenanceNotice: notice)
             } catch {
-                return LoadOutcome(record: LoadOutcome.emptyRecord(),
+                return LoadOutcome(record: PreferencesRecord(),
                                    loadFailure: SettingsLoadFailure(
                                        kind: .corruptOrNewerRecord, messageKey: messageCorruptOrNewer))
             }
         }
         guard let legacyData = defaults.data(forKey: legacyDefaultsKey) else {
-            // Fresh install: seed and persist so configuration IDs stay
-            // stable across launches from the very first run.
-            return LoadOutcome(record: PreferencesRecord(), persistFreshSeed: true)
+            return LoadOutcome(record: PreferencesRecord())
         }
         // One-time migration of a valid v1 record. Any failure is blocking
         // and retryable: v1 stays authoritative, Save is refused, and
         // nothing destructive has happened.
+        let legacy = try? JSONDecoder().decode(LegacyPreferencesRecordV1.self, from: legacyData)
+        let preview = PreferencesRecord(
+            interfaceLanguage: legacy?.interfaceLanguage ?? .english,
+            appearance: legacy?.appearance ?? .system,
+            typography: legacy?.typography ?? ReadingTypography())
         func migrationFailed(_ messageKey: String = messageMigrationFailed) -> LoadOutcome {
-            LoadOutcome(record: LoadOutcome.emptyRecord(),
-                        loadFailure: SettingsLoadFailure(kind: .migrationFailed, messageKey: messageKey))
+            LoadOutcome(record: preview, loadFailure: .init(kind: .migrationFailed, messageKey: messageKey))
         }
-        guard let legacy = try? JSONDecoder().decode(LegacyPreferencesRecordV1.self, from: legacyData) else {
-            return migrationFailed()
-        }
+        guard let legacy else { return migrationFailed() }
         guard let providers = legacy.providers, let defaultProvider = legacy.defaultProvider,
               WorkerContract.legacyProviders.contains(defaultProvider),
               WorkerContract.legacyProviders.allSatisfy({ providers[$0] != nil }) else {
@@ -637,7 +609,13 @@ public final class SettingsStore: ObservableObject {
                 baseURL: WorkerContract.legacyStandardBaseURL(provider: provider))
             entries.append(entry)
         }
-        let defaultID = entries.first { $0.provider == defaultProvider }!.id
+        if !migrate {
+            return LoadOutcome(record: preview,
+                               loadFailure: .init(kind: .migrationPending, messageKey: messageMigrationPending))
+        }
+        var migrated = preview
+        migrated.modelConfigurations = entries
+        migrated.defaultModelConfigurationID = entries.first { $0.provider == defaultProvider }!.id
 
         // Stage independent configuration-scoped copies of the two legacy
         // provider-scoped Keychain items; a missing key stays missing. A
@@ -671,14 +649,6 @@ public final class SettingsStore: ObservableObject {
             }
         }
 
-        let migrated = PreferencesRecord(
-            schemaVersion: schemaVersion,
-            interfaceLanguage: legacy.interfaceLanguage ?? .english,
-            appearance: legacy.appearance ?? .system,
-            typography: legacy.typography ?? ReadingTypography(),
-            modelConfigurations: entries,
-            defaultModelConfigurationID: defaultID)
-
         // Persist, then read back the complete v2 record; only verified
         // persistence makes v2 authoritative.
         do {
@@ -701,7 +671,7 @@ public final class SettingsStore: ObservableObject {
 
         // Cleanup of superseded legacy keys/record only after verified v2
         // persistence; a cleanup failure records the minimum pending state
-        // so a later launch retries only that cleanup — never the
+        // so an explicit retry performs only that cleanup — never the
         // migration, never new IDs, never credential copies (S4).
         var remainingProviders: [String] = []
         if let keychain {

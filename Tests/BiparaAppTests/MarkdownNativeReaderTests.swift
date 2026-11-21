@@ -35,7 +35,7 @@ struct MarkdownNativeReaderTests {
                          typography: ReadingTypography = .init(), onAnchor: @escaping (ReadingAnchor) -> Void = { _ in }) -> NativeReadingSurface {
         NativeReadingSurface(sessionID: session, document: document, layout: layout, typography: typography,
                              presentation: presentation, language: .english, markdown: markdown,
-                             onSelect: { _ in }, onHover: { _ in }, onAnchor: onAnchor)
+                             onAnchor: onAnchor)
     }
 
     private func views(_ reader: ParallelReader) -> [NSTextView] {
@@ -116,6 +116,65 @@ struct MarkdownNativeReaderTests {
         #expect(text.textStorage?.length == text.string.utf16.count)
     }
 
+    @Test func incomingTableFadeAndNativeSelectionSurviveWidthChanges() async throws {
+        let doc = try WorkspaceStore.prepareDocument(source: "| A | B |\n| --- | --- |\n| C | D |", direction: .enToZh, format: .markdown).document
+        var full = doc
+        full.translations = doc.units.enumerated().map { .init(unitID: $1.id, text: "单元\($0)", completedAt: Date()) }
+        var partial = full
+        partial.translations.removeLast(2)
+        let (reader, window) = nativeReader(width: 140)
+        defer { window.close() }
+        let session = UUID()
+        func render(_ document: BiparaDocument) throws {
+            var view = surface(document, session: session, markdown: try #require(document.markdownProjection()), layout: .paragraphs)
+            view.translationOnly = true
+            reader.update(view)
+        }
+        func resize(to width: CGFloat) {
+            window.setContentSize(.init(width: width, height: 550))
+            reader.layoutSubtreeIfNeeded()
+        }
+        try render(partial)
+        let text = views(reader)[0]
+        #expect(text.string.contains("Column 2"))
+        text.setSelectedRange(.init(location: text.string.utf16.count, length: 0))
+        try render(full)
+        #expect(text.selectedRange() == NSRange(location: text.string.utf16.count, length: 0))
+        try await Task.sleep(for: .milliseconds(35))
+        resize(to: 900)
+        #expect(!text.string.contains("Column 2"))
+        #expect(text.selectedRange() == NSRange(location: text.string.utf16.count, length: 0))
+        try await Task.sleep(for: .milliseconds(175))
+        let storage = try #require(text.textStorage)
+        let lastCell = (text.string as NSString).range(of: "单元3")
+        let color = try #require(storage.attribute(.foregroundColor, at: lastCell.location, effectiveRange: nil) as? NSColor)
+        #expect(color == ThemeColors.translation)
+        text.selectAll(nil)
+        resize(to: 140)
+        #expect(text.selectedRange() == NSRange(location: 0, length: text.string.utf16.count))
+        try render(partial)
+        text.selectAll(nil)
+        try render(full)
+        #expect(text.selectedRange() == NSRange(location: 0, length: text.string.utf16.count))
+    }
+
+    @Test func initialRenderedLayoutRestoresSavedOffsetInsideLongBlock() throws {
+        var document = try WorkspaceStore.prepareDocument(source: "# Title\n\nLong paragraph.", direction: .enToZh, format: .markdown).document
+        let unit = try #require(document.units.last)
+        document.translations = [.init(unitID: unit.id, text: String(repeating: "可定位的长段落", count: 800), completedAt: Date())]
+        let anchor = ReadingAnchor(paragraphID: unit.paragraphID, side: .translation, fraction: 0, offset: 2000)
+        document.readingAnchor = anchor
+        let (reader, window) = nativeReader()
+        defer { window.close() }
+        let session = UUID()
+        reader.update(surface(document, session: session, markdown: try #require(document.markdownProjection())))
+        let visible = try #require(reader.visibleAnchor(for: session))
+        #expect(visible.paragraphID == unit.paragraphID)
+        #expect(visible.side == .translation)
+        let offset = try #require(visible.offset)
+        #expect(abs(offset - 2000) < 80)
+    }
+
     @Test func missingFirstSectionStillAlignsSubsequentCompletedHeading() throws {
         let workspace = WorkspaceStore()
         try workspace.newTab(source: "Fixture.", direction: .enToZh)
@@ -132,50 +191,6 @@ struct MarkdownNativeReaderTests {
         reader.update(surface(document, session: UUID(), markdown: projection))
         let text = views(reader)
         #expect(abs((try glyphRect("Second heading", in: text[0])).minY - (try glyphRect("第二章节", in: text[1])).minY) < 1)
-    }
-
-    @Test func selectionAcrossStylesReprojectsAndRawSyntaxFallsBack() throws {
-        let workspace = WorkspaceStore()
-        try workspace.newTab(source: "A plain fixture.", direction: .enToZh)
-        let document = try #require(workspace.activeTab?.document)
-        let groupID = UUID()
-        let blockID = UUID()
-        let unit = UUID()
-        let source = MarkdownReadingBlock(id: blockID, runs: [
-            .init("Go ", unitID: unit, visibleRange: .init(location: 0, length: 3)),
-            .init("café", style: .bold, unitID: unit, visibleRange: .init(location: 3, length: 4)),
-            .init(" 👩🏻‍💻", unitID: unit, visibleRange: .init(location: 7, length: " 👩🏻‍💻".utf16.count))
-        ])
-        let target = MarkdownReadingBlock(id: blockID, runs: [
-            .init("去", unitID: unit, visibleRange: .init(location: 0, length: 1)),
-            .init("咖啡馆", style: .bold, unitID: unit, visibleRange: .init(location: 1, length: 3))
-        ])
-        let rendered = MarkdownReadingProjection(groups: [.init(id: groupID, source: [source], translation: [target])])
-        let index = RenderedTextIndex(document: document, layout: .sideBySide, markdown: rendered)
-        let nativeRange = (index.strings[0] as NSString).range(of: "o café 👩🏻‍💻", options: .literal)
-        let selection = try #require(index.selection(column: 0, range: nativeRange))
-        #expect(selection.unitID == unit)
-        #expect(selection.range.location == 1)
-        #expect(selection.range.length == nativeRange.length)
-        let (column, ranges) = try #require(index.displayRanges(selection, counterpart: true, ranges: [.init(location: 0, length: 4)]))
-        #expect(column == 1)
-        #expect(ranges.map { (index.strings[1] as NSString).substring(with: $0) }.joined() == "去咖啡馆")
-
-        let rawSource = MarkdownReadingBlock(id: blockID, runs: [
-            .init("Go ", unitID: unit, visibleRange: .init(location: 0, length: 3)),
-            .init("**"),
-            .init("café", unitID: unit, visibleRange: .init(location: 3, length: 4)),
-            .init("**"),
-            .init(" 👩🏻‍💻", unitID: unit, visibleRange: .init(location: 7, length: " 👩🏻‍💻".utf16.count))
-        ])
-        let raw = MarkdownReadingProjection(groups: [.init(id: groupID, source: [rawSource], translation: [target])], isSourceMode: true)
-        let rawIndex = RenderedTextIndex(document: document, layout: .paragraphs, markdown: raw)
-        let rawRange = (rawIndex.strings[0] as NSString).range(of: "o **café**", options: .literal)
-        let fallback = try #require(rawIndex.selection(column: 0, range: rawRange))
-        #expect(fallback.unitID == nil)
-        #expect(fallback.paragraphID == blockID)
-        let (_, splitRanges) = try #require(rawIndex.displayRanges(selection, counterpart: false, ranges: [selection.range]))
-        #expect(splitRanges.map { (rawIndex.strings[0] as NSString).substring(with: $0) }.joined() == "o café 👩🏻‍💻")
     }
 
     @Test func sourceProjectionKeepsAdjacentTableSlicesOnOneLine() throws {
@@ -199,30 +214,6 @@ struct MarkdownNativeReaderTests {
         #expect(index.markdownBlocks[0][1].span.range.location == source[0].utf16.count)
     }
 
-    @Test func crossBlockSelectionWithSharedHeadingIdentityHighlightsWholeGroup() throws {
-        let workspace = WorkspaceStore()
-        try workspace.newTab(source: "Fixture.", direction: .enToZh)
-        let document = try #require(workspace.activeTab?.document)
-        let heading = UUID()
-        let body = UUID()
-        let projection = MarkdownReadingProjection(groups: [
-            .init(id: heading, source: [
-                .init(id: heading, kind: .heading(level: 1), runs: [.init("Heading")]),
-                .init(id: body, runs: [.init("Body")])
-            ], translation: [
-                .init(id: heading, kind: .heading(level: 1), runs: [.init("标题")]),
-                .init(id: body, runs: [.init("正文")])
-            ])
-        ])
-        let index = RenderedTextIndex(document: document, layout: .sideBySide, markdown: projection)
-        let range = (index.strings[0] as NSString).range(of: "Heading\n\nBody")
-        let selection = try #require(index.selection(column: 0, range: range))
-        #expect(selection.isSection)
-        let (_, highlights) = try #require(index.highlightedRanges(selection, counterpart: true, ranges: []))
-        #expect(highlights.map { (index.strings[1] as NSString).substring(with: $0) }.joined() == "标题\n\n正文\n")
-        #expect(index.selection(column: 0, range: NSRange(location: 0, length: 10_000)) == nil)
-    }
-
     @Test func emptySectionsAndUnmatchedFallbackKeepTheirMeaning() throws {
         let workspace = WorkspaceStore()
         try workspace.newTab(source: "Fixture.", direction: .enToZh)
@@ -232,7 +223,6 @@ struct MarkdownNativeReaderTests {
         let empty = RenderedTextIndex(document: document, layout: .sideBySide,
             markdown: .init(groups: [.init(id: section, source: source, translation: [])]))
         #expect(empty.markdownGroups[1].first?.span.range.length == 0)
-        #expect(empty.span(.init(paragraphID: section, unitID: nil, side: .source, range: .init(location: 0, length: 5), isSection: true), counterpart: true) == nil)
         let fallback = RenderedTextIndex(document: document, layout: .sideBySide,
             markdown: .init(groups: [.init(id: section, source: source, translation: [.init(id: UUID(), runs: [.init("Saved translation")])])], isSourceMode: true))
         #expect(fallback.strings[1].contains("Saved translation"))
@@ -283,13 +273,6 @@ struct MarkdownNativeReaderTests {
         }
         scrolls[1].contentView.scroll(to: NSPoint(x: 0, y: bottom / 2))
         NotificationCenter.default.post(name: NSView.boundsDidChangeNotification, object: scrolls[1].contentView)
-        var presentation = ReadingPresentation()
-        presentation.selection = .init(paragraphID: groups[0].source[0].id, unitID: nil, side: .source, range: .init(location: 0, length: 7))
-        presentation.revealGeneration = 1
-        reader.update(surface(document, session: session, markdown: projection, presentation: presentation))
-        #expect(abs(scrolls[0].contentView.bounds.minY - scrolls[1].contentView.bounds.minY) < 1)
-        scrolls[1].contentView.scroll(to: NSPoint(x: 0, y: bottom / 2))
-        NotificationCenter.default.post(name: NSView.boundsDidChangeNotification, object: scrolls[1].contentView)
         // Reflow and mode changes restore one logical position for both panes.
         let toggled = MarkdownReadingProjection(groups: groups, isSourceMode: !sourceMode)
         reader.update(surface(document, session: session, markdown: toggled))
@@ -300,29 +283,4 @@ struct MarkdownNativeReaderTests {
         #expect(abs(first.minY - other.minY) < 1)
     }
 
-    @Test func protectedInlineCodeKeepsCoarseCounterpartHighlight() throws {
-        let workspace = WorkspaceStore()
-        try workspace.newTab(source: "Fixture.", direction: .enToZh)
-        let document = try #require(workspace.activeTab?.document)
-        let block = UUID()
-        let unit = UUID()
-        let source = MarkdownReadingBlock(id: block, runs: [
-            .init("Use ", unitID: unit, visibleRange: .init(location: 0, length: 4)),
-            .init("git", style: .code, unitID: unit, visibleRange: .init(location: 4, length: 3))
-        ])
-        let target = MarkdownReadingBlock(id: block, runs: [
-            .init("用", unitID: unit, visibleRange: .init(location: 0, length: 1)),
-            .init("git", style: .code, unitID: unit, visibleRange: .init(location: 1, length: 3))
-        ])
-        let index = RenderedTextIndex(document: document, layout: .sideBySide,
-                                      markdown: .init(groups: [.init(id: block, source: [source], translation: [target])]))
-        let range = NSRange(location: 0, length: 3)
-        let selection = try #require(index.selection(column: 0, range: range))
-        #expect(selection.unitID == unit)
-        let unresolved = BiparaCore.TextRange(location: 0, length: 4)
-        #expect(index.displayRanges(selection, counterpart: true, ranges: [unresolved]) == nil)
-        let (_, highlights) = try #require(index.highlightedRanges(selection, counterpart: true, ranges: [unresolved]))
-        #expect(highlights.map { (index.strings[1] as NSString).substring(with: $0) }.joined() == "用git")
-        #expect(index.selection(column: 0, range: NSRange(location: 4, length: 3))?.unitID == nil)
-    }
 }

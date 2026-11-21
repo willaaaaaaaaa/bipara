@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 
+from worker_assets import AssetError, verify_worker_assets
+
 ROOT = Path(__file__).resolve().parents[1]
 if sys.version_info < (3, 12):
     raise SystemExit("release: Python 3.12 or newer is required")
@@ -149,7 +151,7 @@ def verify_minimum_macos(path: Path, minimum: str) -> None:
         raise ReleaseError(f"binary deployment target exceeds macOS {minimum} or is missing: {path.name}")
 
 
-def verify_bundle(app: Path, minimum: str) -> None:
+def verify_bundle(app: Path, minimum: str) -> dict[str, str]:
     helper = app / "Contents/Helpers/BiparaWorker.app"
     if not (helper / "Contents/MacOS/BiparaWorker").is_file():
         raise ReleaseError("bundled worker is missing")
@@ -159,9 +161,10 @@ def verify_bundle(app: Path, minimum: str) -> None:
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
     if info.get("LSMinimumSystemVersion") != minimum:
         raise ReleaseError("built application minimum macOS differs from release configuration")
-    for prompt in (ROOT / "prompts").glob("*.txt"):
-        if digest(prompt) != digest(helper / "Contents/Frameworks/prompts" / prompt.name):
-            raise ReleaseError("bundled prompt differs from the tagged source")
+    try:
+        worker_asset_sha256 = verify_worker_assets(helper)
+    except AssetError as exc:
+        raise ReleaseError(str(exc)) from exc
     if not (helper / "Contents/Resources/ThirdPartyLicenses/README.md").is_file():
         raise ReleaseError("bundled dependency licenses are missing")
     for path in app.rglob("*"):
@@ -181,6 +184,7 @@ def verify_bundle(app: Path, minimum: str) -> None:
         frames = [json.loads(line) for line in result.stdout.splitlines()]
         if result.returncode or [frame.get("type") for frame in frames] != ["ready", "stopped"]:
             raise ReleaseError("signed helper handshake/shutdown smoke failed")
+    return worker_asset_sha256
 
 
 def build_release(tag: str) -> None:
@@ -252,7 +256,7 @@ def build_release(tag: str) -> None:
         mount.mkdir()
         command("hdiutil", "attach", "-readonly", "-nobrowse", "-mountpoint", str(mount), str(dmg))
         try:
-            verify_bundle(mount / "Bipara.app", minimum)
+            worker_asset_sha256 = verify_bundle(mount / "Bipara.app", minimum)
             if mode == "developer-id":
                 command("spctl", "--assess", "--type", "execute", str(mount / "Bipara.app"))
         finally:
@@ -262,7 +266,7 @@ def build_release(tag: str) -> None:
                 "architecture": architecture(), "xcode": command("xcodebuild", "-version"),
                 "python": command("uv", "run", "--project", "Worker", "--no-sync", "python", "--version", env=env),
                 "lock_sha256": digest(ROOT / "Worker/uv.lock"),
-                "prompt_sha256": {p.name: digest(p) for p in sorted((ROOT / "prompts").glob("*.txt"))},
+                "prompt_sha256": {name: worker_asset_sha256[name] for name in sorted(worker_asset_sha256) if name.endswith(".txt")},
                 "dmg_sha256": digest(dmg)}
     (output / assets(tag, architecture())[2]).write_text(json.dumps(manifest, indent=2) + "\n")
     (output / assets(tag, architecture())[1]).write_text("".join(f"{digest(output / n)}  {n}\n" for n in (assets(tag, architecture())[0], assets(tag, architecture())[2])))
@@ -275,8 +279,8 @@ def github_release(tag: str, *, publish: bool, expected_sha: str = "", verified:
     _, _, commit = source(tag, require_checkout=not publish)
     mode = distribution(ref=f"refs/tags/{tag}")
     if publish and (set(verified or []) != set(REQUIRED_CHECKS) or not re.fullmatch(r"[a-f0-9]{64}", expected_sha)
-                    or not re.fullmatch(r"(?:26|27)\.\d+(?:\.\d+)?", tested_macos)):
-        raise ReleaseError("publication requires the exact checksum, local-install/upgrade declarations and tested macOS 26 or 27 version")
+                    or not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", tested_macos)):
+        raise ReleaseError("publication requires the exact checksum, local-install/upgrade declarations and tested macOS version")
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         raise ReleaseError("GITHUB_REPOSITORY must identify the selected public repository")
@@ -309,13 +313,14 @@ def github_release(tag: str, *, publish: bool, expected_sha: str = "", verified:
             notes = folder / "release-notes.md"
             compatibility = ("Compatibility targets: macOS 26 and 27 on Apple Silicon." if macos_version(minimum) == (26, 0, 0)
                              else f"Apple Silicon package minimum: macOS {minimum} (tagged configuration).")
+            intel_target = "macOS 26 only" if macos_version(minimum) == (26, 0, 0) else f"macOS {minimum} or later"
             notes.write_text(metadata.get("body", "").rstrip() + "\n\n"
                              + compatibility + "\n\n"
                              f"Installation and upgrade of the Apple silicon DMG were validated on macOS {tested_macos}. "
                              "This is local-machine evidence, not clean-machine or cross-version qualification. "
                              "Other macOS versions have not been maintainer-tested for this package; users must verify their own environment.\n\n"
                              f"Tested DMG SHA-256: `{expected_sha}`\n"
-                             + ("\nThe Intel installer targets compatible Intel Macs running macOS 26 only. It has not received maintainer runtime acceptance.\n" if intel else ""))
+                             + (f"\nThe Intel installer targets compatible Intel Macs running {intel_target}. It has not received maintainer runtime acceptance.\n" if intel else ""))
             command("gh", "release", "edit", tag, "--repo", repo, "--notes-file", str(notes), "--draft=false", "--latest")
     else:
         folder = ROOT / "build/release" / tag
@@ -338,7 +343,7 @@ def main() -> int:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--sha256", default="")
     parser.add_argument("--verified", action="append", choices=REQUIRED_CHECKS, default=[])
-    parser.add_argument("--tested-macos", default="", help="Exact macOS 26 or 27 version used for local installation and upgrade acceptance")
+    parser.add_argument("--tested-macos", default="", help="Exact macOS version used for local installation and upgrade acceptance")
     args = parser.parse_args()
     try:
         if args.operation == "preflight":

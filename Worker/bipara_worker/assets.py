@@ -14,23 +14,29 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .protocol import PROMPT_VERSIONS, decode_json_strict
+from .protocol import PROMPT_VERSIONS, SINGLE_TEXT_RECOVERY, decode_json_strict
 
 PROMPT_FILES = {
     "translation.v1": "translation.v1.txt",
     "translation.v2": "translation.v2.txt",
+    "translation.v3": "translation.v3.txt",
     "translation.markdown.v1": "translation.markdown.v1.txt",
     "translation.markdown.v2": "translation.markdown.v2.txt",
     "translation.markdown.v3": "translation.markdown.v3.txt",
+    "translation.markdown.v4": "translation.markdown.v4.txt",
     "alignment.v1": "alignment.v1.txt",
+    SINGLE_TEXT_RECOVERY: "single-text.v1.txt",
 }
 SCHEMA_FILES = {
     "translation.v1": "translation-output.v1.schema.json",
     "translation.v2": "translation-output.v1.schema.json",
+    "translation.v3": "translation-output.v1.schema.json",
     "translation.markdown.v1": "translation-output.v1.schema.json",
     "translation.markdown.v2": "translation-output.v1.schema.json",
     "translation.markdown.v3": "translation-output.v1.schema.json",
+    "translation.markdown.v4": "translation-output.v1.schema.json",
     "alignment.v1": "alignment-output.v1.schema.json",
+    SINGLE_TEXT_RECOVERY: "single-text-output.v1.schema.json",
 }
 ASSET_FILES = tuple(dict.fromkeys((*PROMPT_FILES.values(), *SCHEMA_FILES.values())))
 MANIFEST_NAME = "asset_manifest.json"

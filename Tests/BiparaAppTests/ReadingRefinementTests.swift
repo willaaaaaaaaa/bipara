@@ -14,7 +14,7 @@ struct ReadingRefinementTests {
     }
 
     @Test func oldPreferencesDefaultNewFieldsAndDraftSaveCancelPreserveModels() throws {
-        let keys=FaultCredentials(),defs=defaults(),store=SettingsStore(defaults:defs,keychain:keys)
+        let keys=FaultCredentials(),defs=defaults(),store=SettingsStore(defaults:defs,keychain:keys,record:SavedResponsesFixture.record())
         store.updateDraft { $0.interfaceLanguage = .simplifiedChinese; $0.typography.size = 23 }
         try store.saveDraft()
         let original=store.record
@@ -23,16 +23,14 @@ struct ReadingRefinementTests {
         defs.set(try JSONSerialization.data(withJSONObject:object),forKey:SettingsStore.defaultsKey)
         let migrated=SettingsStore(defaults:defs,keychain:keys)
         #expect(migrated.record.readingWidth == .wide)
-        #expect(migrated.record.correspondenceColor == .amber)
         #expect(!migrated.record.dontAskToSaveOnClose)
-        migrated.updateDraft { $0.preferredReadingWidth = .window; $0.preferredCorrespondenceColor = .purple; $0.skipDocumentSavePrompt = true }
+        migrated.updateDraft { $0.preferredReadingWidth = .window; $0.skipDocumentSavePrompt = true }
         migrated.cancelDraft()
         #expect(migrated.draft == migrated.record)
-        migrated.updateDraft { $0.preferredReadingWidth = .standard; $0.preferredCorrespondenceColor = .teal; $0.skipDocumentSavePrompt = true }
+        migrated.updateDraft { $0.preferredReadingWidth = .standard; $0.skipDocumentSavePrompt = true }
         try migrated.saveDraft()
         let reloaded=SettingsStore(defaults:defs,keychain:keys)
         #expect(reloaded.record.readingWidth == .standard)
-        #expect(reloaded.record.correspondenceColor == .teal)
         #expect(reloaded.record.dontAskToSaveOnClose)
         #expect(reloaded.record.interfaceLanguage == .simplifiedChinese)
         #expect(reloaded.record.typography == original.typography)
@@ -46,7 +44,7 @@ struct ReadingRefinementTests {
         #expect(w.tabs.map(\.document.title) == ["Untitled 1","Untitled 2"])
         w.closeTab(at:0);try w.newTab()
         #expect(w.tabs.last?.document.title == "Untitled 3")
-        let source="\r\n---\r\n```markdown\r\n# Useful heading 👨‍👩‍👧\r\nBody."
+        let source="\r\n---\r\n```markdown\r\n# Fenced example\r\n```\r\n# Useful heading 👨‍👩‍👧\r\nBody."
         let id=w.tabs[0].document.documentID
         w.withTab(0) { $0.draftText=source }
         try w.applyDraft(at:0)
@@ -61,6 +59,25 @@ struct ReadingRefinementTests {
         w.withTab(index) { $0.draftText="Changed source." }
         try w.applyDraft(at:index)
         #expect(w.tabs[index].document.title == "Saved title")
+    }
+
+    @Test func pastedMarkdownUsesParsedTitlesAndSkipsOpaqueMetadata() throws {
+        let cases = [
+            ("| Product | Price |\n| --- | --- |\n| Notebook | 10 |", "Product"),
+            ("---\ntitle: Metadata title\n---\nIntro.\n\nA **formatted** heading\n===\n", "A formatted heading"),
+            ("---\ndescription: Another value\ntitle: 'What''s next?' # note\n---\nBody.", "What's next?"),
+            ("---\nname: internal-example\n---\nFirst **visible** paragraph.", "First visible paragraph."),
+            ("Ordinary first line.\nOrdinary second line.", "Ordinary first line.")
+        ]
+        let workspace = WorkspaceStore()
+        for (source, expected) in cases {
+            try workspace.newTab()
+            let index = try #require(workspace.activeTabIndex)
+            workspace.withTab(index) { $0.draftText = source }
+            try workspace.applyDraft(at: index)
+            #expect(workspace.tabs[index].document.title == expected)
+            #expect(TextIdentity.equal(workspace.tabs[index].document.source, source))
+        }
     }
 
     @Test func importUsesMeaningfulFilenameWithoutChangingSource() async throws {
@@ -160,6 +177,7 @@ struct ReadingRefinementTests {
     @Test func globalModelSwitchDoesNotMigrateConcurrentJob() async throws {
         let gateway=ScriptedGateway(),barrier=TestBarrier(),keys=FaultCredentials(),defs=defaults()
         gateway.barrier=barrier
+        SavedResponsesFixture.install(defs)
         let app=AppRuntime(gateway:gateway,keychain:keys,defaults:defs)
         let configurations=app.settings.record.modelConfigurations
         for config in configurations { keys.keys[config.id]="SYNTHETIC_READING_TEST" }
@@ -191,12 +209,10 @@ struct ReadingRefinementTests {
             #expect(!index.strings[0].hasPrefix("Original\n"))
             let targetColumn=layout == .sideBySide ? 1 : 0
             #expect(index.paragraphs[targetColumn].filter { $0.side == .translation }.allSatisfy { $0.range.length == 0 })
-            let source=ReadingSelection(paragraphID:doc.paragraphs[0].id,unitID:doc.units[0].id,side:.source,range:.init(location:0,length:8))
-            #expect(index.span(source,counterpart:true) == nil)
         }
     }
 
-    @Test(arguments:[AppearanceMode.light,.dark]) func paletteAndWidthChangesPreserveNativeSelection(appearance:AppearanceMode) throws {
+    @Test(arguments:[AppearanceMode.light,.dark]) func widthChangesPreserveNativeSelection(appearance:AppearanceMode) throws {
         _ = NSApplication.shared
         let w=WorkspaceStore();try w.newTab(source:"The window is open.\n\nAnother paragraph.")
         var doc=w.tabs[0].document
@@ -206,32 +222,24 @@ struct ReadingRefinementTests {
         window.isReleasedWhenClosed=false;window.appearance=NSAppearance(named:appearance == .dark ? .darkAqua : .aqua)
         window.contentView=reader;reader.frame=NSRect(x:0,y:0,width:2560,height:900)
         defer { window.close() }
-        var presentation=ReadingPresentation()
-        presentation.selection = .init(paragraphID:doc.paragraphs[0].id,unitID:doc.units[0].id,side:.source,range:.init(location:4,length:6))
-        func update(_ width:ReadingWidth,_ color:CorrespondenceColor) {
-            reader.update(.init(sessionID:session,document:doc,layout:.paragraphs,typography:.init(),presentation:presentation,language:.english,
-                readingWidth:width,correspondenceColor:color,jobState:.completed,onSelect:{_ in},onHover:{_ in},onAnchor:{_ in}))
+        func update(_ width:ReadingWidth) {
+            reader.update(.init(sessionID:session,document:doc,layout:.paragraphs,typography:.init(),presentation:.init(),language:.english,
+                readingWidth:width,jobState:.completed,onAnchor:{_ in}))
         }
-        update(.standard,.blue)
+        update(.standard)
         let views=reader.subviews.compactMap { ($0 as? NSScrollView)?.documentView as? ReaderTextView }
         let text=try #require(views.first)
-        let selected=text.selectedRange(),storage=try #require(text.textStorage)
+        let selected = (text.string as NSString).range(of: "window")
+        text.setSelectedRange(selected)
+        let storage=try #require(text.textStorage)
         #expect(text.textContainer?.containerSize.width == 800)
         let nativeSelection=text.selectedTextAttributes
-        for color in CorrespondenceColor.allCases {
-            update(.wide,color)
-            #expect(text.selectedRange() == selected)
-            #expect((text.string as NSString).substring(with:selected) == "window")
-            #expect(text.textContainer?.containerSize.width == 1080)
-            #expect(!text.rules.isEmpty)
-            #expect(text.rules.allSatisfy { $0.minX >= 0 && $0.intersects(text.bounds) }, "Translation rules must lie inside the text view: \(text.rules)")
-            let fill=try #require(storage.attribute(.backgroundColor,at:selected.location,effectiveRange:nil) as? NSColor)
-            window.effectiveAppearance.performAsCurrentDrawingAppearance {
-                #expect(fill.usingColorSpace(.sRGB) == ThemeColors.correspondence(color).usingColorSpace(.sRGB))
-            }
-            #expect(text.selectedTextAttributes[.backgroundColor] as? NSColor == nativeSelection[.backgroundColor] as? NSColor)
-        }
-        update(.window,.amber)
+        update(.wide)
+        #expect(text.selectedRange() == selected)
+        #expect(text.textContainer?.containerSize.width == 1080)
+        #expect(text.rules.allSatisfy { $0.minX >= 0 && $0.intersects(text.bounds) })
+        #expect(text.selectedTextAttributes[.backgroundColor] as? NSColor == nativeSelection[.backgroundColor] as? NSColor)
+        update(.window)
         #expect(text.textContainer!.containerSize.width > 1080)
         let overlays=text.subviews.compactMap { $0 as? ReadingMarksView }
         let overlay=try #require(overlays.first),rule=try #require(text.rules.first)
@@ -257,7 +265,7 @@ struct ReadingRefinementTests {
         window.isReleasedWhenClosed=false;window.contentView=reader;reader.frame=NSRect(x:0,y:0,width:1440,height:900)
         defer { window.close() }
         reader.update(.init(sessionID:UUID(),document:doc,layout:.sideBySide,typography:.init(),presentation:.init(),language:.english,
-            jobState:.paused,onSelect:{_ in},onHover:{_ in},onAnchor:{_ in}))
+            jobState:.paused,onAnchor:{_ in}))
         let views=reader.subviews.compactMap { ($0 as? NSScrollView)?.documentView as? ReaderTextView }
         let index=RenderedTextIndex(document:doc,layout:.sideBySide)
         func y(_ column:Int,_ offset:Int) throws -> CGFloat {
@@ -287,7 +295,7 @@ struct ReadingRefinementTests {
             appearance.performAsCurrentDrawingAppearance {
                 do {
                     for foreground in [ThemeColors.source,ThemeColors.translation] {
-                        for background in CorrespondenceColor.allCases.map({ThemeColors.correspondence($0)}) + [.textBackgroundColor,.windowBackgroundColor] {
+                        for background in [NSColor.textBackgroundColor, .windowBackgroundColor] {
                             let a=try luminance(foreground),b=try luminance(background)
                             #expect((max(a,b)+0.05)/(min(a,b)+0.05) >= 4.5)
                         }

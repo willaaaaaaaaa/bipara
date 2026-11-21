@@ -11,6 +11,23 @@ import Testing
 @MainActor
 @Suite("Model configuration and reader regressions")
 struct ModelConfigurationRegressionTests {
+    @Test func modelChoicesIdentifyInterfacesAndDistinguishSameNameEfforts() {
+        var low = ModelConfigurationRecord(displayName: "Reader", provider: "openai", profile: ModelAPIProtocol.openai.profile,
+                                           modelID: "custom", effort: .low, baseURL: "https://example.com/")
+        var high = low
+        high.id = UUID()
+        high.effort = .high
+        let entries = [low, high]
+        #expect(low.selectionLabel(in: entries, effortLabel: "Low") == "Reader · Low")
+        #expect(high.selectionLabel(in: entries, effortLabel: "High") == "Reader · High")
+        #expect(low.pickerLabel(effortLabel: "Low") == "Reader · OpenAI Responses · custom · Low")
+        high.provider = "anthropic"
+        high.profile = ModelAPIProtocol.anthropic.profile
+        #expect(high.summary(effortLabel: "High") == "Anthropic Messages · custom · High")
+        low.profile = WorkerContract.legacyProfiles["openai"]!
+        #expect(low.summary(effortLabel: "Low") == "OpenAI Chat Completions · custom · Low")
+    }
+
     private func freshDefaults() -> UserDefaults {
         let name = "test.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!
@@ -316,7 +333,7 @@ struct ModelConfigurationRegressionTests {
         #expect(persisted["unexpected"] as? Bool == true)
     }
 
-    @Test func absentV2StillMigratesAndFreshInstallStillSeeds() throws {
+    @Test func absentV2MigratesExistingV1AfterExplicitRetry() throws {
         // Absence (nil object) is still absence: v1 migrates.
         let migrating = freshDefaults()
         let legacy: [String: Any] = [
@@ -326,13 +343,14 @@ struct ModelConfigurationRegressionTests {
             "providers": ["openai": ["model": "kept-model"], "glm": ["model": "glm-4.7-flash"]],
         ]
         migrating.set(try! JSONSerialization.data(withJSONObject: legacy), forKey: SettingsStore.legacyDefaultsKey)
-        let migrated = SettingsStore(defaults: migrating, keychain: AuditingCredentials())
+        let keychain = AuditingCredentials()
+        let migrated = SettingsStore(defaults: migrating, keychain: keychain)
+        #expect(migrated.loadFailure?.kind == .migrationPending)
+        #expect(keychain.legacyReads.isEmpty && keychain.legacyDeletes.isEmpty && keychain.writes.isEmpty)
+        #expect(migrating.data(forKey: SettingsStore.defaultsKey) == nil)
+        migrated.retryMigration()
         #expect(migrated.loadFailure == nil)
         #expect(migrated.record.modelConfigurations.contains { $0.modelID == "kept-model" })
-        // Fresh install seeds.
-        let fresh = SettingsStore(defaults: freshDefaults(), keychain: AuditingCredentials())
-        #expect(fresh.loadFailure == nil)
-        #expect(fresh.record.modelConfigurations.count == 2)
     }
 
     // MARK: - typing in the Add key field stages the key
@@ -439,7 +457,6 @@ struct ModelConfigurationRegressionTests {
         // Present the binding sheet (no runtime binding yet).
         await app.translate(session)
         let request = try #require(app.bindingRequest)
-        #expect(request.purpose == .resume)
         // While pending, the user saves the candidate with a different endpoint.
         app.settings.updateDraft { draft in
             guard let i = draft.modelConfigurations.firstIndex(where: { $0.id == match.id }) else { return }
@@ -492,119 +509,6 @@ struct ModelConfigurationRegressionTests {
         app.bindingRequest = nil
     }
 
-    @Test func unchangedAnalysisCandidateStillBindsAndSnapshotMatchDriftRefreshes() async throws {
-        let gateway = ScriptedGateway()
-        let (app, keychain, defaults, session, match) = try appWithOpenedPausedDocument(gateway: gateway)
-        keychain.keys[match.id] = "MATCH_KEY"
-        defaults.set(true, forKey: "dev.bipara.disclosure.\(match.provider)|https://api.openai.com")
-        let document = app.workspace.tabs[0].document
-        let unit = document.units[0]
-        let selection = ReadingSelection(
-            paragraphID: document.paragraphs[0].id, unitID: unit.id,
-            side: .source, range: .init(location: 0, length: 3))
-        // Analysis binding request for the unbound opened document.
-        app.selected(selection, session: session)
-        try await appWaitUntil { app.bindingRequest != nil }
-        var request = try #require(app.bindingRequest)
-        #expect(request.purpose == .analysis)
-        // While pending, the candidate's endpoint is saved to a different
-        // URL: the snapshot-matching fields still match, but the presented
-        // endpoint no longer exists.
-        app.settings.updateDraft { draft in
-            guard let i = draft.modelConfigurations.firstIndex(where: { $0.id == match.id }) else { return }
-            draft.modelConfigurations[i].baseURL = "https://analysis-drift.example.com/v1/"
-        }
-        try app.settings.saveDraft()
-        app.bindForAnalysis(request, configurationID: match.id)
-        #expect(gateway.alignmentDispatchCount == 0)
-        // A refreshed analysis request appears from current state.
-        request = try #require(app.bindingRequest)
-        #expect(request.purpose == .analysis)
-        #expect(request.matches.first?.baseURL == "https://analysis-drift.example.com/v1/")
-        keychain.keys[request.matches.first!.id] = "MATCH_KEY"
-        defaults.set(true, forKey: "dev.bipara.disclosure.openai|https://analysis-drift.example.com")
-        // An unchanged candidate confirms and dispatches under the frozen snapshot.
-        app.bindForAnalysis(request, configurationID: request.matches.first!.id)
-        try await appWaitUntil { gateway.alignmentDispatchCount == 1 }
-        let used = try #require(gateway.alignConfigurations.first)
-        #expect(used.model == document.jobSnapshot?.model)
-        #expect(used.profile == document.jobSnapshot?.profile)
-        #expect(used.effort == document.jobSnapshot?.effort)
-        #expect(gateway.dispatchCount == 0) // analysis-only, no translation
-    }
-
-    @Test func analysisWithoutMatchingConfigurationOffersRecovery() async throws {
-        for staleSheet in [false, true] {
-            let gateway = ScriptedGateway()
-            let (app, _, _, session, match) = try appWithOpenedPausedDocument(gateway: gateway)
-            let document = app.workspace.tabs[0].document
-            let selection = ReadingSelection(paragraphID: document.paragraphs[0].id,
-                unitID: document.units[0].id, side: .source, range: .init(location: 0, length: 3))
-            var request: AppRuntime.BindingRequest?
-            if staleSheet {
-                app.selected(selection, session: session)
-                try await appWaitUntil { app.bindingRequest != nil }
-                request = app.bindingRequest
-            }
-            app.settings.removeConfigurationFromDraft(id: match.id,
-                replacement: app.settings.record.modelConfigurations.first { $0.id != match.id }?.id)
-            try app.settings.saveDraft()
-            var offered = false
-            app.alertHandler = { title, _, buttons in
-                #expect(title == "No matching model configuration")
-                #expect(buttons == ["Retranslate", "Settings…", "Cancel"])
-                offered = true
-                return 1 // Open Settings, with no model operation.
-            }
-            if let request { app.bindForAnalysis(request, configurationID: match.id) }
-            else { app.selected(selection, session: session) }
-            try await appWaitUntil { offered && app.settingsRequested }
-            #expect(gateway.dispatchCount == 0)
-            #expect(gateway.alignmentDispatchCount == 0)
-            #expect(app.workspace.tabs[0].runtimeBinding == nil)
-            #expect(app.workspace.tabs[0].document == document)
-            #expect(!app.workspace.tabs[0].isDirty)
-            #expect(app.bindingRequest == nil)
-        }
-    }
-
-    @Test func analysisRecoveryRequiresExplicitRetranslateConfirmation() async throws {
-        for action in ["cancel", "decline-retranslate", "retranslate"] {
-            let gateway = ScriptedGateway()
-            let (app, keys, defaults, session, match) = try appWithOpenedPausedDocument(gateway: gateway)
-            let replacement = try #require(app.settings.record.modelConfigurations.first { $0.id != match.id })
-            keys.keys[replacement.id] = "SYNTHETIC_RECOVERY_KEY"
-            defaults.set(true, forKey: "dev.bipara.disclosure.\(replacement.provider)|\(CanonicalBaseURL.origin(of: replacement.baseURL))")
-            app.settings.removeConfigurationFromDraft(id: match.id, replacement: replacement.id)
-            try app.settings.saveDraft()
-            let original = app.workspace.tabs[0].document
-            var offered = false, confirmed = false
-            app.alertHandler = { title, _, _ in
-                #expect(gateway.dispatchCount == 0)
-                if title == "No matching model configuration" {
-                    offered = true
-                    return action == "cancel" ? 2 : 0
-                }
-                #expect(title == "Replace existing translations?")
-                confirmed = true
-                return action == "retranslate" ? 0 : 1
-            }
-            app.selected(ReadingSelection(paragraphID: original.paragraphs[0].id,
-                unitID: original.units[0].id, side: .source, range: .init(location: 0, length: 3)), session: session)
-            try await appWaitUntil { offered && (action == "cancel" || confirmed) }
-            if action == "retranslate" {
-                try await appWaitUntil { app.workspace.tabs[0].job.state == .completed }
-                #expect(gateway.dispatchCount > 0)
-                #expect(gateway.configurations.allSatisfy { $0.model == replacement.modelID && $0.baseURL == replacement.baseURL })
-            } else {
-                #expect(gateway.dispatchCount == 0)
-                #expect(app.workspace.tabs[0].document == original)
-                #expect(!app.workspace.tabs[0].isDirty)
-            }
-            #expect(gateway.alignmentDispatchCount == 0)
-        }
-    }
-
     // MARK: - consent suspends before credential resolution and dispatch
 
     /// Consent is driven through the real alert seam; the race is
@@ -614,143 +518,19 @@ struct ModelConfigurationRegressionTests {
     /// itself shown, then parks (cancellation-safe) until the test
     /// releases it with a chosen answer. No busy-waiting on a cancelled
     /// task can starve the main actor.
-    @MainActor final class AlertGate {
-        var shown = false
-        var released = false
-        var answer = 0
-    }
-
-    @Test func consentSuspensionRevalidatesBeforeDispatch() async throws {
-        // Baseline: unchanged Continue dispatches exactly once to the
-        // frozen destination (acknowledgement preset).
-        do {
-            let gateway = ScriptedGateway()
-            let (app, keychain, defaults, session, match) = try appWithOpenedPausedDocument(gateway: gateway)
-            keychain.keys[match.id] = "MATCH_KEY"
-            defaults.set(true, forKey: "dev.bipara.disclosure.\(match.provider)|https://api.openai.com")
-            app.workspace.withTab(0) { $0.runtimeBinding = RuntimeModelBinding(configurationID: match.id, baseURL: match.baseURL, provider: match.provider) }
-            let document = app.workspace.tabs[0].document
-            let unit = document.units[0]
-            app.selected(ReadingSelection(
-                paragraphID: document.paragraphs[0].id, unitID: unit.id,
-                side: .source, range: .init(location: 0, length: 3)), session: session)
-            try await appWaitUntil { gateway.alignmentDispatchCount == 1 }
-            #expect(gateway.alignConfigurations.last?.baseURL == match.baseURL)
-        }
-        // Custom origin (no preset acknowledgement) so consent genuinely
-        // suspends; mutate during the suspension, then Continue.
-        for mutation in ["delete", "endpoint", "rotate"] {
-            let gateway = ScriptedGateway()
-            let (app, keychain, _, session, match) = try appWithOpenedPausedDocument(gateway: gateway)
-            let gateURL = "https://consent-gate.example.com/v1/"
-            app.settings.updateDraft { draft in
-                guard let i = draft.modelConfigurations.firstIndex(where: { $0.id == match.id }) else { return }
-                draft.modelConfigurations[i].baseURL = gateURL
-            }
-            try app.settings.saveDraft()
-            keychain.keys[match.id] = "FIRST_KEY"
-            app.workspace.withTab(0) { $0.runtimeBinding = RuntimeModelBinding(configurationID: match.id, baseURL: gateURL, provider: "openai") }
-            let document = app.workspace.tabs[0].document
-            let unit = document.units[0]
-            let gate = AlertGate()
-            app.alertHandler = { [weak gate] _, _, _ in
-                guard let gate else { return 1 }
-                gate.shown = true
-                while !gate.released {
-                    if Task.isCancelled { return 1 }
-                    try? await Task.sleep(for: .milliseconds(2))
-                }
-                return gate.answer
-            }
-            app.selected(ReadingSelection(
-                paragraphID: document.paragraphs[0].id, unitID: unit.id,
-                side: .source, range: .init(location: 0, length: 3)), session: session)
-            // The consent alert is now pending.
-            try await appWaitUntil { gate.shown }
-            switch mutation {
-            case "delete":
-                app.settings.updateDraft { draft in
-                    draft.modelConfigurations.removeAll { $0.id == match.id }
-                    draft.defaultModelConfigurationID = draft.modelConfigurations.first?.id
-                }
-                try app.settings.saveDraft()
-            case "endpoint":
-                app.settings.updateDraft { draft in
-                    guard let i = draft.modelConfigurations.firstIndex(where: { $0.id == match.id }) else { return }
-                    draft.modelConfigurations[i].baseURL = "https://moved.example.com/v1/"
-                }
-                try app.settings.saveDraft()
-            default:
-                keychain.keys[match.id] = "ROTATED_KEY"
-            }
-            gate.released = true // Continue
-            if mutation == "rotate" {
-                try await appWaitUntil { gateway.alignmentDispatchCount == 1 }
-                #expect(gateway.alignConfigurations.last?.apiKey == "ROTATED_KEY")
-                #expect(gateway.alignConfigurations.last?.baseURL == gateURL)
-            } else {
-                try await Task.sleep(for: .milliseconds(600))
-                #expect(gateway.alignmentDispatchCount == 0)
-            }
-            app.alertHandler = nil
-        }
-    }
-
-    @Test func consentCancellationAndSelectionChangeDuringConsentMakeZeroCalls() async throws {
-        for mode in ["cancel", "selection-change"] {
-            let gateway = ScriptedGateway()
-            let (app, keychain, _, session, match) = try appWithOpenedPausedDocument(gateway: gateway)
-            keychain.keys[match.id] = "MATCH_KEY"
-            let gateURL = "https://unacknowledged.example.com/v1/"
-            app.settings.updateDraft { draft in
-                guard let i = draft.modelConfigurations.firstIndex(where: { $0.id == match.id }) else { return }
-                draft.modelConfigurations[i].baseURL = gateURL
-            }
-            try app.settings.saveDraft()
-            app.workspace.withTab(0) { $0.runtimeBinding = RuntimeModelBinding(configurationID: match.id, baseURL: gateURL, provider: "openai") }
-            let document = app.workspace.tabs[0].document
-            let unit = document.units[0]
-            let gate = AlertGate()
-            gate.answer = 1 // Cancel
-            app.alertHandler = { [weak gate] _, _, _ in
-                guard let gate else { return 1 }
-                gate.shown = true
-                while !gate.released {
-                    if Task.isCancelled { return 1 }
-                    try? await Task.sleep(for: .milliseconds(2))
-                }
-                return gate.answer
-            }
-            app.selected(ReadingSelection(
-                paragraphID: document.paragraphs[0].id, unitID: unit.id,
-                side: .source, range: .init(location: 0, length: 3)), session: session)
-            try await appWaitUntil { gate.shown }
-            if mode == "selection-change" {
-                gate.answer = 0 // Continue, but the selection was replaced
-                app.selected(ReadingSelection(
-                    paragraphID: document.paragraphs[0].id, unitID: unit.id,
-                    side: .source, range: .init(location: 4, length: 4)), session: session)
-            }
-            gate.released = true
-            try await Task.sleep(for: .milliseconds(600))
-            #expect(gateway.alignmentDispatchCount == 0)
-            app.alertHandler = nil
-        }
-    }
-
     // MARK: - operation-specific prompt versions
 
-    @Test func operationSpecificPromptVersionsGateResumeAndAnalysis() async throws {
-        let combinations: [(String, String, Bool, Bool)] = [
-            // (translation field, alignment field, resume allowed, analysis allowed)
-            ("translation.v1", "alignment.v1", true, true),
-            ("alignment.v1", "translation.v1", false, false),   // swapped
-            ("translation.v1", "translation.v1", false, false),  // translation version in alignment field
-            ("alignment.v1", "alignment.v1", false, true),       // alignment version in translation field; analysis field still valid
-            ("translation.v0", "alignment.v1", false, true),     // retired translation version
-            ("translation.v1", "alignment.v0", false, false),    // retired alignment version blocks Resume too
+    @Test func savedPromptVersionsGateResume() async throws {
+        let combinations: [(String, String, Bool)] = [
+            // (translation field, retained alignment field, resume allowed)
+            ("translation.v1", "alignment.v1", true),
+            ("alignment.v1", "translation.v1", false),   // swapped
+            ("translation.v1", "translation.v1", false),  // translation version in alignment field
+            ("alignment.v1", "alignment.v1", false),       // alignment version in translation field
+            ("translation.v0", "alignment.v1", false),     // retired translation version
+            ("translation.v1", "alignment.v0", false),    // retired alignment version blocks Resume too
         ]
-        for (translationVersion, alignmentVersion, resumeAllowed, analysisAllowed) in combinations {
+        for (translationVersion, alignmentVersion, resumeAllowed) in combinations {
             let gateway = ScriptedGateway()
             let (app, keychain, defaults, session, match) = try appWithOpenedPausedDocument(gateway: gateway)
             keychain.keys[match.id] = "MATCH_KEY"
@@ -773,44 +553,6 @@ struct ModelConfigurationRegressionTests {
                 #expect(app.workspace.tabs[0].document.jobSnapshot?.translationPromptVersion == translationVersion)
                 #expect(app.errorMessage != nil)
                 app.errorMessage = nil
-            }
-            // Analysis path (fresh runtime to keep counts clean).
-            let analysisGateway = ScriptedGateway()
-            let keychain2 = AuditingCredentials()
-            let defaults2 = UserDefaults(suiteName: "dev.bipara.test.\(UUID())")!
-            LegacyModelFixture.install(defaults2)
-            let analysisApp = AppRuntime(gateway: analysisGateway, keychain: keychain2, defaults: defaults2)
-            let analysisMatch = try #require(analysisApp.settings.record.defaultConfiguration)
-            keychain2.keys[analysisMatch.id] = "MATCH_KEY"
-            defaults2.set(true, forKey: "dev.bipara.disclosure.\(analysisMatch.provider)|https://api.openai.com")
-            try analysisApp.workspace.newTab(source: "The window is open.", direction: .enToZh)
-            let document = analysisApp.workspace.tabs[0].document
-            analysisApp.workspace.withTab(0) {
-                $0.document.jobSnapshot = JobSnapshot(
-                    jobID: UUID(), sourceRevision: document.sourceRevision,
-                    sourceLanguage: .en, targetLanguage: .zh,
-                    provider: analysisMatch.provider, model: analysisMatch.modelID,
-                    profile: analysisMatch.profile, effort: analysisMatch.effort,
-                    translationPromptVersion: translationVersion,
-                    alignmentPromptVersion: alignmentVersion)
-                $0.document.resolvedDirection = .enToZh
-                $0.document.translations = document.units.map {
-                    .init(unitID: $0.id, text: "译文", returnedModel: nil, completedAt: Date())
-                }
-                $0.job.snapshot = $0.document.jobSnapshot
-                $0.job.state = .completed
-                $0.savedContentGeneration = $0.contentGeneration
-                $0.runtimeBinding = RuntimeModelBinding(configurationID: analysisMatch.id, baseURL: analysisMatch.baseURL, provider: "openai")
-            }
-            let analysisUnit = document.units[0]
-            analysisApp.selected(ReadingSelection(
-                paragraphID: document.paragraphs[0].id, unitID: analysisUnit.id,
-                side: .source, range: .init(location: 0, length: 3)), session: analysisApp.workspace.tabs[0].sessionID)
-            try await Task.sleep(for: .milliseconds(700))
-            if analysisAllowed {
-                #expect(analysisGateway.alignmentDispatchCount == 1)
-            } else {
-                #expect(analysisGateway.alignmentDispatchCount == 0)
             }
         }
     }

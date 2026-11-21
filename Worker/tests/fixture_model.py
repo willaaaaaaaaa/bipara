@@ -27,7 +27,8 @@ def build_case_indexes(cases: dict[str, Any]) -> tuple[dict[tuple[Any, ...], str
             version = case.get("prompt_version")
             markdown_version = version if version in MARKDOWN_TRANSLATE_PROMPT_VERSIONS else None
             for unit, output in zip(case["input"]["units"], outputs):
-                translations[(markdown_version, source, target, unit["text"])] = output["text"]
+                for prompt in (markdown_version, *case.get("also_applies_to", [])):
+                    translations[(prompt, source, target, unit["text"])] = output["text"]
         else:
             inp = case["input"]
             alignments[(inp["reading_text"], inp["counterpart_text"], inp["selection"]["text"])] = (
@@ -43,6 +44,7 @@ def make_fixture_operation(
     delay_translate: float | None = None,
     delay_align: float | None = None,
     fail_code: str | None = None,
+    unit_reply: str | None = None,
 ):
     """Deterministic offline operation with optional delay/failure injection.
 
@@ -75,15 +77,27 @@ def make_fixture_operation(
                     # transport-only inputs that are not part of the corpus.
                     sample = f"[bipara-fixture:{len(unit.text.encode('utf-8'))}] {unit.text}"
                 texts.append(sample)
-            raw = {
-                "translations": [
+            if request.recovery:
+                raw = {"text": texts[0]}
+            else:
+                rows = [
                     {"unit_id": unit.unit_id, "text": text}
                     for unit, text in zip(request.input.units, texts)
                 ]
-            }
+                if unit_reply == "reverse":
+                    rows.reverse()
+                elif unit_reply == "omit":
+                    rows.pop()
+                elif unit_reply == "duplicate":
+                    if len(rows) == 1:
+                        rows.append(rows[0])
+                    else:
+                        rows[-1] = rows[0]
+                raw = {"translations": rows}
             data = validate_translation_output(
                 raw, [unit.unit_id for unit in request.input.units],
                 source_line_feeds=[unit.text.count("\n") for unit in request.input.units] if markdown else None,
+                single_text=request.recovery is not None,
             )
         elif isinstance(request.input, AlignInput):
             raw = alignments.get(

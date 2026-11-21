@@ -118,6 +118,23 @@ struct JobReducerTests {
         #expect(model.activeBatchIDs.isEmpty)
     }
 
+    @Test func unitRecoveryRunsBehindQueuedWorkAndUnresolvedRowsDoNotStopIt() {
+        var model = JobModel()
+        model.apply(.translate(snapshot: snapshot(), batches: [0, 1, 2], totalNonblankUnits: 4))
+        model.apply(.batchDispatched(batchID: 0))
+        model.apply(.batchDispatched(batchID: 1))
+        model.apply(.batchNeedsRecovery(batchID: 0, replacementIDs: [3, 4]))
+        #expect(model.queuedBatchIDs == [2, 3, 4])
+        model.apply(.batchNeedsRecovery(batchID: 1, replacementIDs: []))
+        #expect(model.state == .running)
+        for batch in [2, 3, 4] {
+            model.apply(.batchDispatched(batchID: batch))
+            model.apply(.batchSucceeded(batchID: batch, unitIDs: [UUID()]))
+        }
+        #expect(model.state == .failed)
+        #expect(model.completedUnitIDs.count == 3)
+    }
+
     @Test func siblingCommitAfterFailurePreservesWork() {
         var model = JobModel()
         model.apply(.translate(snapshot: snapshot(), batches: [0, 1], totalNonblankUnits: 4))

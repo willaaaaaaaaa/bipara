@@ -42,11 +42,7 @@ xcodebuild -project Bipara.xcodeproj -scheme Bipara -configuration Debug \
 [ -x "$APP_PATH/Contents/MacOS/Bipara" ] || fail "fresh app executable missing"
 HELPER="$APP_PATH/Contents/Helpers/BiparaWorker.app"
 [ -x "$HELPER/Contents/MacOS/BiparaWorker" ] || fail "embedded worker missing"
-cmp -s prompts/translation.v1.txt "$HELPER/Contents/Frameworks/prompts/translation.v1.txt" || fail "canonical prompt mismatch"
-cmp -s prompts/translation.v2.txt "$HELPER/Contents/Frameworks/prompts/translation.v2.txt" || fail "canonical prompt mismatch"
-cmp -s prompts/translation.markdown.v1.txt "$HELPER/Contents/Frameworks/prompts/translation.markdown.v1.txt" || fail "canonical prompt mismatch"
-cmp -s prompts/translation.markdown.v2.txt "$HELPER/Contents/Frameworks/prompts/translation.markdown.v2.txt" || fail "canonical prompt mismatch"
-cmp -s prompts/translation.markdown.v3.txt "$HELPER/Contents/Frameworks/prompts/translation.markdown.v3.txt" || fail "canonical prompt mismatch"
+python3 script/worker_assets.py "$HELPER"
 /usr/bin/codesign --verify --deep --strict "$APP_PATH"
 if [ "$MODE" = --debug ]; then lldb "$APP_PATH/Contents/MacOS/Bipara"; exit $?; fi
 ( /usr/bin/open -n -W "$APP_PATH" || true; rm -rf "$PRODUCTS" ) </dev/null >/dev/null 2>&1 &

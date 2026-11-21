@@ -6,7 +6,7 @@ import Testing
 @MainActor
 @Suite("Translation prompt snapshots")
 struct PromptVersionTests {
-    @Test(arguments: ["translation.v1", "translation.v2"])
+    @Test(arguments: ["translation.v1", "translation.v2", "translation.v3"])
     func resumeDispatchesTheRecordedVersionWithoutResendingCompletedUnits(version: String) async throws {
         let workspace = WorkspaceStore()
         let index = try workspace.newTab(source: String(repeating: "The window is open. ", count: 80))

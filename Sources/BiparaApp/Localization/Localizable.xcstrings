@@ -1,6 +1,46 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Theme": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "主题"
+          }
+        }
+      }
+    },
+    "Dynamic Capsule": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "动态胶囊"
+          }
+        }
+      }
+    },
+    "Smoked Glass": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "烟色浮窗"
+          }
+        }
+      }
+    },
+    "Gradient Frame": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "渐变窗框"
+          }
+        }
+      }
+    },
     "Markdown validation failed": {
       "localizations": {
         "zh-Hans": {
@@ -241,16 +281,6 @@
         }
       }
     },
-    "Section match": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章节对应"
-          }
-        }
-      }
-    },
     "Format": {
       "localizations": {
         "zh-Hans": {
@@ -311,12 +341,12 @@
         }
       }
     },
-    "Rendered": {
+    "Preview": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "渲染"
+            "value": "预览"
           }
         }
       }
@@ -337,16 +367,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在准备 Markdown"
-          }
-        }
-      }
-    },
-    "Block match": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "段块对应"
           }
         }
       }
@@ -681,16 +701,6 @@
         }
       }
     },
-    "Analyzing selection…": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在分析所选文本…"
-          }
-        }
-      }
-    },
     "Appearance": {
       "localizations": {
         "zh-Hans": {
@@ -899,16 +909,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "选择模型配置"
-          }
-        }
-      }
-    },
-    "Clear pin": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "取消固定"
           }
         }
       }
@@ -1315,16 +1315,6 @@
         }
       }
     },
-    "Fragment match": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "片段对应"
-          }
-        }
-      }
-    },
     "GLM Coding Plan (Mainland China)": {
       "localizations": {
         "zh-Hans": {
@@ -1675,16 +1665,6 @@
         }
       }
     },
-    "Paragraph match": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "段落对应"
-          }
-        }
-      }
-    },
     "Paragraphs": {
       "localizations": {
         "zh-Hans": {
@@ -1711,16 +1691,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "已暂停"
-          }
-        }
-      }
-    },
-    "Pin": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "固定对应"
           }
         }
       }
@@ -1855,12 +1825,12 @@
         }
       }
     },
-    "Retranslating clears the current translations and correspondence.": {
+    "Retranslating replaces the current translations.": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "重新翻译会清除当前译文及对应关系。"
+            "value": "重新翻译会替换当前译文。"
           }
         }
       }
@@ -1871,16 +1841,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "重试"
-          }
-        }
-      }
-    },
-    "Reveal counterpart": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "定位对应文本"
           }
         }
       }
@@ -1935,32 +1895,12 @@
         }
       }
     },
-    "Select text to explore correspondence.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "选择文本以查看对应关系。"
-          }
-        }
-      }
-    },
     "Send text to %@?": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "向 %@ 发送文本？"
-          }
-        }
-      }
-    },
-    "Sentence match": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "句子对应"
           }
         }
       }
@@ -2061,16 +2001,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "停止翻译并关闭？"
-          }
-        }
-      }
-    },
-    "Suggested phrase correspondence": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "建议的词句对应"
           }
         }
       }
@@ -2207,22 +2137,32 @@
         }
       }
     },
-    "The response does not match the correspondence format.": {
+    "The model returned an invalid response.": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "模型返回的内容不符合对应关系的格式要求。"
+            "value": "模型返回了格式无效的响应。"
           }
         }
       }
     },
-    "The response does not match the requested translation units and order.": {
+    "Unfinished translation units (%lld): %@. Retry translates only these units.": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "模型返回的翻译单元或顺序与请求不一致。"
+            "value": "还有 %lld 个翻译单元未完成（%@）。点“重试”只会翻译这些单元。"
+          }
+        }
+      }
+    },
+    "The response does not contain each requested translation unit exactly once.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型返回的翻译单元有缺失、重复或编号不符。"
           }
         }
       }
@@ -2451,12 +2391,12 @@
         }
       }
     },
-    "Translation sends source and context to %@. Selection analysis sends the selected unit and its translation. Hovering makes no request.": {
+    "Translation sends source and context to %@.": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "翻译会将原文和上下文发送到 %@。选区分析会发送所选单元及其译文。悬停不会发起请求。"
+            "value": "翻译会将原文和上下文发送到 %@。"
           }
         }
       }
@@ -2609,6 +2549,12 @@
     },
     "settings.load.migrationCompensation": {
       "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A failed settings migration could not be fully rolled back. Check your configured API keys before retrying."
+          }
+        },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
@@ -2619,6 +2565,12 @@
     },
     "settings.load.migrationFailed": {
       "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not migrate the previous settings. The original data is preserved. Resolve the issue and try again."
+          }
+        },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
@@ -2627,76 +2579,96 @@
         }
       }
     },
+    "settings.load.migrationPending": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Migrate your previous model settings to edit Settings or translate. macOS may ask for access to your saved API keys."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "迁移旧版模型设置后，即可编辑设置或翻译。macOS 可能会询问是否允许访问已保存的 API 密钥。"
+          }
+        }
+      }
+    },
     "settings.maintenance.cleanupResidue": {
       "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "设置已迁移。部分被取代的凭据尚未删除，应用会自动重试。"
-          }
-        }
-      }
-    },
-    "Active translation time since this file was opened; paused time and selection analysis are excluded.": {
-      "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Active translation time since this file was opened; paused time and selection analysis are excluded."
+            "value": "Settings are migrated. Some superseded API keys are still in Keychain."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "本次打开文件后的翻译活动耗时，不含暂停时间和选词分析。"
+            "value": "设置已迁移。部分已被取代的 API 密钥仍留在钥匙串中。"
           }
         }
       }
     },
-    "Active translation time, including queueing and retries; paused time and selection analysis are excluded.": {
+    "Migrate Model Settings": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "迁移模型设置"
+          }
+        }
+      }
+    },
+    "Clean Up Legacy Keys": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清理旧密钥"
+          }
+        }
+      }
+    },
+    "Saved model settings need attention.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请检查已保存的模型设置。"
+          }
+        }
+      }
+    },
+    "Active translation time since this file was opened, excluding pauses.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Active translation time, including queueing and retries; paused time and selection analysis are excluded."
+            "value": "Active translation time since this file was opened, excluding pauses."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "翻译活动耗时，包含排队和重试，不含暂停时间和选词分析。"
+            "value": "本次打开文件后的翻译活动耗时，不含暂停时间。"
           }
         }
       }
     },
-    "Amber": {
+    "Active translation time includes queueing and retries and excludes pauses.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Amber"
+            "value": "Active translation time includes queueing and retries and excludes pauses."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "琥珀色"
-          }
-        }
-      }
-    },
-    "Blue": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Blue"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "蓝色"
+            "value": "翻译活动耗时，包含排队和重试，不含暂停时间。"
           }
         }
       }
@@ -2717,22 +2689,6 @@
         }
       }
     },
-    "Correspondence Color": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Correspondence Color"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "对应高亮颜色"
-          }
-        }
-      }
-    },
     "Default for new translations. Existing jobs keep their model.": {
       "localizations": {
         "en": {
@@ -2745,38 +2701,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "用于新的翻译。已有任务保留原模型。"
-          }
-        }
-      }
-    },
-    "Don't ask to save on close": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Don't ask to save on close"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "关闭时不再询问保存"
-          }
-        }
-      }
-    },
-    "Purple": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Purple"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "紫色"
           }
         }
       }
@@ -2809,22 +2733,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "标准"
-          }
-        }
-      }
-    },
-    "Teal": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Teal"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "青绿色"
           }
         }
       }
@@ -2893,72 +2801,12 @@
         }
       }
     },
-    "Fill from preset": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "从预设填入"
-          }
-        }
-      }
-    },
-    "Vendor suggestions": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "厂商建议"
-          }
-        }
-      }
-    },
-    "Model suggestions": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "模型建议"
-          }
-        }
-      }
-    },
     "Protocol": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "接口协议"
-          }
-        }
-      }
-    },
-    "Advanced": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "高级"
-          }
-        }
-      }
-    },
-    "Replace connection fields with this preset?": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "使用此预设替换连接配置？"
-          }
-        }
-      }
-    },
-    "Apply preset": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "应用预设"
           }
         }
       }
@@ -2973,166 +2821,6 @@
         }
       }
     },
-    "Full request URL (optional)": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "完整请求地址（可选）"
-          }
-        }
-      }
-    },
-    "Request URL": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "请求地址"
-          }
-        }
-      }
-    },
-    "Authentication": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "认证方式"
-          }
-        }
-      }
-    },
-    "Custom header": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自定义请求头"
-          }
-        }
-      }
-    },
-    "None": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无"
-          }
-        }
-      }
-    },
-    "Header name": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "请求头名称"
-          }
-        }
-      }
-    },
-    "API version": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "API 版本"
-          }
-        }
-      }
-    },
-    "Output format": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "输出格式"
-          }
-        }
-      }
-    },
-    "Prompt JSON": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "提示词约束 JSON"
-          }
-        }
-      }
-    },
-    "Translation token limit": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "翻译输出 Token 上限"
-          }
-        }
-      }
-    },
-    "Alignment token limit": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "对应分析输出 Token 上限"
-          }
-        }
-      }
-    },
-    "Temperature (optional)": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "温度（可选）"
-          }
-        }
-      }
-    },
-    "Additional parameters (JSON)": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "附加参数（JSON）"
-          }
-        }
-      }
-    },
-    "Additional parameters override optional fields, including reasoning. Model compatibility is your responsibility.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "附加参数会覆盖可选字段（包括推理参数），请自行确认模型是否支持。"
-          }
-        }
-      }
-    },
-    "Secret headers (JSON, optional)": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "私密请求头（JSON，可选）"
-          }
-        }
-      }
-    },
-    "Enter a vendor name (at most 128 characters).": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "请输入厂商名称（最多 128 个字符）。"
-          }
-        }
-      }
-    },
     "Enter a valid HTTPS request URL.": {
       "localizations": {
         "zh-Hans": {
@@ -3143,32 +2831,12 @@
         }
       }
     },
-    "Check the advanced settings and JSON parameters.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "请检查高级设置和 JSON 参数。"
-          }
-        }
-      }
-    },
     "Credentials must be at most 4096 bytes.": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "凭据最多为 4096 字节。"
-          }
-        }
-      }
-    },
-    "Enter valid token limits and temperature.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "请输入有效的 Token 上限和温度。"
           }
         }
       }
@@ -3199,6 +2867,72 @@
           "stringUnit": {
             "state": "translated",
             "value": "已折叠"
+          }
+        }
+      }
+    },
+    "Copied": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已复制"
+          }
+        }
+      }
+    },
+    "Copy failed": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "复制失败"
+          }
+        }
+      }
+    },
+    "Translation Reader": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "译文主栏"
+          }
+        }
+      }
+    },
+    "Translation failed": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "翻译失败"
+          }
+        }
+      }
+    },
+    "Show Failure Details": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看失败详情"
+          }
+        }
+      }
+    },
+    "Discard unsaved changes when closing documents": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discard unsaved changes when closing documents"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭文档时丢弃未保存的更改"
           }
         }
       }

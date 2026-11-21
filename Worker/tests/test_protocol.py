@@ -125,6 +125,27 @@ class TestEncodeFrame:
         assert decode_frame(encode_frame(env)) == env
 
 
+@pytest.mark.parametrize("value", [None, "", "single-text.v2", True, {}])
+def test_unknown_recovery_is_rejected(value):
+    env = translate_request_t01()
+    env["recovery"] = value
+    with pytest.raises(RequestError):
+        parse_request(env)
+
+
+def test_single_text_requires_one_translate_unit_and_an_original_prompt():
+    env = translate_request_t01()
+    env["recovery"] = "single-text.v1"
+    assert parse_request(env).recovery == "single-text.v1"
+    env["input"]["units"].append({**env["input"]["units"][0], "unit_id": env["id"]})
+    with pytest.raises(RequestError):
+        parse_request(env)
+    with pytest.raises(RequestError):
+        parse_request({**align_request_a01(), "recovery": "single-text.v1"})
+    with pytest.raises(RequestError):
+        parse_request({**translate_request_t01(), "prompt_version": "single-text.v1"})
+
+
 class TestEnvelopeHeader:
     def test_hello_ok(self):
         assert check_envelope_header({"v": 2, "type": "hello"}) == "hello"
@@ -209,12 +230,16 @@ class TestParseTranslateRequest:
     @pytest.mark.parametrize("version,kind", [
         ("translation.v1", "markdown_inline"),
         ("translation.v2", "markdown_fragment"),
+        ("translation.v3", "markdown_inline"),
+        ("translation.v3", "markdown_fragment"),
         ("translation.markdown.v1", "sentence"),
         ("translation.markdown.v1", "fragment"),
         ("translation.markdown.v2", "sentence"),
         ("translation.markdown.v3", "sentence"),
         ("translation.markdown.v2", "fragment"),
         ("translation.markdown.v3", "fragment"),
+        ("translation.markdown.v4", "sentence"),
+        ("translation.markdown.v4", "fragment"),
     ])
     def test_markdown_prompt_and_kind_mismatch_rejected(self, version, kind):
         env = translate_request_t01()

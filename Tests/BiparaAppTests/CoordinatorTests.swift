@@ -14,11 +14,10 @@ final class ScriptedGateway: ModelGateway, @unchecked Sendable {
 
     private let lock = NSLock()
     private var recorded: [Recorded] = []
-    private var recordedAlignments: [ModelConfiguration] = []
-    private var alignmentCount = 0
     /// Delay before answering each request (seconds).
     var delay: TimeInterval = 0
     var barrier: TestBarrier?
+    var waitsForReplyAfterCancellation = false
     var failAtDispatch: Int?
     var failureForRequest: (@Sendable (TranslateBatchRequest) -> GatewayError?)?
     /// Optional text prefix used in replies.
@@ -36,7 +35,13 @@ final class ScriptedGateway: ModelGateway, @unchecked Sendable {
         configuration: ModelConfiguration
     ) async throws -> TranslateBatchResult {
         let (count, prefix) = record(.init(request: request, configuration: configuration))
-        if let barrier { try await barrier.arrive(count) }
+        if let barrier {
+            if waitsForReplyAfterCancellation {
+                try await Task.detached { try await barrier.arrive(count) }.value
+            } else {
+                try await barrier.arrive(count)
+            }
+        }
         if count == failAtDispatch { throw GatewayError(code: .network) }
         if let failure = failureForRequest?(request) { throw failure }
         if delay > 0 {
@@ -62,31 +67,11 @@ final class ScriptedGateway: ModelGateway, @unchecked Sendable {
         _ request: AlignSelectionRequest,
         configuration: ModelConfiguration
     ) async throws -> AlignSelectionResult {
-        recordAlignConfiguration(configuration)
-        return AlignSelectionResult(
-            match: .noMatch(reason: "ambiguous"),
-            meta: GatewayMeta(
-                provider: configuration.provider,
-                requestedModel: configuration.model,
-                requestedEffort: configuration.effort,
-                returnedModel: nil,
-                promptVersion: "alignment.v1",
-                inputTokens: nil,
-                outputTokens: nil
-            )
-        )
+        Issue.record("The desktop app must not request selection alignment.")
+        throw GatewayError(code: .invalidRequest, isLocal: true)
     }
 
     func shutdown() async {}
-
-    private func recordAlignment() { lock.lock(); defer { lock.unlock() }; alignmentCount += 1 }
-    private func recordAlignConfiguration(_ configuration: ModelConfiguration) {
-        lock.lock(); defer { lock.unlock() }
-        recordedAlignments.append(configuration)
-        alignmentCount += 1
-    }
-    var alignmentDispatchCount: Int { lock.lock(); defer { lock.unlock() }; return alignmentCount }
-    var alignConfigurations: [ModelConfiguration] { lock.lock(); defer { lock.unlock() }; return recordedAlignments }
 
     var requests: [TranslateBatchRequest] { lock.lock(); defer { lock.unlock() }; return recorded.map(\.request) }
     var configurations: [ModelConfiguration] { lock.lock(); defer { lock.unlock() }; return recorded.map(\.configuration) }
@@ -145,11 +130,15 @@ struct CoordinatorTests {
         #expect(tab.isDirty) // committed work is unsaved
     }
 
-    @Test func lateResultAfterEditCannotCommit() async throws {
+    @Test(arguments: [false, true])
+    func lateResultAfterEditCannotCommit(mismatchedIDs: Bool) async throws {
         // The scripted gateway delays its reply; the draft is applied (new
         // revision) while the batch is in flight. The late result must not
         // appear in the new revision's document.
         let gateway = ScriptedGateway()
+        if mismatchedIDs {
+            gateway.failureForRequest = { _ in .init(code: .invalidOutput, validationFailure: .unitMismatch) }
+        }
         let barrier = TestBarrier(); gateway.barrier = barrier
         let coordinator = TranslationCoordinator(gateway: gateway)
         let (workspace, index) = try makeWorkspace()
@@ -169,6 +158,7 @@ struct CoordinatorTests {
 
         await barrier.release(1)
         try await job.value
+        #expect(gateway.dispatchCount == 1)
         // Late result discarded: the new revision has no translations and
         // an idle job; the old revision's work is simply gone (by design).
         #expect(workspace.tabs[index].document.translations.isEmpty)
@@ -339,27 +329,96 @@ struct CoordinatorTests {
         #expect(secondHalf.contextBefore.contains("Sentence number 31"))
     }
 
-    @Test func mismatchInASplitHalfStopsWithoutRecursing() async throws {
+    @Test func repeatedUnitMismatchRecoversDownToIndividualUnits() async throws {
         let gateway = ScriptedGateway()
-        let coordinator = TranslationCoordinator(gateway: gateway)
         let workspace = WorkspaceStore()
         let source = (0..<8).map { "Sentence number \($0) with distinct content." }.joined(separator: "\n")
         let index = try workspace.newTab(source: source)
-        let units = workspace.tabs[index].document.units.map(\.id)
-        try #require(units.count == 8)
+        let ids = workspace.tabs[index].document.units.map(\.id)
         let mismatch = GatewayError(code: .invalidOutput, validationFailure: .unitMismatch)
-        gateway.failureForRequest = { _ in mismatch }
-        let snapshot = DispatchFixtures.snapshot()
-        let binding = DispatchFixtures.binding()
+        gateway.failureForRequest = { $0.units.count > 1 ? mismatch : nil }
 
-        await #expect(throws: mismatch) {
-            try await coordinator.translate(tabIndex: index, workspace: workspace, snapshot: snapshot,
-                                            binding: binding, credential: DispatchFixtures.credential())
+        try await TranslationCoordinator(gateway: gateway).translate(
+            tabIndex: index, workspace: workspace, snapshot: DispatchFixtures.snapshot(),
+            binding: DispatchFixtures.binding(), credential: DispatchFixtures.credential()
+        )
+
+        #expect(workspace.tabs[index].job.state == .completed)
+        #expect(workspace.tabs[index].document.translations.map(\.unitID) == ids)
+        let singletons = gateway.requests.filter { $0.singleTextRecovery }
+        #expect(singletons.allSatisfy { $0.units.count == 1 })
+        #expect(singletons.flatMap { $0.units.map(\.unitID) }.count == ids.count)
+        #expect(Set(singletons.flatMap { $0.units.map(\.unitID) }) == Set(ids))
+    }
+
+    @Test func singleOriginalUnitCanRecoverWithoutEchoingItsID() async throws {
+        let gateway = ScriptedGateway()
+        let workspace = WorkspaceStore()
+        let index = try workspace.newTab(source: "An isolated sentence.")
+        let mismatch = GatewayError(code: .invalidOutput, validationFailure: .unitMismatch)
+        gateway.failureForRequest = { $0.singleTextRecovery ? nil : mismatch }
+        try await TranslationCoordinator(gateway: gateway).translate(
+            tabIndex: index, workspace: workspace, snapshot: DispatchFixtures.snapshot(),
+            binding: DispatchFixtures.binding(), credential: DispatchFixtures.credential()
+        )
+        #expect(gateway.requests.map(\.singleTextRecovery) == [false, true])
+        #expect(workspace.tabs[index].job.state == .completed)
+    }
+
+    @Test func unresolvedUnitLeavesOtherBatchesReadableAndRetryOnlyRequestsThatUnit() async throws {
+        let gateway = ScriptedGateway()
+        let coordinator = TranslationCoordinator(gateway: gateway)
+        let workspace = WorkspaceStore()
+        let source = (0..<130).map { "Sentence number \($0)." }.joined(separator: "\n")
+        let index = try workspace.newTab(source: source)
+        let ids = workspace.tabs[index].document.units.map(\.id)
+        try #require(ids.count == 130)
+        let badID = ids[2]
+        gateway.failureForRequest = { request in
+            guard request.units.contains(where: { $0.unitID == badID }) else { return nil }
+            return GatewayError(code: .invalidOutput, validationFailure: request.singleTextRecovery ? .translationShape : .unitMismatch)
         }
-
+        let snapshot = DispatchFixtures.snapshot()
+        func translate() async throws {
+            try await coordinator.translate(tabIndex: index, workspace: workspace, snapshot: snapshot,
+                                           binding: DispatchFixtures.binding(), credential: DispatchFixtures.credential())
+        }
+        await #expect(throws: TranslationCoordinator.CoordinatorError.incompleteUnits(IndexSet(integer: 3))) {
+            try await translate()
+        }
+        let partial = workspace.tabs[index].document.translations
+        #expect(partial.map(\.unitID) == ids.filter { $0 != badID })
         #expect(workspace.tabs[index].job.state == .failed)
-        #expect(workspace.tabs[index].document.translations.isEmpty)
-        #expect(gateway.requests.map { $0.units.count }.sorted() == [4, 4, 8])
+        for healthyBatch in [Array(ids[64..<128]), Array(ids[128...])] {
+            #expect(gateway.requests.filter { $0.units.map(\.unitID) == healthyBatch }.count == 1)
+        }
+        let calls = gateway.dispatchCount
+        gateway.failureForRequest = nil
+        try await translate()
+        #expect(gateway.requests.dropFirst(calls).map { $0.units.map(\.unitID) } == [[badID]])
+        #expect(workspace.tabs[index].document.translations.filter { $0.unitID != badID } == partial)
+        #expect(workspace.tabs[index].job.state == .completed)
+    }
+
+    @Test func exhaustedRecoveryBudgetStillRunsUnrelatedBatches() async throws {
+        let gateway = ScriptedGateway()
+        let workspace = WorkspaceStore()
+        let source = (0..<130).map { "Sentence number \($0)." }.joined(separator: "\n")
+        let index = try workspace.newTab(source: source)
+        let ids = workspace.tabs[index].document.units.map(\.id)
+        try #require(ids.count == 130)
+        let bad = Set(ids.prefix(64))
+        let mismatch = GatewayError(code: .invalidOutput, validationFailure: .unitMismatch)
+        gateway.failureForRequest = { request in request.units.contains { bad.contains($0.unitID) } ? mismatch : nil }
+        await #expect(throws: TranslationCoordinator.CoordinatorError.incompleteUnits(IndexSet(integersIn: 1...64))) {
+            try await TranslationCoordinator(gateway: gateway).translate(
+                tabIndex: index, workspace: workspace, snapshot: DispatchFixtures.snapshot(),
+                binding: DispatchFixtures.binding(), credential: DispatchFixtures.credential()
+            )
+        }
+        #expect(gateway.dispatchCount == 3 + WorkerContract.maxUnitRecoveryRequests)
+        #expect(workspace.tabs[index].document.translations.map(\.unitID) == Array(ids.dropFirst(64)))
+        #expect(workspace.tabs[index].job.state == .failed)
     }
 
     @Test(arguments: ["1302", "1305"])
@@ -421,6 +480,28 @@ struct CoordinatorRealWorkerTests {
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     static var fixtureExecutable: URL {
         repoRoot.appendingPathComponent("build/worker-fixture/BiparaWorkerFixture.app/Contents/MacOS/BiparaWorkerFixture")
+    }
+
+    @Test(arguments: ["reverse", "omit", "duplicate"])
+    func modelRowsCommitToTheirOwnSourceThroughPackagedWorker(reply: String) async throws {
+        let gateway = PythonModelGateway(executableURL: Self.fixtureExecutable, environment: {
+            var env = PythonModelGateway.sanitizedWorkerEnvironment()
+            env["BIPARA_FIXTURE_UNIT_REPLY"] = reply
+            return env
+        })
+        defer { Task { await gateway.shutdown() } }
+        let workspace = WorkspaceStore()
+        let index = try workspace.newTab(source: "李明没有确认周五的会议。\n我们仍然会按时完成。")
+        var calls = 0
+        try await TranslationCoordinator(gateway: gateway).translate(
+            tabIndex: index, workspace: workspace, snapshot: DispatchFixtures.snapshot(), binding: DispatchFixtures.binding(),
+            credential: { _ in calls += 1; return "SYNTHETIC_TEST_CREDENTIAL" }
+        )
+        let tab = workspace.tabs[index]
+        #expect(tab.job.state == .completed)
+        #expect(tab.document.translations.map(\.unitID) == tab.document.units.map(\.id))
+        #expect(tab.document.translations.map(\.text) == ["Li Ming has not confirmed Friday's meeting.", "we will still finish on time."])
+        #expect(calls == (reply == "reverse" ? 1 : 3))
     }
 
     @Test func endToEndTranslationThroughRealProcess() async throws {

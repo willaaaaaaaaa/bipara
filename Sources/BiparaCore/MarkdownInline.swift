@@ -65,7 +65,7 @@ struct MarkdownInline {
             tag = "link:" + (link.destination ?? "") + ":" + MarkdownSource.linkSuffix(source.text(node.range))
         case let image as Image:
             tag = "image:" + (image.source ?? "") + ":" + MarkdownSource.linkSuffix(source.text(node.range))
-            runs.append(.init("◫ ", style: style))
+            runs.append(.init("◫ ", style: style.union(.imagePlaceholder)))
         default:
             tag = String(describing: type(of: node))
         }

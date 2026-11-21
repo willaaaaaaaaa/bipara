@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import pytest
+
 from bipara_worker.assets import (
     ASSET_FILES,
     AssetError,
@@ -22,7 +24,7 @@ def test_asset_dir_points_at_canonical_prompts_in_dev():
 
 def test_all_canonical_assets_load_and_hash():
     assets = load_assets()
-    assert set(assets.versions) == {"translation.v1", "translation.v2", "translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3", "alignment.v1"}
+    assert set(assets.versions) == {"translation.v1", "translation.v2", "translation.v3", "translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3", "translation.markdown.v4", "alignment.v1", "single-text.v1"}
     for filename in ASSET_FILES:
         canonical = hashlib.sha256((ROOT / "prompts" / filename).read_bytes()).hexdigest()
         assert assets.hashes[filename] == canonical
@@ -39,13 +41,14 @@ def test_prompt_assets_are_not_empty_or_templates():
         assert "{" not in text or "JSON object" in text  # literal prose, not a format template
 
 
-def test_cases_corpus_includes_both_markdown_directions():
+@pytest.mark.parametrize("version", ["translation.markdown.v1", "translation.markdown.v4"])
+def test_cases_corpus_includes_both_markdown_directions(version):
     cases = load_cases()
     ops = [case["op"] for case in cases["cases"]]
-    assert cases["corpus_version"] == "5"
-    assert ops.count("translate") == 24
+    assert cases["corpus_version"] == "6"
+    assert ops.count("translate") == 28
     assert ops.count("align") == 6
-    markdown = [case for case in cases["cases"] if case.get("prompt_version") == "translation.markdown.v1"]
+    markdown = [case for case in cases["cases"] if case.get("prompt_version") == version]
     assert {(case["input"]["source_language"], case["input"]["target_language"]) for case in markdown} == {
         ("en", "zh"), ("zh", "en")
     }

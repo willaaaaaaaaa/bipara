@@ -36,14 +36,16 @@ public enum WorkerContract {
 
     /// Prompt versions the app requires from a worker handshake.
     public static let legacyMarkdownTranslationPromptVersion = "translation.markdown.v1"
-    public static let markdownTranslationPromptVersion = "translation.markdown.v3"
-    public static let markdownTranslationPromptVersions = [legacyMarkdownTranslationPromptVersion, "translation.markdown.v2", markdownTranslationPromptVersion]
-    public static let promptVersions = translationPromptVersions + alignmentPromptVersions
-    public static let currentTranslationPromptVersion = "translation.v2"
+    public static let markdownTranslationPromptVersion = "translation.markdown.v4"
+    public static let markdownTranslationPromptVersions = [legacyMarkdownTranslationPromptVersion, "translation.markdown.v2", "translation.markdown.v3", markdownTranslationPromptVersion]
+    public static let singleTextRecoveryVersion = "single-text.v1"
+    public static let promptVersions = translationPromptVersions + alignmentPromptVersions + [singleTextRecoveryVersion]
+    public static let currentTranslationPromptVersion = "translation.v3"
     /// Operation-specific prompt-version sets: a version belongs to exactly
     /// one operation, and each field of a snapshot is validated against
     /// its own operation's set (N6).
-    public static let translationPromptVersions = ["translation.v1", "translation.v2"] + markdownTranslationPromptVersions
+    public static let plainTranslationPromptVersions = ["translation.v1", "translation.v2", currentTranslationPromptVersion]
+    public static let translationPromptVersions = plainTranslationPromptVersions + markdownTranslationPromptVersions
     public static let alignmentPromptVersions = ["alignment.v1"]
 
     /// Maximum wire frame size in bytes, including the terminating LF.
@@ -67,6 +69,8 @@ public enum WorkerContract {
     /// doubled from 32 units / 4096 bytes so a typical document plans into
     /// fewer batches and pays fewer serial model calls.
     public static let maxUnitsPerBatch = 64
+    /// Additional requests reserved for unit-identity recovery per document attempt.
+    public static let maxUnitRecoveryRequests = 16
     /// Maximum UTF-8 bytes of one sentence before fragment splitting.
     public static let maxSentenceUTF8Bytes = 1024
 

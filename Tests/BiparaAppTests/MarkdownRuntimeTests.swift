@@ -9,6 +9,7 @@ import Testing
 struct MarkdownRuntimeTests {
     private func runtime(_ gateway: any ModelGateway, withCredential: Bool = true) -> AppRuntime {
         let defaults = UserDefaults(suiteName: "dev.bipara.markdown-tests.\(UUID())")!
+        if withCredential { SavedResponsesFixture.install(defaults) }
         let keys = FaultCredentials()
         let app = AppRuntime(gateway: gateway, keychain: keys, defaults: defaults)
         if withCredential { keys.prepareDefault(app.settings, defaults: defaults) }
@@ -48,6 +49,28 @@ struct MarkdownRuntimeTests {
         #expect(gateway.dispatchCount == 1)
     }
 
+    @Test func pastedFrontmatterOpensRenderedReadingWithoutACredential() async throws {
+        let gateway = ScriptedGateway()
+        let app = runtime(gateway, withCredential: false)
+        let source = "---\nname: example\ndescription: Read the guide.\n---\n\nOpen the **window**."
+        app.newTab()
+        let session = try #require(app.activeSession)
+        app.workspace.withTab(0) { $0.draftText = source }
+        await app.detectDraftFormat(session)
+        #expect(app.formatStatus(app.workspace.tabs[0]) == "Markdown")
+
+        #expect(try await app.apply(session))
+        let document = app.workspace.tabs[0].document
+        #expect(!app.editing.contains(session))
+        #expect(document.isMarkdown && document.canUseMarkdownPlan)
+        #expect(document.readingMode == .rendered)
+        #expect(document.markdownProjection() != nil)
+        app.changeReadingMode(.source, session: session)
+        #expect(app.workspace.tabs[0].document.readingMode == .source)
+        #expect(TextIdentity.equal(app.workspace.tabs[0].document.source, source))
+        #expect(gateway.dispatchCount == 0)
+    }
+
     @Test func reorderedTableCellCommitsAndReopensThroughPackagedWorker() async throws {
         try await checkTableCell("Use `Bash` with `rg` if both `Grep` and `Glob` are unavailable.",
                                  reply: "如果 `Grep` 和 `Glob` 都不可用，就在 `Bash` 中使用 `rg`。")
@@ -68,9 +91,43 @@ struct MarkdownRuntimeTests {
         #expect(app.markdownFailure == nil)
         #expect(tab.document.translations.map(\.text) == [reply])
         let restored = try DocumentCodec.decode(DocumentCodec.encode(tab.document))
-        #expect(restored.jobSnapshot?.translationPromptVersion == "translation.markdown.v3")
+        #expect(restored.jobSnapshot?.translationPromptVersion == "translation.markdown.v4")
         #expect(restored.markdownExport(bilingual: false, plain: false, allowPartial: false)
             == source.replacingOccurrences(of: cell, with: reply))
+    }
+
+    @Test func retainedMarkdownPromptResumesThenRetranslatesOnTheSamePlan() async throws {
+        let gateway = ScriptedGateway()
+        let app = runtime(gateway)
+        app.alertHandler = { _, _, _ in 0 }
+        _ = try app.workspace.newTab(source: "# Setup\n\nOpen the window.", direction: .enToZh)
+        let session = try #require(app.activeSession)
+        await app.translate(session)
+        var saved = app.workspace.tabs[0].document
+        let finished = try #require(saved.translations.first)
+        saved.translations = [finished]
+        saved.jobSnapshot?.translationPromptVersion = "translation.markdown.v3"
+        let reopened = try DocumentCodec.decode(DocumentCodec.encode(saved))
+        app.workspace.withTab(0) {
+            $0.document = reopened
+            $0.job.snapshot = reopened.jobSnapshot
+            $0.job.completedUnitIDs = [finished.unitID]
+            $0.job.state = .paused
+        }
+
+        let beforeResume = gateway.requests.count
+        await app.translate(session)
+        let resumed = gateway.requests.dropFirst(beforeResume)
+        #expect(resumed.map(\.promptVersion) == ["translation.markdown.v3"])
+        #expect(resumed.flatMap(\.units).map(\.unitID) == Array(saved.units.dropFirst()).map(\.id))
+        #expect(app.workspace.tabs[0].document.translations.first == reopened.translations.first)
+
+        let beforeRetranslate = gateway.requests.count
+        await app.translate(session, retranslate: true)
+        let fresh = gateway.requests.dropFirst(beforeRetranslate)
+        #expect(fresh.map(\.promptVersion) == ["translation.markdown.v4"])
+        #expect(fresh.flatMap(\.units).map(\.unitID) == saved.units.map(\.id))
+        #expect(app.workspace.tabs[0].job.state == .completed)
     }
 
     @Test func explicitRetranslationUpgradesSupportedLegacyMetadataPlan() async throws {

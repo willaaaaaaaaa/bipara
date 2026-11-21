@@ -10,7 +10,7 @@ from bipara_worker.assets import load_assets
 from bipara_worker.errors import WorkerError
 from bipara_worker.models import make_langchain_operation
 from bipara_worker.protocol import RequestError, parse_request
-from conftest import SYNTHETIC_KEY, T01_UNIT_ID, translate_request_t01
+from conftest import B_ID, SYNTHETIC_KEY, T01_UNIT_ID, translate_request_markdown, translate_request_t01
 
 
 def envelope(provider="openai", effort="low", **options):
@@ -104,6 +104,77 @@ async def test_explicit_parameter_override_and_no_auth():
     assert seen[0][2]["thinking"] == {"type": "enabled", "budget_tokens": 2048}
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["openai", "anthropic"])
+async def test_complete_reordered_markdown_reply_uses_one_http_call(provider):
+    env = envelope(provider)
+    markdown = translate_request_markdown()
+    env.update(prompt_version=markdown["prompt_version"], input=markdown["input"])
+    env["input"]["units"].append({"unit_id": B_ID, "text": "Next.", "kind": "markdown_inline"})
+    first = {"unit_id": T01_UNIT_ID, "text": "第一行  \n第二行"}
+    second = {"unit_id": B_ID, "text": "下一句。"}
+    response = reply(provider)
+    content = response["output"][-1]["content"] if provider == "openai" else response["content"]
+    content[-1]["text"] = json.dumps({"translations": [second, first]})
+    seen = []
+    data, _ = await invoke(env, response=response, seen=seen)
+    assert data == {"translations": [first, second]}
+    assert len(seen) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", [
+    "translation.v1", "translation.v2", "translation.v3",
+    "translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3", "translation.markdown.v4",
+])
+async def test_single_text_request_uses_recorded_prompt_and_returns_local_id(version):
+    env = envelope(outputMode="jsonSchema")
+    env.update(prompt_version=version, recovery="single-text.v1")
+    text = "Translation."
+    if version.startswith("translation.markdown."):
+        env["input"] = translate_request_markdown()["input"]
+        text = "**Translation**  \nNext."
+    response = reply("openai")
+    response["output"][-1]["content"][0]["text"] = json.dumps({"text": text})
+    seen = []
+    data, meta = await invoke(env, response=response, seen=seen)
+    assert data == {"translations": [{"unit_id": T01_UNIT_ID, "text": text}]}
+    assert meta["prompt_version"] == version
+    assert len(seen) == 1
+    body = seen[0][2]
+    assets = load_assets()
+    assert body["input"][0]["content"] == assets.prompts[version] + "\n" + assets.prompts["single-text.v1"]
+    assert json.loads(body["input"][1]["content"]) == env["input"]
+    fmt = body["text"]["format"]
+    assert fmt["strict"] is True
+    assert fmt["schema"]["properties"] == {"text": {"type": "string"}}
+    assert fmt["schema"]["required"] == ["text"]
+    assert fmt["schema"]["additionalProperties"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content,reason", [
+    ('{"translations":[{"unit_id":"wrong","text":"x"}]}', "translation_shape"),
+    ('{"text":"x","unit_id":"wrong"}', "translation_shape"),
+    ('{}', "translation_shape"), ('"x"', "translation_shape"),
+    ('{"text":"extra","text":"x"}', "invalid_json"),
+    ('{"text":1}', "invalid_translation_text"), ('{"text":" "}', "invalid_translation_text"),
+    ('{"text":"padded "}', "invalid_translation_text"), ('{"text":"a\\nb"}', "invalid_translation_text"),
+    (json.dumps({"text": "a" * 8193}), "output_too_large"),
+], ids=["array", "extra-id", "empty-object", "string", "duplicate-key", "number", "blank", "padded", "newline", "oversize"])
+async def test_single_text_rejects_invalid_content_without_another_http_call(content, reason):
+    env = envelope()
+    env["recovery"] = "single-text.v1"
+    response = reply("openai")
+    response["output"][-1]["content"][0]["text"] = content
+    seen = []
+    with pytest.raises(WorkerError) as exc:
+        await invoke(env, response=response, seen=seen)
+    assert exc.value.code == "invalid_output"
+    assert exc.value.validation_reason == reason
+    assert len(seen) == 1
+
+
 @pytest.mark.parametrize("change", [
     {"extraBodyJSON": '{"model":"different"}'}, {"extraBodyJSON": '{"messages":[]}'},
     {"extraBodyJSON": '{"output_config":{"format":{}}}'}, {"extraBodyJSON": '{"a":1,"a":2}'},
@@ -179,7 +250,10 @@ def test_authentication_value_is_validated_before_http(key):
     ({"status": "completed", "output": [None]}, "invalid_output"),
     ({"status": "completed", "output": [{"type": "function_call"}]}, "invalid_output"),
 ])
-async def test_response_shape_and_truncation(raw, code):
+@pytest.mark.parametrize("mode", [{}, {"recovery": "single-text.v1"}])
+async def test_response_shape_and_truncation(raw, code, mode):
+    seen = []
     with pytest.raises(WorkerError) as exc:
-        await invoke(envelope(), response=raw)
+        await invoke({**envelope(), **mode}, response=raw, seen=seen)
     assert exc.value.code == code
+    assert len(seen) == 1

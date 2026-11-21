@@ -47,7 +47,8 @@ struct MarkdownPlanTests {
     }
 
     @Test func detectorUsesStrongOrCombinedSignals() throws {
-        for text in ["A line of prose.", "1. One item", "https://example.org", "---", "# A title", "**one phrase**", "```\nunfinished"] {
+        for text in ["A line of prose.", "1. One item", "https://example.org", "---", "# A title", "**one phrase**", "```\nunfinished",
+                     "---\nAn ordinary line.\n---\n\nAnother line.", "---\nname: unclosed\n\nA line of prose."] {
             #expect(try MarkdownPlan.prepare(text, format: .auto) == nil)
         }
         for text in ["# Title\n\nBody", "```sh\necho hi\n```", "| A | B |\n|---|---|\n| one | two |", "- **One**\n- **Two**"] {
@@ -55,6 +56,9 @@ struct MarkdownPlanTests {
         }
         #expect(try MarkdownPlan.prepare("Body", format: .auto, markdownHint: true) != nil)
         #expect(try MarkdownPlan.prepare(rich, format: .plainText, markdownHint: true) == nil)
+        let metadata = "---\r\nname: stable-id\r\ndescription: Read the guide.\r\n...\r\n\r\nOpen the window."
+        #expect(try MarkdownPlan.prepare(metadata, format: .auto) != nil)
+        #expect(try MarkdownPlan.prepare(metadata, format: .plainText) == nil)
     }
 
     @Test func structuredSourcePreservesLiteralsAndRoundTrips() throws {
@@ -132,7 +136,7 @@ struct MarkdownPlanTests {
             let id = try #require(plan.units.first?.id)
             let translated = UnitTranslation(unitID: id, text: reply, completedAt: .now)
             if version == "markdown-plan.v3" || version == MarkdownPlan.version {
-                #expect(value.translationPromptVersion == (version == "markdown-plan.v3" ? "translation.markdown.v2" : "translation.markdown.v3"))
+                #expect(value.translationPromptVersion == (version == "markdown-plan.v3" ? "translation.markdown.v2" : "translation.markdown.v4"))
                 try plan.validateBatch([translated], language: .zh, newUnitIDs: [id])
                 var duplicate = translated
                 duplicate.text = reply.replacingOccurrences(of: "`Glob`", with: "`Grep`")

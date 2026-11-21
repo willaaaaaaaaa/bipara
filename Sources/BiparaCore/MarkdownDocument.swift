@@ -13,6 +13,14 @@ extension BiparaDocument {
         }
     }
 
+    public func supportsTranslationPrompt(_ version: String) -> Bool {
+        guard isMarkdown else { return WorkerContract.plainTranslationPromptVersions.contains(version) }
+        guard let markdownPlan else { return false }
+        // Plan v4 also supports jobs saved before the wording-only prompt revision.
+        if markdownPlan.planVersion == "markdown-plan.v4" && version == "translation.markdown.v3" { return true }
+        return version == translationPromptVersion
+    }
+
     public func requestText(for unit: PlannedUnit) -> String? {
         if isMarkdown { return markdownPlan?.requestText(for: unit) }
         return source.substring(utf16: unit.textRange)
@@ -45,6 +53,33 @@ extension BiparaDocument {
 }
 
 extension MarkdownPlan {
+    /// A reader-facing title from parsed source, independent of translation and presentation mode.
+    public var suggestedTitle: String? {
+        func visibleTitle(_ block: Block) -> String? {
+            guard let visible = try? MarkdownInline(block.payload, references: references).visible else { return nil }
+            return visible.split(whereSeparator: \.isNewline).lazy
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .first { $0.rangeOfCharacter(from: .alphanumerics) != nil }
+        }
+        for top in tops where top.startsSection {
+            if let heading = top.blocks.first, let title = visibleTitle(heading) { return title }
+        }
+        if let title = tops.first?.blocks.first(where: { $0.metadataKey == "title" }), let visible = visibleTitle(title) {
+            return visible
+        }
+        for top in tops where !top.isMetadata {
+            for block in top.blocks {
+                switch block.kind {
+                case .paragraph, .tableCell:
+                    if let title = visibleTitle(block) { return title }
+                default:
+                    continue
+                }
+            }
+        }
+        return nil
+    }
+
     private var groups: [[Top]] {
         guard tops.contains(where: \.startsSection) else { return tops.map { [$0] } }
         var result: [[Top]] = []
@@ -76,7 +111,15 @@ extension MarkdownPlan {
             }
             return .init(id: id, source: original, translation: translated)
         }
-        return .init(groups: result, isSourceMode: mode == .source)
+        var projection = MarkdownReadingProjection(groups: result, isSourceMode: mode == .source)
+        if !units.isEmpty {
+            let visibleIDs = Set(result.flatMap { $0.translation.map(\.id) })
+            // Metadata is projected as one block, even when several prose scalars own units.
+            projection.showsTranslationReaderContent = tops.contains { top in
+                top.blocks.contains { !$0.units.isEmpty && visibleIDs.contains(top.isMetadata ? top.id : $0.id) }
+            }
+        }
+        return projection
     }
 
     private func anchors() -> [String: UUID] {
@@ -114,7 +157,7 @@ extension MarkdownPlan {
                     let target = run.destination.flatMap { destination in
                         destination.hasPrefix("#") ? anchors[String(destination.dropFirst()).removingPercentEncoding ?? ""] : nil
                     }
-                    let selectable = !run.style.contains(.code) && run.text != "◫ " && !run.text.contains("\n")
+                    let selectable = run.style.intersection([.code, .imagePlaceholder]).isEmpty && !run.text.contains("\n")
                     result.append(.init(run.text, style: run.style, destination: run.destination, linkTargetBlockID: target,
                         unitID: selectable ? id : nil, visibleRange: selectable ? .init(location: offset, length: length) : nil))
                     offset += length

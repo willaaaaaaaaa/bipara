@@ -1,6 +1,6 @@
 # Swift–Python Worker Protocol v2
 
-This document defines the current v2 transport contract. App and bundled worker upgrade together; reject protocol v1 at handshake before transmitting a credential. New plain-text jobs use `translation.v2`. New Markdown jobs use `translation.markdown.v3` and retained jobs use their recorded prompt. Alignment and output schemas remain v1. [Model workflow](model-workflow.md) owns model inputs/validation; [prompt assets](../../prompts/README.md) own model output schemas. This protocol is local process IPC, not a network service or public API.
+This document defines the current v2 transport contract. App and bundled worker upgrade together; reject protocol v1 at handshake before transmitting a credential. New plain-text jobs use `translation.v3`. New Markdown jobs on the current plan use `translation.markdown.v4` and retained jobs use their recorded prompt. Alignment uses its v1 schema. Translation uses the batch or single-text v1 output schema. [Model workflow](model-workflow.md) owns model inputs/validation; [prompt assets](../../prompts/README.md) own model output schemas. This protocol is local process IPC, not a network service or public API.
 
 ## Transport and lifecycle
 
@@ -19,7 +19,7 @@ After spawn, the app sends hello. No credential is sent until ready validates. S
 ```
 
 ```json
-{"v":2,"type":"ready","worker_version":"0.1.0","max_inflight":4,"prompt_versions":["translation.v1","translation.v2","translation.markdown.v1","translation.markdown.v2","translation.markdown.v3","alignment.v1"]}
+{"v":2,"type":"ready","worker_version":"0.1.0","max_inflight":4,"prompt_versions":["translation.v1","translation.v2","translation.v3","translation.markdown.v1","translation.markdown.v2","translation.markdown.v3","translation.markdown.v4","alignment.v1","single-text.v1"]}
 ```
 
 `v` is integer 2 in every frame. `worker_version` is the actual packaged version string, not a success signal. All required prompt versions and `max_inflight: 4` must match this app's contract. Accept exactly one ready event after hello. An incompatible handshake may emit `fatal` and exit. Python does not write ready before successfully loading/validating its assets.
@@ -34,7 +34,8 @@ After spawn, the app sends hello. No credential is sent until ready validates. S
 | `op` | `translate` or `align` |
 | `config` | Required fields: `provider` (open profiles: `openai`/`anthropic`; retained profiles also accept `kimi`/`glm`/`deepseek`), nonempty `model` (at most 256 UTF-8 bytes), compatible `profile`, canonical HTTPS `base_url` (at most 2048 UTF-8 bytes), and `effort` from the configuration design. Open profiles also require `options` as defined below. Reject unknown config fields and malformed combinations before HTTP |
 | `credentials` | Object: `api_key` string, at most 4096 UTF-8 bytes; nonempty except with open-profile no-auth mode. Open profiles also require `headers`, a validated string dictionary. Pipe-only and never echoed |
-| `prompt_version` | The job's recorded `translation.v1` or `translation.v2` for translate; `alignment.v1` for align. New jobs capture `translation.v2`; do not silently upgrade retained jobs. |
+| `prompt_version` | The job's recorded plain-text or [Markdown translation prompt](#markdown-prompt-extension) for translate, or `alignment.v1` for align. |
+| `recovery` | Optional. The only allowed value is `single-text.v1`, for a translate request with exactly one unit. Omit for normal translation and alignment |
 | `input` | Exact operation object below; validate before HTTP |
 
 Open profiles are `openai-responses-v3` and `anthropic-messages-v3`, with provider equal to the protocol ID and effort exactly `off`, `low`, `medium` or `high`. Their required `options` object carries `authentication`, `headerName`, `apiVersion`, `outputMode`, `translationTokens`, `alignmentTokens`, `extraBodyJSON` and optional `endpointURL`/`temperature`. Values and bounds are defined by [model configuration](model-settings.md#configuration-record-and-editor). Exact fields, strict JSON, protected task fields and header constraints are validated before HTTP. These profile extensions stay in envelope version 2; ship app and worker together. Model IDs are not capability-gated for these profiles.
@@ -55,7 +56,7 @@ Required fields: `source_language`, `target_language` (`en`/`zh`, distinct); `co
   "op": "translate",
   "config": {"provider": "openai", "model": "gpt-4.1-mini-2025-04-14", "profile": "openai-json-schema-v2", "base_url": "https://api.openai.com/v1/", "effort": "auto"},
   "credentials": {"api_key": "SYNTHETIC_TEST_CREDENTIAL"},
-  "prompt_version": "translation.v2",
+  "prompt_version": "translation.v3",
   "input": {
     "source_language": "en",
     "target_language": "zh",
@@ -93,6 +94,8 @@ Required fields: `reading_text`, `counterpart_text`, and `selection` with `befor
 
 Every accepted request produces exactly one terminal event: `result`, `error`, or `cancelled`. Different requests may finish out of order. Python owns the terminal-event guard, including cancellation/success races. An unknown or duplicate terminal ID from the current live worker is a protocol failure: do not mutate a document, stop that worker, and fail its remaining requests. Callbacks from an already invalidated worker instance are simply ignored. Never attach an unknown result to the currently selected tab.
 
+For ordinary translation, the worker validates one row per requested ID and emits lowercase UUIDs in request order. UUID hex digits may use either case in model output. For single-text recovery, the provider returns only `{"text":"…"}`. The worker validates the text for the sole source unit and attaches its ID before emitting the same result frame. Both paths report the job’s original prompt version.
+
 A result contains `v`, `type`, `id`, `data`, and `meta`. `data` is the canonical validated model output. Required `meta` fields: `provider`, `requested_model`, `requested_effort`, nullable `returned_model`, `prompt_version`, nullable nonnegative integer `input_tokens` and `output_tokens`. Match provider/requested model/requested effort/prompt to the registry. Effort echoes the canonical requested value, including Auto; it is not a claim about measured provider reasoning. A returned model name is attribution, not permission to select a different requested model.
 
 ```json
@@ -101,7 +104,7 @@ A result contains `v`, `type`, `id`, `data`, and `meta`. `data` is the canonical
   "type": "result",
   "id": "11111111-1111-4111-8111-111111111111",
   "data": {"translations": [{"unit_id": "22222222-2222-4222-8222-222222222222", "text": "窗户开着。"}]},
-  "meta": {"provider": "openai", "requested_model": "gpt-4.1-mini-2025-04-14", "requested_effort": "auto", "returned_model": null, "prompt_version": "translation.v2", "input_tokens": null, "output_tokens": null}
+  "meta": {"provider": "openai", "requested_model": "gpt-4.1-mini-2025-04-14", "requested_effort": "auto", "returned_model": null, "prompt_version": "translation.v3", "input_tokens": null, "output_tokens": null}
 }
 ```
 
@@ -169,7 +172,7 @@ A fake provider proves transport, not provider compatibility. Both live-provider
 
 ## Markdown prompt extension
 
-The v2 worker dispatches Markdown translation for `translation.markdown.v3` and retained `translation.markdown.v1` and `translation.markdown.v2` requests. The app and worker ship together and advertise all three assets in the ready handshake. A worker missing the required prompt fails readiness before credentials or HTTP; there is no fallback to `translation.v2` for a Markdown plan.
+The v2 worker dispatches Markdown translation for `translation.markdown.v4` and retained Markdown v1–v3 requests. The app and worker ship together and advertise all four Markdown assets in the ready handshake. A worker missing the required prompt fails readiness before credentials or HTTP; there is no fallback to a plain-text prompt for a Markdown plan.
 
 The Markdown input has the same top-level keys as Translate: `source_language`, `target_language`, `context_before`, `context_after`, `units`. Each unit still contains exactly `unit_id`, `kind`, `text`; its kind is `markdown_inline` for a whole inline payload or `markdown_fragment` for an oversized payload fragment. These kinds are valid only with the Markdown prompt. Context carries at most 512 UTF-8 bytes on either side; each nonempty trimmed text and the sum of unit texts are at most 8,192 bytes, with 1–64 units and a 32 KiB serialized input. LF represents semantic hard breaks only; canonical input contains no CR or blank lines. Swift supplies locally normalized inline syntax and retains all node IDs, native offsets, section paths and source maps in its request registry.
 

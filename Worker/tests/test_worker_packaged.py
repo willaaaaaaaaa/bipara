@@ -62,7 +62,7 @@ def _handshake(client: WorkerClient) -> dict:
     assert ready["type"] == "ready"
     assert ready["v"] == 2
     assert ready["max_inflight"] == 4
-    assert ready["prompt_versions"] == ["translation.v1", "translation.v2", "translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3", "alignment.v1"]
+    assert ready["prompt_versions"] == ["translation.v1", "translation.v2", "translation.v3", "translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3", "translation.markdown.v4", "alignment.v1", "single-text.v1"]
     return ready
 
 
@@ -134,6 +134,7 @@ class TestReleaseBundle:
         frameworks = release_executable.parent.parent / "Frameworks"
         manifest_path = frameworks / "prompts" / "asset_manifest.json"
         assert manifest_path.is_file(), "asset manifest missing from bundle"
+        assert not (frameworks / "prompts" / "cases.json").exists()
         import json
 
         manifest = json.loads(manifest_path.read_text("utf-8"))

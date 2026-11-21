@@ -1,6 +1,11 @@
 import BiparaCore
 import Foundation
 
+enum ReadingViewChoice: Hashable {
+    case paired(LayoutMode)
+    case translationReader
+}
+
 /// View-facing per-tab presentation state; durable document content lives
 /// in the Core `BiparaDocument`.
 public struct TabState: Equatable, Sendable {
@@ -22,8 +27,12 @@ public struct TabState: Equatable, Sendable {
     }
     public private(set) var draftGeneration = 0
     var markdownImportHint = false
-    public var layout: LayoutMode
-    public var pinnedSelectionUnitID: UUID?
+    var readingView: ReadingViewChoice
+    var isTranslationReader: Bool { readingView == .translationReader }
+    public var layout: LayoutMode {
+        get { document.layout }
+        set { document.layout = newValue; readingView = .paired(newValue) }
+    }
     public var saveURL: URL?
     /// Content generation of the last save snapshot.
     public var savedContentGeneration: Int
@@ -44,8 +53,8 @@ public struct TabState: Equatable, Sendable {
         draftText = document.source
         draftDirection = document.requestedDirection
         draftFormat = document.requestedFormat
-        self.layout = layout
-        pinnedSelectionUnitID = nil
+        self.document.layout = layout
+        readingView = .paired(layout)
         saveURL = nil
         savedContentGeneration = 0
         contentGeneration = document.source.isEmpty ? 0 : 1
@@ -61,7 +70,7 @@ public struct TabState: Equatable, Sendable {
         if document.isMarkdown {
             return document.canUseMarkdownPlan && document.units.count == document.translations.count
         }
-        return job.state == .completed
+        return !document.units.isEmpty && document.units.count == document.translations.count && job.state == .completed
     }
 
     public var isDraftDirty: Bool {
@@ -79,22 +88,29 @@ public struct TabState: Equatable, Sendable {
 
 /// Initial title from meaningful source, without changing source bytes.
 public enum DocumentTitle {
-    public static func derive(from source: String) -> String {
+    public static func derive(from source: String, markdown: MarkdownPlan? = nil) -> String {
+        if let markdown { return markdown.suggestedTitle.map(limitedTitle) ?? "Untitled" }
         for line in source.split(whereSeparator: { $0.isNewline }) {
             var trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") { continue }
             trimmed = trimmed.replacingOccurrences(of: #"^(?:#{1,6}\s+|[-*+>]\s+|\d+[.)]\s+)"#, with: "", options: .regularExpression)
             if trimmed.unicodeScalars.contains(where: { CharacterSet.alphanumerics.contains($0) }) {
-                var title="",scalars=0
-                for character in trimmed.prefix(48) {
-                    let count=character.unicodeScalars.count
-                    guard scalars + count <= DocumentCodec.maxTitleCharacters else { break }
-                    title.append(character);scalars += count
-                }
-                return title.isEmpty ? "Untitled" : title
+                return limitedTitle(trimmed)
             }
         }
         return "Untitled"
+    }
+
+    private static func limitedTitle(_ text: String) -> String {
+        var title = ""
+        var scalars = 0
+        for character in text.prefix(48) {
+            let count = character.unicodeScalars.count
+            guard scalars + count <= DocumentCodec.maxTitleCharacters else { break }
+            title.append(character)
+            scalars += count
+        }
+        return title.isEmpty ? "Untitled" : title
     }
 }
 
@@ -107,6 +123,7 @@ public final class WorkspaceStore: ObservableObject {
     public enum PlanningError: Error { case documentTooLarge, staleDraft, revisionExhausted }
     @Published public private(set) var tabs: [TabState] = []
     @Published public private(set) var activeTabIndex: Int?
+    var activeSessionDidChange: ((UUID?) -> Void)?
     private var untitledCounter = 0
     private let now: () -> ContinuousClock.Instant
 
@@ -129,14 +146,14 @@ public final class WorkspaceStore: ObservableObject {
     /// The app prepares nonempty imported/edited documents off the main actor.
     public nonisolated static func prepareDocument(
         source: String, direction: Direction, replacing old: BiparaDocument? = nil,
-        format: ContentFormat = .auto, markdownHint: Bool = false
+        format: ContentFormat = .auto, markdownHint: Bool = false, automaticTitle: Bool = true
     ) throws -> PreparedDocument {
         let markdown = try MarkdownPlan.prepare(source, format: format, markdownHint: markdownHint)
         let plan = try markdown.map { SourcePlan(source: source, paragraphs: $0.paragraphs, units: $0.units, markdownPlan: $0) }
             ?? SourcePlanner.plan(source)
         var document = BiparaDocument(
             documentID: old?.documentID ?? UUID(),
-            title: DocumentTitle.derive(from: source),
+            title: DocumentTitle.derive(from: source, markdown: markdown),
             source: source,
             sourceRevision: try old.map { try nextSourceRevision($0.sourceRevision) } ?? (source.isEmpty ? 0 : 1),
             requestedDirection: direction,
@@ -152,7 +169,8 @@ public final class WorkspaceStore: ObservableObject {
         document.markdownResolved = markdown != nil
         document.markdownPlan = markdown
         document.readingMode = markdown == nil ? .source : (old?.isMarkdown == true ? old?.readingMode ?? .rendered : .rendered)
-        if let old, !TextIdentity.equal(old.title,DocumentTitle.derive(from:old.source)), old.title != "Untitled" { document.title=old.title }
+
+        if let old, !automaticTitle || document.title == "Untitled" { document.title = old.title }
         guard try DocumentCodec.encode(document).count <= WorkerContract.documentFileByteLimit else { throw PlanningError.documentTooLarge }
         return PreparedDocument(document:document)
     }
@@ -162,6 +180,8 @@ public final class WorkspaceStore: ObservableObject {
     }
     @discardableResult
     public func newTab(prepared:PreparedDocument) -> Int {
+        let previous = activeTab?.sessionID
+        defer { if previous != activeTab?.sessionID { activeSessionDidChange?(previous) } }
         var document = prepared.document
         if document.title == "Untitled" {
             repeat { untitledCounter += 1 } while tabs.contains(where: { $0.document.title == "Untitled \(untitledCounter)" })
@@ -173,6 +193,8 @@ public final class WorkspaceStore: ObservableObject {
     }
 
     public func switchTab(to index: Int) {
+        let previous = activeTab?.sessionID
+        defer { if previous != activeTab?.sessionID { activeSessionDidChange?(previous) } }
         guard tabs.indices.contains(index) else { return }
         activeTabIndex = index
     }
@@ -180,6 +202,8 @@ public final class WorkspaceStore: ObservableObject {
     /// Removes a tab by index after the caller resolved any dirty-state
     /// confirmation. Never deletes files or touches other tabs.
     public func closeTab(at index: Int) {
+        let previous = activeTab?.sessionID
+        defer { if previous != activeTab?.sessionID { activeSessionDidChange?(previous) } }
         guard tabs.indices.contains(index) else { return }
         tabs.remove(at: index)
         if let active = activeTabIndex {
@@ -208,11 +232,13 @@ public final class WorkspaceStore: ObservableObject {
         var document = try prepared?.document ?? Self.prepareDocument(
             source: newText, direction: newDirection, replacing: tab.document,
             format: tab.draftFormat,
-            markdownHint: tab.markdownImportHint && TextIdentity.equal(tab.document.source, newText)
+            markdownHint: tab.markdownImportHint && TextIdentity.equal(tab.document.source, newText),
+            automaticTitle: tab.automaticTitle
         ).document
         guard document.documentID == tab.document.documentID, document.sourceRevision == (try Self.nextSourceRevision(tab.document.sourceRevision)),
               TextIdentity.equal(document.source,newText), document.requestedDirection == newDirection,
-              document.requestedFormat == tab.draftFormat else { throw PlanningError.staleDraft }
+              document.requestedFormat == tab.draftFormat,
+              tab.automaticTitle || document.title == tab.document.title else { throw PlanningError.staleDraft }
         if !forceReplan && Self.preservesRevision(tab, proposed: document) {
             tabs[index].document.requestedFormat = document.requestedFormat
             tabs[index].contentGeneration += 1
@@ -220,18 +246,11 @@ public final class WorkspaceStore: ObservableObject {
         }
         document.layout = tab.layout
         if document.isMarkdown && tab.document.isMarkdown { document.readingMode = tab.document.readingMode }
-        let priorDerived = DocumentTitle.derive(from: tab.document.source)
-        let numbered = tab.document.title.range(of: #"^Untitled \d+$"#, options: .regularExpression) != nil
-        if tab.automaticTitle && (tab.document.title == priorDerived || numbered) {
-            let title = DocumentTitle.derive(from: newText)
-            document.title = title == "Untitled" ? tab.document.title : title
-        }
         if !TextIdentity.equal(tab.document.source, document.source) { tabs[index].markdownImportHint = false }
         tabs[index].document = document
         tabs[index].contentGeneration += 1
         tabs[index].job = JobModel()
         tabs[index].elapsed = TranslationElapsed()
-        tabs[index].pinnedSelectionUnitID = nil
     }
 
     static func preservesRevision(_ tab: TabState, proposed: BiparaDocument) -> Bool {
@@ -244,6 +263,8 @@ public final class WorkspaceStore: ObservableObject {
     public func index(of sessionID: UUID) -> Int? { tabs.firstIndex { $0.sessionID == sessionID } }
 
     public func openDocument(_ document: BiparaDocument, at url: URL) {
+        let previous = activeTab?.sessionID
+        defer { if previous != activeTab?.sessionID { activeSessionDidChange?(previous) } }
         let canonical = url.standardizedFileURL.resolvingSymlinksInPath()
         if let index = tabs.firstIndex(where: { $0.saveURL?.standardizedFileURL.resolvingSymlinksInPath() == canonical }) {
             activeTabIndex = index

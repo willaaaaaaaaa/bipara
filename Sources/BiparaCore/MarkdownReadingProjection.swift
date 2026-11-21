@@ -4,6 +4,7 @@ import Foundation
 public struct MarkdownReadingProjection: Equatable, Sendable {
     public let groups: [MarkdownReadingGroup]
     public let isSourceMode: Bool
+    public internal(set) var showsTranslationReaderContent = true
 
     public init(groups: [MarkdownReadingGroup], isSourceMode: Bool = false) {
         self.groups = groups
@@ -82,6 +83,7 @@ public struct MarkdownReadingRun: Equatable, Sendable {
         public static let italic = Style(rawValue: 1 << 1)
         public static let strikethrough = Style(rawValue: 1 << 2)
         public static let code = Style(rawValue: 1 << 3)
+        public static let imagePlaceholder = Style(rawValue: 1 << 4)
     }
 
     public let text: String

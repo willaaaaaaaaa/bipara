@@ -47,11 +47,12 @@ public struct AppCommands: Commands {
             Button(t("Translate / Resume")){
                 if readerFocused, let tab=workspace.activeTab, ![.running,.queued].contains(tab.job.state){runtime.primaryAction()}
             }.keyboardShortcut(.return,modifiers:.command).disabled(!readerFocused || workspace.activeTab==nil || workspace.activeTab.map{[.running,.queued].contains($0.job.state) || (readingFocused && $0.hasNoProseToTranslate) || $0.draftText.isEmpty || $0.draftText.isWhitespaceOnly || runtime.composing.contains($0.sessionID) || runtime.closing.contains($0.sessionID)}==true)
+        }
+        CommandGroup(after: .toolbar) {
             Button(t("Side by side")){runtime.setLayout(.sideBySide)}.keyboardShortcut("1").disabled(!readingFocused)
             Button(t(workspace.activeTab?.document.isMarkdown == true ? "Sections" : "Paragraphs")){runtime.setLayout(.paragraphs)}.keyboardShortcut("2").disabled(!readingFocused)
-            Divider()
-            Button(t("Reveal counterpart"),action:runtime.reveal).disabled(!readerFocused || workspace.activeTab==nil)
-            Button(t("Clear pin"),action:runtime.clearPin).disabled(!readerFocused || workspace.activeTab==nil)
+            Button(t("Translation Reader")) { runtime.setReadingView(.translationReader) }
+                .keyboardShortcut("3").disabled(!readingFocused || workspace.activeTab?.document.canUseMarkdownPlan != true)
         }
     }
 }
