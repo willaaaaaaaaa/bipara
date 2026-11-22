@@ -24,6 +24,7 @@ PROMPT_FILES = {
     "translation.markdown.v2": "translation.markdown.v2.txt",
     "translation.markdown.v3": "translation.markdown.v3.txt",
     "translation.markdown.v4": "translation.markdown.v4.txt",
+    "translation.markdown.v5": "translation.markdown.v5.txt",
     "alignment.v1": "alignment.v1.txt",
     SINGLE_TEXT_RECOVERY: "single-text.v1.txt",
 }
@@ -35,6 +36,7 @@ SCHEMA_FILES = {
     "translation.markdown.v2": "translation-output.v1.schema.json",
     "translation.markdown.v3": "translation-output.v1.schema.json",
     "translation.markdown.v4": "translation-output.v1.schema.json",
+    "translation.markdown.v5": "translation-output.v1.schema.json",
     "alignment.v1": "alignment-output.v1.schema.json",
     SINGLE_TEXT_RECOVERY: "single-text-output.v1.schema.json",
 }

@@ -111,6 +111,16 @@
         }
       }
     },
+    "Joining this reply to the surrounding passages changes their Markdown. Retry this passage.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将这段译文与前后段落拼接后，Markdown 结构发生了变化。请重试这一段。"
+          }
+        }
+      }
+    },
     "The translation units do not match the source order.": {
       "localizations": {
         "zh-Hans": {

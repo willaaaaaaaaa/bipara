@@ -83,6 +83,24 @@ struct PythonModelGatewayTests {
         #expect(result.meta.inputTokens == nil && result.meta.outputTokens == nil)
     }
 
+    @Test func markdownWorkerKeepsAValidRowWhenItsSiblingIsMissing() async throws {
+        let gateway = PythonModelGateway(executableURL: Self.fixtureExecutable, environment: {
+            var env = PythonModelGateway.sanitizedWorkerEnvironment()
+            env["BIPARA_FIXTURE_UNIT_REPLY"] = "omit"
+            return env
+        })
+        defer { Task { await gateway.shutdown() } }
+        let units = [
+            TranslateBatchUnit(unitID: UUID(), kind: .markdownInline, text: "**Status:** Check the [label](https://example.org/label)."),
+            TranslateBatchUnit(unitID: UUID(), kind: .markdownInline, text: "Next.")
+        ]
+        let request = TranslateBatchRequest(sourceLanguage: .en, targetLanguage: .zh, contextBefore: "", contextAfter: "",
+            units: units, promptVersion: "translation.markdown.v5")
+        let result = try await gateway.translateBatch(request, configuration: Self.configuration())
+        #expect(result.translations == [.init(unitID: units[0].unitID, text: "**状态**：检查[标签](https://example.org/label)。")])
+        #expect(result.incompleteUnitIDs == [units[1].unitID])
+    }
+
     @Test func fixtureAlignRoundTrip() async throws {
         guard skipUnlessFixtureBuilt() else {
             Issue.record("fixture bundle not built; run script/build_worker.sh")

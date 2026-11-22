@@ -72,7 +72,8 @@ public final class AppRuntime: ObservableObject {
     struct MarkdownFailurePresentation: Identifiable {
         let id = UUID()
         let title: String
-        let failure: MarkdownPlan.ValidationFailure
+        let units: [TranslationCoordinator.MarkdownRejection]
+        let otherFailureMessage: String?
     }
 
     /// An explicit session-local binding choice for one document snapshot,
@@ -498,18 +499,20 @@ public final class AppRuntime: ObservableObject {
                       workspace.tabs[index].job.snapshot == tab.job.snapshot else { return }
                 problem = error
             }
+            let fallback = "Translation stopped. Completed paragraphs were kept; check the model settings and retry."
             switch problem {
             case TranslationCoordinator.CoordinatorError.manualDirectionRequired:
                 await offerSettings(for: session, title: "Choose a translation direction", detail: "Automatic could not determine a direction for this text.")
             case TranslationCoordinator.CoordinatorError.retiredPromptVersion:
                 recordFailure(.message("This document was translated with an older prompt version and cannot resume. Use Retranslate to continue with the current version."), for: session)
-            case let failure as MarkdownPlan.ValidationFailure:
+            case let failure as TranslationCoordinator.MarkdownRejections:
                 if let index = workspace.index(of: session) {
-                    recordFailure(.markdown(.init(title: workspace.tabs[index].document.title, failure: failure)), for: session)
+                    let otherMessage = failure.otherFailure.map { failureMessage($0, fallback: fallback, draftFormat: tab.draftFormat) }
+                    recordFailure(.markdown(.init(title: workspace.tabs[index].document.title, units: failure.units,
+                                                  otherFailureMessage: otherMessage)), for: session)
                 }
             default:
-                let message = failureMessage(problem, fallback: "Translation stopped. Completed paragraphs were kept; check the model settings and retry.",
-                                             draftFormat: tab.draftFormat)
+                let message = failureMessage(problem, fallback: fallback, draftFormat: tab.draftFormat)
                 recordFailure(.message(message), for: session)
             }
         }

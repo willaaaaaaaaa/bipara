@@ -138,19 +138,33 @@ public final class PythonModelGateway: ModelGateway, @unchecked Sendable {
         requestedUnits: [TranslateBatchUnit], configuration: ModelConfiguration, promptVersion: String
     ) throws -> TranslateBatchResult {
         let markdown = WorkerContract.markdownTranslationPromptVersions.contains(promptVersion)
-        guard Set(payload.data.keys) == ["translations"],
-              try JSONSerialization.data(withJSONObject: payload.data, options: markdown ? [.withoutEscapingSlashes] : []).count <= WorkerContract.maxDecodedContentBytes else {
+        var incompleteIDs: [UUID] = []
+        var expectedRows = requestedUnits
+        if let rawIDs = payload.data["incomplete_unit_ids"] {
+            guard promptVersion == "translation.markdown.v5", Set(payload.data.keys) == ["translations", "incomplete_unit_ids"],
+                  let ids = rawIDs as? [String], !ids.isEmpty, ids.count < requestedUnits.count else {
+                throw GatewayError(code: .invalidOutput)
+            }
+            let missing = Set(ids)
+            incompleteIDs = requestedUnits.filter { missing.contains($0.unitID.uuidString.lowercased()) }.map(\.unitID)
+            guard incompleteIDs.map({ $0.uuidString.lowercased() }) == ids else { throw GatewayError(code: .invalidOutput) }
+            expectedRows = requestedUnits.filter { !missing.contains($0.unitID.uuidString.lowercased()) }
+        } else if Set(payload.data.keys) != ["translations"] {
+            throw GatewayError(code: .invalidOutput)
+        }
+        guard let translated = payload.data["translations"],
+              try JSONSerialization.data(withJSONObject: ["translations": translated], options: markdown ? [.withoutEscapingSlashes] : []).count <= WorkerContract.maxDecodedContentBytes else {
             throw GatewayError(code: .invalidOutput)
         }
         let rows = try jsonKey(payload.data, "translations") { value in
             try asArray(value).map { try asObject($0) }
         }
-        guard rows.count == requestedUnits.count else {
+        guard rows.count == expectedRows.count else {
             throw GatewayError(code: .invalidOutput)
         }
         var translations: [TranslateBatchResult.UnitTranslation] = []
         translations.reserveCapacity(rows.count)
-        for (row, unit) in zip(rows, requestedUnits) {
+        for (row, unit) in zip(rows, expectedRows) {
             let id = try jsonKey(row, "unit_id") { try asString($0) }
             guard id == unit.unitID.uuidString.lowercased() else {
                 throw GatewayError(code: .invalidOutput)
@@ -169,7 +183,7 @@ public final class PythonModelGateway: ModelGateway, @unchecked Sendable {
             }
             translations.append(.init(unitID: unit.unitID, text: text))
         }
-        return TranslateBatchResult(translations: translations, meta: try mapMeta(payload.meta, configuration: configuration, prompt: promptVersion))
+        return TranslateBatchResult(translations: translations, meta: try mapMeta(payload.meta, configuration: configuration, prompt: promptVersion), incompleteUnitIDs: incompleteIDs)
     }
 
     static func mapAlign(_ payload: WirePayload, configuration: ModelConfiguration, counterpart: String) throws -> AlignSelectionResult {

@@ -27,8 +27,8 @@ public enum JobEvent: Equatable, Sendable {
     case translate(snapshot: JobSnapshot, batches: [Int], totalNonblankUnits: Int)
     /// The coordinator dispatched a queued batch.
     case batchDispatched(batchID: Int)
-    /// A batch committed atomically; all its units are now complete.
-    case batchSucceeded(batchID: Int, unitIDs: [UUID])
+    /// Commit validated units and queue any recovery requests for the remaining units.
+    case batchSucceeded(batchID: Int, unitIDs: [UUID], replacementIDs: [Int] = [])
     /// Retire a mismatched batch. Empty replacements leave its units unfinished.
     case batchNeedsRecovery(batchID: Int, replacementIDs: [Int])
     /// A batch failed; completed work is preserved.
@@ -105,10 +105,11 @@ public struct JobModel: Equatable, Sendable {
             state = .running
             return []
 
-        case let .batchSucceeded(batchID, unitIDs):
+        case let .batchSucceeded(batchID, unitIDs, replacements):
             guard activeBatchIDs.contains(batchID) else { return [] }
             activeBatchIDs.remove(batchID)
             committedBatchIDs.insert(batchID)
+            queuedBatchIDs.append(contentsOf: replacements)
             for id in unitIDs where !completedUnitIDs.contains(id) {
                 completedUnitIDs.insert(id)
             }
@@ -117,14 +118,12 @@ public struct JobModel: Equatable, Sendable {
                 state = .completed
                 queuedBatchIDs = []
             } else if queuedBatchIDs.isEmpty && activeBatchIDs.isEmpty {
-                // No more dispatchable work although units are missing:
-                // the plan changed under the job; treat as failed safely.
                 state = .failed
             }
             return []
 
         case let .batchNeedsRecovery(batchID, replacementIDs):
-            guard state == .running, activeBatchIDs.remove(batchID) != nil else { return [] }
+            guard activeBatchIDs.remove(batchID) != nil, state == .running else { return [] }
             queuedBatchIDs.append(contentsOf: replacementIDs)
             if queuedBatchIDs.isEmpty && activeBatchIDs.isEmpty { state = .failed }
             return []

@@ -51,6 +51,36 @@ class TestTranslationOutput:
             {"unit_id": ids[1], "text": second_text},
         ])
 
+    def test_partial_markdown_result_keeps_only_identifiable_valid_rows(self):
+        ids = ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa0" + str(i) for i in range(5)]
+        raw = translation([
+            {"unit_id": ids[4], "text": "last"},
+            {"unit_id": ids[0].upper(), "text": "first"},
+            {"unit_id": ids[1], "text": "one"},
+            {"unit_id": ids[1].upper(), "text": "two"},
+            {"unit_id": ids[2], "text": "line\nbreak"},
+            {"unit_id": "unknown", "text": "unrequested"},
+        ])
+        assert validate_translation_output(raw, ids, source_line_feeds=[0] * 5, allow_partial=True) == {
+            "translations": [{"unit_id": ids[0], "text": "first"}, {"unit_id": ids[4], "text": "last"}],
+            "incomplete_unit_ids": ids[1:4],
+        }
+        with pytest.raises(WorkerError) as exc:
+            validate_translation_output(raw, ids, source_line_feeds=[0] * 5)
+        assert exc.value.validation_reason == "unit_mismatch"
+
+    def test_unpaired_surrogate_in_one_row_keeps_valid_markdown_sibling(self):
+        rows = [{"unit_id": "one", "text": "bad \ud800"}, {"unit_id": "two", "text": "valid"}]
+        assert validate_translation_output(translation(rows), ["one", "two"], source_line_feeds=[0, 0], allow_partial=True) == {
+            "translations": [rows[1]], "incomplete_unit_ids": ["one"],
+        }
+
+    def test_conflicting_rows_remain_incomplete_even_when_one_has_invalid_text(self):
+        rows = [{"unit_id": "one", "text": "valid"}, {"unit_id": "two", "text": "valid"}, {"unit_id": "one"}]
+        assert validate_translation_output(translation(rows), ["one", "two"], source_line_feeds=[0, 0], allow_partial=True) == {
+            "translations": [rows[1]], "incomplete_unit_ids": ["one"],
+        }
+
     def test_reordered_results_do_not_borrow_another_units_line_budget(self):
         ids = ["one", "two"]
         raw = translation([{"unit_id": "two", "text": "b"}, {"unit_id": "one", "text": "a\nb"}])

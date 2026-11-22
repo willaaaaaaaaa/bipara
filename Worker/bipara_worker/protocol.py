@@ -63,7 +63,7 @@ LEGACY_PROFILE_BASE_URL = {
 }
 LEGACY_PROFILE_EFFORT = {"openai-json-schema-v1": "auto", "glm-json-v1": "off"}
 TRANSLATE_PROMPT_VERSION = "translation.v3"
-MARKDOWN_TRANSLATE_PROMPT_VERSIONS = ("translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3", "translation.markdown.v4")
+MARKDOWN_TRANSLATE_PROMPT_VERSIONS = ("translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3", "translation.markdown.v4", "translation.markdown.v5")
 TRANSLATE_PROMPT_VERSIONS = ("translation.v1", "translation.v2", TRANSLATE_PROMPT_VERSION, *MARKDOWN_TRANSLATE_PROMPT_VERSIONS)
 ALIGN_PROMPT_VERSION = "alignment.v1"
 SINGLE_TEXT_RECOVERY = "single-text.v1"

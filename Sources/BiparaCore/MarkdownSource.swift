@@ -390,7 +390,7 @@ struct MarkdownSource {
     }
 
     /// Locate the suffix after a link's first balanced bracket pair.
-    private static func labelEnd(_ raw: String) -> String.Index? {
+    static func labelEnd(_ raw: String) -> String.Index? {
         var depth = 0
         var escaped = false
         for index in raw.indices {

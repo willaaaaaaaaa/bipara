@@ -8,6 +8,7 @@ extension BiparaDocument {
         guard isMarkdown else { return WorkerContract.currentTranslationPromptVersion }
         switch markdownPlan?.planVersion {
         case MarkdownPlan.version: return WorkerContract.markdownTranslationPromptVersion
+        case "markdown-plan.v4": return "translation.markdown.v4"
         case "markdown-plan.v3": return "translation.markdown.v2"
         default: return WorkerContract.legacyMarkdownTranslationPromptVersion
         }
@@ -16,8 +17,8 @@ extension BiparaDocument {
     public func supportsTranslationPrompt(_ version: String) -> Bool {
         guard isMarkdown else { return WorkerContract.plainTranslationPromptVersions.contains(version) }
         guard let markdownPlan else { return false }
-        // Plan v4 also supports jobs saved before the wording-only prompt revision.
-        if markdownPlan.planVersion == "markdown-plan.v4" && version == "translation.markdown.v3" { return true }
+        if ["markdown-plan.v4", MarkdownPlan.version].contains(markdownPlan.planVersion),
+           ["translation.markdown.v3", "translation.markdown.v4"].contains(version) { return true }
         return version == translationPromptVersion
     }
 
@@ -30,9 +31,11 @@ extension BiparaDocument {
         guard let unit = units.first(where: { $0.id == unitID }) else { return nil }
         let text = side == .source ? requestText(for: unit) : translations.first(where: { $0.unitID == unitID })?.text
         guard isMarkdown else { return text }
-        guard let plan = markdownPlan, let text,
-              let inline = try? MarkdownInline(text, references: plan.references) else { return nil }
-        return inline.visible
+        guard let plan = markdownPlan, let text else { return nil }
+        let cell = text.contains(#"\|"#) && plan.tops.contains { top in
+            top.blocks.contains { $0.id == unit.paragraphID && $0.kind.isTableCell }
+        }
+        return try? MarkdownInline(text, references: plan.references, tableCell: cell).visible
     }
 
     public func markdownProjection() -> MarkdownReadingProjection? {
@@ -52,11 +55,18 @@ extension BiparaDocument {
     }
 }
 
+extension MarkdownReadingBlockKind {
+    var isTableCell: Bool {
+        if case .tableCell = self { return true }
+        return false
+    }
+}
+
 extension MarkdownPlan {
     /// A reader-facing title from parsed source, independent of translation and presentation mode.
     public var suggestedTitle: String? {
         func visibleTitle(_ block: Block) -> String? {
-            guard let visible = try? MarkdownInline(block.payload, references: references).visible else { return nil }
+            guard let visible = try? MarkdownInline(block.payload, references: references, tableCell: block.kind.isTableCell).visible else { return nil }
             return visible.split(whereSeparator: \.isNewline).lazy
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .first { $0.rangeOfCharacter(from: .alphanumerics) != nil }
@@ -144,13 +154,13 @@ extension MarkdownPlan {
         if let literal = block.literal {
             runs = [.init(literal)]
         } else if unitTexts.isEmpty {
-            runs = (try? MarkdownInline(block.payload, references: references).runs) ?? [.init(block.payload)]
+            runs = (try? MarkdownInline(block.payload, references: references, tableCell: block.kind.isTableCell).runs) ?? [.init(block.payload)]
         } else {
             var result: [MarkdownReadingRun] = []
             for (index, pair) in unitTexts.enumerated() {
                 if index > 0, values == nil || language == .en { result.append(.init(" ")) }
                 let (id, text) = pair
-                let inline = (try? MarkdownInline(text, references: references).runs) ?? [.init(text)]
+                let inline = (try? MarkdownInline(text, references: references, tableCell: block.kind.isTableCell).runs) ?? [.init(text)]
                 var offset = 0
                 for run in inline {
                     let length = run.text.utf16.count

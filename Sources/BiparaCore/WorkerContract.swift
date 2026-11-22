@@ -36,8 +36,8 @@ public enum WorkerContract {
 
     /// Prompt versions the app requires from a worker handshake.
     public static let legacyMarkdownTranslationPromptVersion = "translation.markdown.v1"
-    public static let markdownTranslationPromptVersion = "translation.markdown.v4"
-    public static let markdownTranslationPromptVersions = [legacyMarkdownTranslationPromptVersion, "translation.markdown.v2", "translation.markdown.v3", markdownTranslationPromptVersion]
+    public static let markdownTranslationPromptVersion = "translation.markdown.v5"
+    public static let markdownTranslationPromptVersions = [legacyMarkdownTranslationPromptVersion, "translation.markdown.v2", "translation.markdown.v3", "translation.markdown.v4", markdownTranslationPromptVersion]
     public static let singleTextRecoveryVersion = "single-text.v1"
     public static let promptVersions = translationPromptVersions + alignmentPromptVersions + [singleTextRecoveryVersion]
     public static let currentTranslationPromptVersion = "translation.v3"

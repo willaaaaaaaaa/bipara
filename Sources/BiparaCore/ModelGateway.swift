@@ -121,10 +121,12 @@ public struct TranslateBatchResult: Sendable, Equatable {
     }
 
     public var translations: [UnitTranslation]
+    public var incompleteUnitIDs: [UUID]
     public var meta: GatewayMeta
 
-    public init(translations: [UnitTranslation], meta: GatewayMeta) {
+    public init(translations: [UnitTranslation], meta: GatewayMeta, incompleteUnitIDs: [UUID] = []) {
         self.translations = translations
+        self.incompleteUnitIDs = incompleteUnitIDs
         self.meta = meta
     }
 }

@@ -10,7 +10,7 @@ struct WorkerContractTests {
         #expect(WorkerContract.workerVersion == "0.1.0")
         #expect(WorkerContract.maxInflightOperations == 4)
         #expect(WorkerContract.translationBatchesPerSession == 2)
-        #expect(WorkerContract.promptVersions == ["translation.v1", "translation.v2", "translation.v3", "translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3", "translation.markdown.v4", "alignment.v1", "single-text.v1"])
+        #expect(WorkerContract.promptVersions == ["translation.v1", "translation.v2", "translation.v3", "translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3", "translation.markdown.v4", "translation.markdown.v5", "alignment.v1", "single-text.v1"])
         #expect(WorkerContract.maxFrameBytes == 1_048_576)
     }
 

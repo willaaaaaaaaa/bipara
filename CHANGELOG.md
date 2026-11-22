@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Markdown translations accept bold and italic changes and keep literal punctuation readable in previews and exports. Valid passages survive a damaged or missing result in the same batch.
+
 ## 0.2.0 (2026-11-22)
 
 ### Added

@@ -1,5 +1,5 @@
 {
-  "corpus_version": "6",
+  "corpus_version": "7",
   "provenance": "Original synthetic examples authored for Bipara; no private user text.",
   "cases": [
     {
@@ -748,7 +748,7 @@
       "id": "M03-conditional-code-span-order",
       "op": "translate",
       "prompt_version": "translation.markdown.v3",
-      "also_applies_to": ["translation.markdown.v4"],
+      "also_applies_to": ["translation.markdown.v4", "translation.markdown.v5"],
       "input": {"source_language": "en", "target_language": "zh", "context_before": "", "context_after": "", "units": [{"unit_id": "m03", "kind": "markdown_inline", "text": "Use `Bash` with `rg` if both `Grep` and `Glob` are unavailable."}]},
       "sample_output": {"translations": [{"unit_id": "m03", "text": "如果 `Grep` 和 `Glob` 都不可用，就在 `Bash` 中使用 `rg`。"}]},
       "semantic_checks": ["Keep the fallback conditional on both tools being unavailable. Keep the roles of the shell and search command when moving the condition."],
@@ -758,7 +758,7 @@
       "id": "M04-code-before-strong",
       "op": "translate",
       "prompt_version": "translation.markdown.v3",
-      "also_applies_to": ["translation.markdown.v4"],
+      "also_applies_to": ["translation.markdown.v4", "translation.markdown.v5"],
       "input": {"source_language": "en", "target_language": "zh", "context_before": "", "context_after": "", "units": [{"unit_id": "m04", "kind": "markdown_inline", "text": "Before saving, run `check` from `toolkit`. Before publishing, **review**."}]},
       "sample_output": {"translations": [{"unit_id": "m04", "text": "保存前，运行 `toolkit` 中的 `check`。发布前，**请审阅**。"}]},
       "semantic_checks": ["Preserve the command and its toolkit when reversing their order. Keep review emphasized in the separate publishing instruction."],
@@ -768,6 +768,7 @@
       "id": "M05-index-and-ordinary-label",
       "op": "translate",
       "prompt_version": "translation.markdown.v4",
+      "also_applies_to": ["translation.markdown.v5"],
       "input": {"source_language": "en", "target_language": "zh", "context_before": "The printed index lists each exhibit under its original title.", "context_after": "", "units": [{"unit_id": "m05", "kind": "markdown_inline", "text": "Look up **Winter Light** in the index, then read [the curator's notes](https://example.org/notes)."}]},
       "sample_output": {"translations": [{"unit_id": "m05", "text": "在索引中查找 **Winter Light**，然后阅读[策展人手记](https://example.org/notes)。"}]},
       "semantic_checks": ["The reader can look up the exhibit by its original spelling. A short translation of the title is optional.", "Translate the descriptive link label, retain its destination and keep the sequence of actions and the existing emphasis."],
@@ -777,9 +778,28 @@
       "id": "M06-balance-instructions",
       "op": "translate",
       "prompt_version": "translation.markdown.v4",
+      "also_applies_to": ["translation.markdown.v5"],
       "input": {"source_language": "zh", "target_language": "en", "context_before": "将空容器放在天平上。", "context_after": "", "units": [{"unit_id": "m06", "kind": "markdown_inline", "text": "即使显示屏已经亮起，也要等**两个读数都稳定**后再给天平去皮。"}]},
       "sample_output": {"translations": [{"unit_id": "m06", "text": "Even if the display is on, wait until **both readings are stable** before taring the balance."}]},
       "semantic_checks": ["Use the weighing sense of 去皮. A lit display is insufficient. Keep the emphasis and the requirement to wait for both readings. Do not repeat the contextual instruction about the container."]
+    },
+    {
+      "id": "M07-bold-label-before-cjk",
+      "op": "translate",
+      "prompt_version": "translation.markdown.v5",
+      "input": {"source_language": "en", "target_language": "zh", "context_before": "", "context_after": "", "units": [{"unit_id": "m07", "kind": "markdown_inline", "text": "**Status:** Check the [label](https://example.org/label)."}]},
+      "sample_output": {"translations": [{"unit_id": "m07", "text": "**状态**：检查[标签](https://example.org/label)。"}]},
+      "semantic_checks": ["Keep the instruction and readable label. The emphasis may end before or after the colon."],
+      "literal_checks": [{"unit_id": "m07", "contains": "](https://example.org/label)"}]
+    },
+    {
+      "id": "M08-move-condition-with-command",
+      "op": "translate",
+      "prompt_version": "translation.markdown.v5",
+      "input": {"source_language": "zh", "target_language": "en", "context_before": "", "context_after": "", "units": [{"unit_id": "m08", "kind": "markdown_inline", "text": "只有 `check` 完成后，才**可以**运行 `save`。"}]},
+      "sample_output": {"translations": [{"unit_id": "m08", "text": "You **may** run `save` only after `check` finishes."}]},
+      "semantic_checks": ["The check must finish before saving. Let the code spans move with their clauses."],
+      "literal_checks": [{"unit_id": "m08", "literal": "`check`", "count": 1}, {"unit_id": "m08", "literal": "`save`", "count": 1}]
     }
   ]
 }

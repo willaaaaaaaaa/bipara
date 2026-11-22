@@ -107,7 +107,7 @@ async def test_translate_operation_executes_real_branch(monkeypatch, prompt_vers
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("invalid_text", [None, "甲\n乙\n丙"])
-@pytest.mark.parametrize("version", ["translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3", "translation.markdown.v4"])
+@pytest.mark.parametrize("version", ["translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3", "translation.markdown.v4", "translation.markdown.v5"])
 async def test_markdown_operation_uses_versioned_prompt_and_source_line_bound(monkeypatch, invalid_text, version):
     envelope = translate_request_markdown()
     envelope["prompt_version"] = version
@@ -129,6 +129,21 @@ async def test_markdown_operation_uses_versioned_prompt_and_source_line_bound(mo
     system, human = fake.calls[0]
     assert system.content == load_assets().prompts[version]
     assert json.loads(human.content) == envelope["input"]
+    assert len(fake.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_markdown_v5_returns_valid_siblings_from_one_model_response(monkeypatch):
+    envelope = translate_request_markdown()
+    envelope["prompt_version"] = "translation.markdown.v5"
+    first = envelope["input"]["units"][0]
+    second = {**first, "unit_id": "33333333-3333-4333-8333-333333333333", "text": "Next."}
+    envelope["input"]["units"].append(second)
+    row = {"unit_id": second["unit_id"], "text": "下一段。"}
+    fake = FakeModel(reply=FakeMessage(content=json.dumps({"translations": [row]})))
+    data, meta = await make_operation(monkeypatch, fake)(parse_request(envelope))
+    assert data == {"translations": [row], "incomplete_unit_ids": [first["unit_id"]]}
+    assert meta["prompt_version"] == "translation.markdown.v5"
     assert len(fake.calls) == 1
 
 
