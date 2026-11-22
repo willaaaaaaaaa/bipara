@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date
 import hashlib
 import json
 import os
@@ -53,6 +54,31 @@ def version(root: Path = ROOT, ref: str | None = None) -> tuple[str, str]:
     if not TAG.fullmatch("v" + app) or not re.fullmatch(r"[1-9][0-9]*", build):
         raise ReleaseError("invalid version configuration")
     return app, build
+
+
+def changelog_notes(tag: str, root: Path = ROOT) -> str:
+    try:
+        changelog = command("git", "show", f"refs/tags/{tag}:CHANGELOG.md", cwd=root)
+    except ReleaseError as error:
+        raise ReleaseError(f"cannot read CHANGELOG.md from tag {tag}") from error
+
+    version_number = tag.removeprefix("v")
+    sections = []
+    for section in re.split(r"^## ", changelog, flags=re.MULTILINE)[1:]:
+        heading, _, body = section.partition("\n")
+        if heading.split(" ", 1)[0] != version_number:
+            continue
+        match = re.fullmatch(re.escape(version_number) + r" \(([0-9]{4}-[0-9]{2}-[0-9]{2})\)", heading)
+        if not match:
+            raise ReleaseError(f"expected CHANGELOG.md heading: ## {version_number} (YYYY-MM-DD)")
+        try:
+            date.fromisoformat(match[1])
+        except ValueError as error:
+            raise ReleaseError(f"invalid release date in CHANGELOG.md for {tag}") from error
+        sections.append(body.strip())
+    if len(sections) != 1 or not re.search(r"^- \S", sections[0], flags=re.MULTILINE):
+        raise ReleaseError(f"CHANGELOG.md requires one dated section with release entries for {tag}")
+    return sections[0]
 
 
 def distribution(root: Path = ROOT, ref: str | None = None) -> str:
@@ -331,8 +357,11 @@ def github_release(tag: str, *, publish: bool, expected_sha: str = "", verified:
                 raise ReleaseError("published release assets are immutable")
         else:
             trust = "Ad-hoc signed; not Developer ID signed or notarized. macOS may require Open Anyway in Privacy & Security. " if mode == "ad-hoc" else "Developer ID signed and notarized. "
-            command("gh", "release", "create", tag, "--repo", repo, "--verify-tag", "--draft", "--title", tag,
-                    "--notes", trust + "Experimental native bilingual reader. See the bundled manifest, checksums and repository validation status.")
+            with tempfile.TemporaryDirectory(prefix="bipara-draft-") as temp:
+                notes = Path(temp) / "release-notes.md"
+                notes.write_text(changelog_notes(tag, ROOT) + "\n\n" + trust.rstrip() + "\n", encoding="utf-8")
+                command("gh", "release", "create", tag, "--repo", repo, "--verify-tag", "--draft", "--title", tag,
+                        "--notes-file", str(notes))
         command("gh", "release", "upload", tag, "--repo", repo, "--clobber", *(str(folder / n) for n in assets(tag, architecture())))
     print("release: published" if publish else "release: draft assets uploaded")
 
@@ -348,6 +377,7 @@ def main() -> int:
     try:
         if args.operation == "preflight":
             source(args.tag)
+            changelog_notes(args.tag)
             print("release: source preflight passed")
         elif args.operation == "build":
             build_release(args.tag)

@@ -11,5 +11,6 @@ State checks actually run and their results. Distinguish offline, real-provider,
 Explain meaningful complexity, runtime/dependency changes, limitations, and required owner decisions. Identify the reviewed commit when handing work between agents.
 
 - [ ] Scope and documentation agree.
+- [ ] The Unreleased changelog covers user-visible changes, or this PR has none.
 - [ ] Tracked content contains no private operational details or credentials.
 - [ ] Relevant checks passed, or remaining gaps are explicit.

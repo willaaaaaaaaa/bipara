@@ -6,7 +6,7 @@ Start with [AGENTS.md](AGENTS.md), the [requirements](docs/requirements.md) and 
 
 1. Describe the concrete problem and proposed behavior. Discuss consequential product/runtime changes before implementation.
 2. Update the owning design when its contract changes. Keep changes focused; preserve document identity, credential isolation and native reading behavior.
-3. Implement and add regressions for meaningful behavioral risks.
+3. Implement and add regressions for meaningful behavioral risks. In the same PR, describe each user-visible feature, fix, compatibility change, or privacy change in one short English bullet under [Unreleased](CHANGELOG.md#unreleased). Internal refactoring, test counts, and local experiments can skip the changelog.
 4. Open a focused pull request with behavior, relevant validation and unresolved limitations. Review against the design and tests; fix accepted findings.
 5. The maintainer initiates acceptance before merge and confirms the result for the candidate being merged. Routine implementation does not automatically start an acceptance round. Follow the [acceptance triggers](docs/testing.md#acceptance-triggers); after further changes, repeat only checks affected by those changes or unresolved failures within the requested round.
 

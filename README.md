@@ -1,8 +1,8 @@
 # Bipara
 
-English · [简体中文](README.zh-CN.md)
+English · [简体中文](README.zh-CN.md) · [Changelog](CHANGELOG.md)
 
-Bipara is a native macOS app for translating and reading long documents. It currently supports only **English to Chinese** and **Chinese to English**. Paste an article, translate it with your own model connection, and read both languages side by side.
+Bipara is a native macOS app that uses large language models to translate long documents for bilingual reading. It currently supports only **English to Chinese** and **Chinese to English**. Paste an article, translate it with the model you configure, and read both languages side by side.
 
 ![An English Git guide and its Chinese translation in Bipara, with the same recipe diff in both columns](docs/images/bilingual-reader.png)
 
@@ -19,16 +19,9 @@ We can add more language pairs as people need them, using the same translate-and
 
 ## Install
 
-[Download Bipara for macOS](https://github.com/willaaaaaaaaa/bipara/releases/latest). Choose the DMG for your Mac in the release assets.
+Choose the DMG for your Mac's chip. The release page lists macOS requirements, checksums, and tested configurations. [Download Bipara for macOS](https://github.com/willaaaaaaaaa/bipara/releases/latest)
 
-Current source targets macOS 14.0 or later on Apple silicon and Intel Macs. The published v0.1.3 installers have the following requirements.
-
-| Mac | v0.1.3 compatibility target | v0.1.3 package |
-| --- | --- | --- |
-| Apple Silicon | macOS 26 or 27 | `arm64.dmg`. Installation and upgrade tested on macOS 27.0.1. |
-| Intel | Macs that support macOS 26 | `x86_64.dmg`. Built for Intel. Runtime testing on Intel is still pending. |
-
-For a first install of **v0.1.3**, open the DMG, drag Bipara into Applications, eject the image, and launch the app. End users do not need Python. The release uses ad-hoc signing and has not been notarized by Apple. The release page includes checksums. See [installation and trust](docs/releasing.md#install-and-publish) for upgrades, Gatekeeper and newer installers.
+The app bundles Python. For installation, upgrades, and macOS security prompts, see [installation and trust](docs/releasing.md#install-and-publish).
 
 ## Your first translation
 
@@ -40,7 +33,7 @@ Bipara stores your API key in macOS Keychain. Translation sends text and nearby 
 
 ## Run from source
 
-Use a compatible Mac with full Xcode 26.6 or later, Python 3.12+ for tooling and [uv](https://docs.astral.sh/uv/). The first build downloads the pinned Swift and Python dependencies and bundles the Python 3.13 worker.
+Current source targets macOS 14.0 or later on Apple silicon and compatible Intel Macs. To build, use full Xcode 26.6 or later, Python 3.12+ for tooling and [uv](https://docs.astral.sh/uv/). The first build downloads the pinned Swift and Python dependencies and bundles the Python 3.13 worker.
 
 ```sh
 script/build_and_run.sh
