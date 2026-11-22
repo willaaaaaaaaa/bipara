@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 (2026-11-22)
+
 ### Added
 
 - Open or paste Markdown, read the original and translation with their formatting, and export the translated Markdown. Code, commands, and link destinations stay intact.

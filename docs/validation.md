@@ -2,6 +2,10 @@
 
 Bipara is experimental. The results below apply to the source and workflows checked. Each published installer has its own compatibility and qualification record. [GitHub Releases](https://github.com/willaaaaaaaaa/bipara/releases)
 
+## Release candidate v0.2.0
+
+On 2026-11-22 (UTC+8), `script/check.sh` passed on the arm64 tree based on `d96f571` with the 0.2.0 version bump, using macOS 27.0.1 and Xcode 27.2. The run covered 55 tooling tests, 332 Swift tests, and 425 offline Python tests with one skip, plus both worker bundles and the native Debug build. The skipped test is the formal-runtime attribution check covered by the formal CI baseline. The formal-mode offline suite reruns in the protected-tag workflow before draft assets are created. Real-provider, native UI and distribution qualification for this candidate remain pending; see the version's [release notes](https://github.com/willaaaaaaaaa/bipara/releases) for final installer checks and their scope.
+
 ## First-run model configuration
 
 On 2026-11-21 (UTC+8), 332 Swift tests passed on the arm64 development tree based on `b1c39a1` with macOS 27.0.1 and Xcode 27.2. Coverage included an empty first launch and relaunch, saved model selection, and legacy migration. Two native UI tests used an offline gateway. One canceled the first model draft, then saved a configuration and translated with it. The other verified that both columns of a bilingual Markdown article retained the literal diff.
