@@ -52,6 +52,61 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaises(release.ReleaseError):
             release.source("v0.1.0", self.root)
 
+    def test_changelog_uses_only_the_dated_section_in_the_tag(self):
+        path = self.root / "CHANGELOG.md"
+        path.write_text("# Changelog\n\n## Unreleased\n- Future change.\n\n"
+                        "## 0.2.0 (2026-11-22)\n\n### Fixed\n\n- Keep reading position.\n\n"
+                        "## 0.1.0 (2026-11-01)\n- Earlier change.\n")
+        self.git("add", "CHANGELOG.md")
+        self.git("commit", "-qm", "docs: finalize release notes")
+        self.git("tag", "v0.2.0")
+        path.write_text("# Different working copy\n")
+        self.assertEqual(release.changelog_notes("v0.2.0", self.root), "### Fixed\n\n- Keep reading position.")
+        with self.assertRaisesRegex(release.ReleaseError, "cannot read CHANGELOG.md"):
+            release.changelog_notes("v0.1.0", self.root)
+
+    def test_changelog_requires_one_finalized_nonempty_version(self):
+        heading = "## 0.1.0 (2026-11-22)\n"
+        for invalid in ("## Unreleased\n- Pending.", "## 0.1.01 (2026-11-22)\n- Other version.",
+                        heading + "### Fixed", heading + "- One.\n" + heading + "- Two.",
+                        "## 0.1.0 (2026-02-30)\n- Invalid date."):
+            with self.subTest(changelog=invalid), patch.object(release, "command", return_value=invalid):
+                with self.assertRaises(release.ReleaseError):
+                    release.changelog_notes("v0.1.0")
+
+    def test_draft_creation_includes_changelog_and_trust_once(self):
+        tag = "v0.1.0"
+        folder = self.root / "build/release" / tag
+        folder.parent.mkdir(parents=True)
+        self.prepare_assets().rename(folder)
+        entries = "### Fixed\n\n- Keep reading position."
+        bodies = []
+        uploads = []
+
+        def fake_command(*args, **kwargs):
+            if args[:3] == ("gh", "release", "create"):
+                bodies.append(Path(args[args.index("--notes-file") + 1]).read_text())
+            elif args[:3] == ("gh", "release", "upload"):
+                uploads.append(args)
+            else:
+                self.fail(f"unexpected command {args[:3]}")
+            return ""
+
+        missing = subprocess.CompletedProcess([], 1, "", "")
+        existing = subprocess.CompletedProcess([], 0, '{"isDraft": true}', "")
+        with patch.object(release, "ROOT", self.root), patch.object(release, "source", return_value=("0.1.0", "1", self.commit)), \
+             patch.object(release, "distribution", return_value="ad-hoc"), patch.object(release, "command", side_effect=fake_command), \
+             patch.object(release, "changelog_notes", return_value=entries) as extract, \
+             patch.object(release.subprocess, "run", side_effect=[missing, existing]), \
+             patch.dict(release.os.environ, {"GITHUB_REPOSITORY": "example/project"}):
+            release.github_release(tag, publish=False)
+            release.github_release(tag, publish=False)
+        extract.assert_called_once_with(tag, self.root)
+        self.assertEqual(len(bodies), 1)
+        self.assertTrue(bodies[0].startswith(entries + "\n\n"))
+        self.assertIn("Ad-hoc signed", bodies[0])
+        self.assertEqual(len(uploads), 2)
+
     def test_publication_can_verify_an_old_tag_from_trusted_newer_main(self):
         (self.root / "Config/Version.xcconfig").write_text("MARKETING_VERSION = 0.2.0\nCURRENT_PROJECT_VERSION = 2\n")
         self.git("add", ".")

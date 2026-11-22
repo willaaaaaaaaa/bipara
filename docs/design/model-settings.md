@@ -18,13 +18,13 @@ Versioned open profiles carry optional request options through preferences and t
 
 Existing v1/v2 profiles, credentials, IDs, active selection and retained task attribution remain readable and preserve their exact request behavior. Confirming an edit to a legacy entry converts it to the chosen open protocol. Legacy effort outside the four supported editor values requires an explicit choice rather than silently becoming Off. Cancelling or saving unrelated settings leaves legacy records unchanged.
 
-The legacy capability mapping below remains only for retained v1/v2 profiles. Its model restrictions do not apply to the open profiles.
+Saved v1/v2 profiles follow the [legacy Chat Completions compatibility rules](#legacy-chat-completions-compatibility).
 
 This document owns model configuration, retained capability mapping and migration. [Interaction](interaction.md) owns the toolbar and translation direction. [Native design](technical-design.md) owns scheduling and persistence transactions. [Worker protocol](worker-protocol.md) and [document format](document-format.md) own their serialized fields.
 
 ## Settings entry and model management
 
-Use one dedicated native settings window (`Window(id: "settings")`) and exactly one app-menu Settings command, with Command-comma. Its label is `Settings…` in English and `设置…` in Simplified Chinese; the window title is localized consistently. SwiftUI's automatic `Settings` scene installs its own app-menu item in addition to any `CommandGroup(replacing: .appSettings)` command — producing two `Settings…` entries, both bound to Command-comma — and the scene's automatic item follows the system locale, so it cannot honor the app's explicit interface language. The dedicated window keeps the single-entry contract, the Command-comma open-or-focus behavior in both window-focus states, the localized label and title, the close review, and Command-W routing.
+Use one dedicated native settings window (`Window(id: "settings")`) to control the menu and window localization and prevent a duplicate SwiftUI Settings command. Provide exactly one Settings command, labeled `Settings…` in English and `设置…` in Simplified Chinese. Command-comma opens or focuses Settings from either window. Preserve the close review and Command-W routing.
 
 Keep General, Models and Reading sections. In Models, put **Active Model** (`使用模型`) first, followed by the configured models and Add, Edit and Delete. Select configurations by stable ID. Disambiguate matching names by effort in both the active-model picker and the replacement picker shown during deletion. A checkmark identifies the committed active model. Row highlighting identifies the configuration selected for editing. Show the actual interface, model ID and localized effort for the configuration. Preserve full details in accessibility and hover labels. Exclude endpoints and credentials from rows and picker labels.
 
@@ -48,35 +48,33 @@ Private request options use `endpointURL`, `authentication`, `headerName`, `apiV
 
 The Add sheet has no connection templates or suggestions. A fresh install starts with an empty model list and no active model. Users enter a model ID and base URL for their chosen protocol. Saving the first configuration selects it for new jobs. Saving requires no network request. Upgrades preserve saved configurations, the active selection and credentials. A saved empty list also stays empty.
 
-## Effort capabilities and wire mapping
+## Legacy Chat Completions compatibility
 
-This section documents retained v1/v2 Chat Completions behavior only. The editor always uses the four open-profile choices described above. Historical menus are not exposed by the new editor.
+### Effort capabilities and wire mapping
 
-`auto` means provider/model default, not disabled reasoning. It omits graded `reasoning_effort`. `off` is an explicit request to disable reasoning; `on` enables binary thinking where no graded effort exists; `minimal` is the lowest graded level, offered only for models whose provider documents it. The model list uses Default, Off, On, Minimal, Low, Medium, High, Extra high and Max, with localized equivalents. For a known nonreasoning model, `auto` displays Not applicable and the editor disables effort selection.
+Use the capability table to validate saved Chat Completions configurations and reproduce retained jobs.
 
-Support the OpenAI, GLM, Kimi and DeepSeek capability entries below, including legacy entries used by existing configurations. Menus expose distinct documented settings for the selected model. Provider compatibility aliases that collapse to an existing level are represented by that level.
+`auto` uses the provider or model default and omits graded `reasoning_effort`. `off` explicitly disables reasoning. `on` enables binary thinking for the models that support it. `minimal` is the lowest graded effort for models that accept it.
 
-| Capability entry (checked 2026-11-05) | Allowed effort | v2 final body |
+| Model | Allowed effort | v2 final body |
 | --- | --- | --- |
-| OpenAI `gpt-4.1-mini-2025-04-14` (deprecated; removal 2027-01-14) | `auto` only | Omit reasoning fields; `temperature: 0.2` |
+| OpenAI `gpt-4.1-mini-2025-04-14` | `auto` only | Omit reasoning fields; `temperature: 0.2` |
 | OpenAI `gpt-6-luna`, `gpt-6-sol`, `gpt-6.1-terra`, `gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | `auto`, `off`, `low`, `medium`, `high`, `xhigh`, `max` | Off becomes `reasoning_effort: "none"`; a graded value is sent verbatim; Auto omits it. Omit sampling parameters for these reasoning entries, including when Auto is selected |
-| OpenAI `gpt-6-astra`, `gpt-6.1-sol` | `auto`, `low`, `medium`, `high`, `xhigh`, `max` | Same graded mapping; Off is not offered because these models reject disabling reasoning |
-| OpenAI `gpt-5.5`, `gpt-5.4`, `gpt-5.2` | `auto`, `off`, `low`, `medium`, `high`, `xhigh` | Same graded mapping; Max is not offered (these models top out at xhigh) |
+| OpenAI `gpt-6-astra`, `gpt-6.1-sol` | `auto`, `low`, `medium`, `high`, `xhigh`, `max` | Send the graded effort verbatim. Auto omits it. Omit sampling parameters. |
+| OpenAI `gpt-5.5`, `gpt-5.4`, `gpt-5.2` | `auto`, `off`, `low`, `medium`, `high`, `xhigh` | Off becomes `reasoning_effort: "none"`. Send the graded effort verbatim. Auto omits it. Omit sampling parameters. |
 | GLM `glm-4.7-flash`, `glm-4.7`, `glm-4.7-flashx`, `glm-5.1`, `glm-5`, `glm-5-turbo` | `auto`, `off`, `on` | Auto omits thinking controls; Off/On sets `thinking.type` to `disabled`/`enabled`; never send `reasoning_effort`; retain `temperature: 0.2` |
 | GLM `glm-5.3`, `glm-5.3-flash`, `glm-5.3-flashx`, `glm-5.3-flashx-legal` | `auto`, `low`, `high`, `max` | Always `thinking.type: "enabled"`; send an explicit graded effort verbatim or omit it for Auto; omit sampling parameters. The provider default effort for these models is `max`, so Auto means the deepest reasoning |
-| GLM `glm-5.2` | `auto`, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Off sets `thinking.type: "disabled"` without graded effort; a graded value sets `thinking.type: "enabled"` and is sent verbatim; Auto omits both; omit sampling parameters. The provider documents mappings (low/medium to high, xhigh to max, minimal/none skip thinking); Bipara sends the displayed value verbatim and does not rewrite it |
+| GLM `glm-5.2` | `auto`, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Off sets `thinking.type: "disabled"` without graded effort; a graded value sets `thinking.type: "enabled"` and is sent verbatim; Auto omits both; omit sampling parameters. The provider documents mappings (low/medium to high, xhigh to max, minimal/none skip thinking); Bipara sends the recorded effort verbatim |
 | Kimi `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, `kimi-k3` | `auto`, `low`, `high`, `max` | Send explicit `reasoning_effort` verbatim. Auto omits it and defaults to Max. Omit `thinking` and sampling fields. |
 | DeepSeek `deepseek-flash`, `deepseek-v4-pro` | `auto`, `off`, `low`, `high`, `max` | Off sends `thinking.type: "disabled"` without effort. Graded effort sends `thinking.type: "enabled"` and the selected `reasoning_effort`. Auto omits both and defaults to High. Omit sampling fields. |
 
+A retained v2 profile with an unlisted model ID accepts `auto` only. Omit model-specific thinking and sampling fields, use the reasoning budget below, and report unsupported capabilities without another request. Explicit effort requires a capability entry in code and corresponding tests.
 
-The GLM-5.3 entries cannot disable thinking and do not offer Minimal, Medium, On or Extra high; `reasoning_effort` itself is GLM-5.2-or-later only. Do not copy OpenAI's effort menu or unrelated capability clamping into these entries. Unknown model IDs may be saved and attempted once with Auto under the chosen v2 profile; omit model-specific thinking/sampling fields, use the conservative reasoning budget below, and report unsupported capabilities without another request. Explicit effort for an unknown model requires adding a documented capability entry and tests first. Capability metadata is local code, not an editable generic parameter dictionary.
+The final serialized HTTP request must retain the configured URL, exact model, mapped effort, profile-specific output mode, token-limit field/cap, exact canonical messages, no tools and non-streaming operation. OpenAI v2 binds canonical strict JSON Schema. GLM, Kimi and DeepSeek v2 bind JSON-object output and validate against the canonical schema locally. SDK/LangChain mutation is `unsupported_capability` before HTTP. Never send `reasoning_content` as translated text or include it in document/log output.
 
+The caps include reasoning tokens. V2 uses 8,192 translation and 2,048 alignment tokens for known nonreasoning models and explicit Off. Enabled, graded, or automatic reasoning and unknown v2 models use 16,384 translation and 4,096 alignment tokens. The v1 profiles retain 4,096 and 1,024 tokens. OpenAI and Kimi use `max_completion_tokens`. GLM and DeepSeek use `max_tokens`. Keep the existing input, decoded-output, unit-text, deadline, and concurrency limits. Each worker operation makes at most one request. A length finish returns `output_limit` without parsing partial JSON or increasing the cap. [Kimi Chat Completions reference](https://platform.kimi.com/docs/api/chat) · [DeepSeek Chat Completions reference](https://api-docs.deepseek.com/api/create-chat-completion/)
 
-The final serialized HTTP request must retain the configured URL, exact model, mapped effort, profile-specific output mode, token-limit field/cap, exact canonical messages, no tools and non-streaming operation. OpenAI v2 binds canonical strict JSON Schema. GLM, Kimi and DeepSeek v2 bind JSON-object output and validate against the canonical schema locally. Use `kimi-json-v2` and `deepseek-json-v2` as the new versioned profiles. SDK/LangChain mutation is `unsupported_capability` before HTTP. Never send `reasoning_content` as translated text or include it in document/log output.
-
-Reasoning uses output budget as well as answer text. For known nonreasoning models and explicit Off, v2 uses 8,192 translation / 2,048 alignment tokens; both legacy profiles keep their original 4,096/1,024. Enabled, graded, Auto reasoning and unknown v2 entries use initial total caps of 16,384 translation / 4,096 alignment tokens. These bounded engineering starting values require evaluation and do not establish quality or latency guarantees. OpenAI and Kimi send `max_completion_tokens`. GLM and DeepSeek send only `max_tokens`. [Kimi Chat Completions reference](https://platform.kimi.com/docs/api/chat), [DeepSeek Chat Completions reference](https://api-docs.deepseek.com/api/create-chat-completion/). Keep existing input, decoded-output, unit-text, deadline, concurrency and no-retry limits. A length finish remains `output_limit`; do not parse partial JSON or silently increase a cap.
-
-Preserve `openai-json-schema-v1` and `glm-json-v1` for retained jobs and migration compatibility, including their original fixed sampling/reasoning parameters. Their exact legacy rules remain in model workflow. New configurations and explicitly confirmed edits use the open profiles. Legacy tables remain executable for retained jobs only.
+`openai-json-schema-v1` and `glm-json-v1` retain their fixed sampling and reasoning parameters for saved configurations, jobs, and migration. [V1 request profiles](model-workflow.md#legacy-v1-profiles)
 
 ## Runtime snapshots, credentials and portable documents
 

@@ -23,11 +23,11 @@ Formal builds use architecture-specific CPython 3.13.3 archives: `licenses/pytho
 
 Current source targets macOS 14.0 or later on Apple silicon and Intel Macs that can run that OS. The formal build checks that the app declares the deployment target from `Config/Version.xcconfig` and that every bundled Mach-O binary for the selected architecture declares a target at or below it. Worker wheel selection also uses the macOS 14.0 baseline and the frozen lockfile. Compilation and binary checks do not prove runtime compatibility. Installation and upgrade acceptance run only on the maintainer's local Apple silicon Mac, recorded against that exact DMG; users verify other target systems on their own devices.
 
-1. Update Config/Version.xcconfig with the application version and a positive, increasing build number. Keep worker package and protocol versions independent. The helper bundle carries the application's packaging version.
+1. Update `Config/Version.xcconfig` with the application version and a positive, increasing build number. Finalize the [changelog](../CHANGELOG.md) before tagging. Move the Unreleased entries under a heading of the form `## MAJOR.MINOR.PATCH (YYYY-MM-DD)` and leave an empty `## Unreleased` heading above it. Use the version from the configuration and the release date. Keep worker package and protocol versions independent. The helper bundle carries the application's packaging version.
 2. Run script/check.sh and relevant native/model qualification. Summarize current results in docs/validation.md, keeping detailed evidence in .local/validation/.
 3. Commit reviewed source to main using a selected public identity. Create and push a formal vMAJOR.MINOR.PATCH tag only under an actual release instruction.
 4. The tag workflow checks source/history, runs offline checks, builds the worker and native app, verifies nested code signatures and mounted contents, and creates a DMG. Under `ad-hoc`, it requires no signing secrets and does not submit to Apple or claim Gatekeeper approval. Under `developer-id`, it imports temporary credentials, signs the app/DMG, notarizes the outer DMG, staples the ticket and verifies Gatekeeper acceptance.
-5. The arm64 job uploads these Draft Release assets:
+5. The source preflight checks the tagged changelog for one dated section matching the tag and containing at least one bullet. When creating the GitHub Release draft, the arm64 job copies that section’s entries and adds the tagged signing policy. Subsequent asset uploads preserve the draft body, including maintainer edits. The arm64 job uploads the following assets.
 
 ```text
 Bipara-MAJOR.MINOR.PATCH-arm64.dmg
@@ -42,10 +42,10 @@ The schema-2 manifest records distribution mode, tag, commit, application/build 
 For a configured local release machine, the equivalent build command is:
 
 ```sh
-script/build_dmg.sh --tag v0.1.0
+script/build_dmg.sh --tag RELEASE_TAG
 ```
 
-For `developer-id`, it reads BIPARA_CODESIGN_IDENTITY and BIPARA_NOTARY_PROFILE from the environment; the profile must already be securely configured. The initial `ad-hoc` policy ignores a configured Developer ID identity and uses no Apple credentials. Formal builds do not source local shell configuration. Run only from a clean checkout of that tag, with full history and origin/main available. The default release output is build/release/TAG/.
+Replace `RELEASE_TAG` with the candidate's tag. For `developer-id`, the script reads BIPARA_CODESIGN_IDENTITY and BIPARA_NOTARY_PROFILE from the environment. The profile must already be securely configured. The `ad-hoc` policy ignores a configured Developer ID identity and uses no Apple credentials. Formal builds do not source local shell configuration. Run only from a clean checkout of that tag, with full history and origin/main available. The default release output is build/release/TAG/.
 
 ## Install and publish
 
@@ -55,7 +55,7 @@ Verify the download checksum, save open documents and quit Bipara. Open Bipara o
 
 Installation compares the numeric marketing version and build number. At identical numbers, a signed executable that matches the installed copy can be reinstalled. Other candidates must include the installed commit in their recorded history. Replacing local edits with another build from the same commit requires an explicit local rebuild with local changes. An equal-number legacy build with unknown history cannot establish an upgrade. A higher version/build can upgrade a legacy installation.
 
-Legacy GitHub DMGs through v0.1.3 use Finder drag-and-drop. On a Mac with the new installer already installed, quit Bipara, mount the legacy DMG and use `/Applications/Bipara.app/Contents/MacOS/Bipara --install-from /Volumes/Bipara/Bipara.app` (adjust the volume path if needed). This runs the same downgrade check. Dragging over the installed app in Finder bypasses the check. For a first installation from a legacy DMG, copy the app into Applications and eject the image. During release QA, keep test copies in temporary directories, retain evidence and archives as needed, then remove those copies and eject the image.
+For a first installation from a DMG without the built-in installer, copy the app into Applications and eject the image. If the installed copy supports `--install-from`, quit Bipara, mount the DMG, and run `/Applications/Bipara.app/Contents/MacOS/Bipara --install-from /Volumes/Bipara/Bipara.app`. Adjust the volume path if needed. This runs the same downgrade check. Dragging over the installed app in Finder bypasses the check. During release QA, keep test copies in temporary directories, retain evidence and archives as needed, then remove those copies and eject the image.
 
 The initial distribution uses ad-hoc signing. macOS can block the first launch because the developer is unidentified and Apple has not notarized the app. If the user trusts the source and integrity, Apple documents a per-app exception through System Settings > Privacy & Security > Open Anyway after attempting launch. Managed Macs may prohibit this exception. Do not disable Gatekeeper globally or remove quarantine as an installation step. Record the actual warning and successful per-app exception on the tested local OS; an expected block is not a notarization pass. See [Apple's instructions](https://support.apple.com/en-us/102445).
 
@@ -64,11 +64,11 @@ Record private evidence against the exact final SHA-256. Dispatch the Release DM
 Equivalent local publication after qualification:
 
 ```sh
-python3 script/release.py publish --tag v0.1.0 --sha256 FINAL_DMG_SHA256 \
-  --verified local-install --verified upgrade --tested-macos 27.0.1
+python3 script/release.py publish --tag RELEASE_TAG --sha256 FINAL_DMG_SHA256 \
+  --verified local-install --verified upgrade --tested-macos TESTED_MACOS_VERSION
 ```
 
-Replace the example OS version with the actual version used for both checks; do not report the build runner's OS as local acceptance. Set GITHUB_REPOSITORY to the selected repository and authenticate gh with the required release permission. Never change a published tag or replace its assets; publish a new version for a source/package correction. App Store, universal packaging and an automatic in-app updater remain separate scope.
+Replace the placeholders with the candidate's tag, final DMG checksum, and the macOS version used for both installation checks. Report the tested Mac's OS version. Set GITHUB_REPOSITORY to the selected repository and authenticate gh with the required release permission. Never change a published tag or replace its assets. Publish a new version for a source or package correction. App Store, universal packaging and an automatic in-app updater remain separate scope.
 
 ## Development packages
 

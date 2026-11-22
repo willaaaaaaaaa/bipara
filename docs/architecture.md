@@ -46,7 +46,7 @@ The app owns the Markdown document and advertises the Markdown prompt through th
 | --- | --- |
 | [Native application](design/technical-design.md) | Modules, state, concurrency, AppKit boundary, Settings, appearance, credentials and packaging |
 | [Model configuration](design/model-settings.md) | Model CRUD, active selection, six-field custom editor, protocol and effort settings, endpoint/credential binding and preferences migration |
-| [Model workflow](design/model-workflow.md) | Pinned trial dependencies, provider defaults/parameters, segmentation, commit, alignment and retry rules |
+| [Model workflow](design/model-workflow.md) | Pinned dependencies, current and retained request profiles, segmentation, commit, alignment and retry rules |
 | [Worker protocol](design/worker-protocol.md) | Exact pipe frames, typed errors, cancellation, deadlines and process lifetime |
 | [Document format](design/document-format.md) | Versioned local file fields, example, validation and compatibility |
 | [Prompt assets](../prompts/README.md) | Complete system prompts, schemas, message composition and synthetic evaluation corpus |

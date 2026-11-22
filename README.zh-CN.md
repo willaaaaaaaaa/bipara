@@ -1,8 +1,8 @@
 # Bipara
 
-[English](README.md) · 简体中文
+[English](README.md) · 简体中文 · [更新日志](CHANGELOG.md)
 
-Bipara 是一款原生 macOS 长文翻译与双语阅读应用，目前仅支持**英译中**和**中译英**。粘贴一篇文章，用自己的模型翻译，就能把原文和译文放在一起读。
+Bipara 是一款由大语言模型驱动的原生 macOS 长文翻译与双语阅读应用，目前仅支持**英译中**和**中译英**。粘贴一篇文章，用你配置的模型翻译，就能把原文和译文放在一起读。
 
 ![Bipara 并排显示英文 Git 指南和中文译文，两栏保留了相同的食谱改动示例](docs/images/bilingual-reader.png)
 
@@ -19,16 +19,9 @@ Bipara 是一款原生 macOS 长文翻译与双语阅读应用，目前仅支持
 
 ## 安装
 
-[下载 macOS 版 Bipara](https://github.com/willaaaaaaaaa/bipara/releases/latest)，在发行附件中选择与你的 Mac 芯片相符的 DMG。
+在发行附件中选择与你的 Mac 芯片相符的 DMG。系统要求、校验和及验收范围见对应的发行页。[下载 macOS 版 Bipara](https://github.com/willaaaaaaaaa/bipara/releases/latest)
 
-当前源码以 macOS 14.0 及以上为目标，适用于能运行相应系统的 Apple 芯片和 Intel Mac。已发布的 v0.1.3 安装包要求如下。
-
-| Mac 芯片 | v0.1.3 目标系统 | v0.1.3 安装包 |
-| --- | --- | --- |
-| Apple Silicon | macOS 26 或 27 | `arm64.dmg`。已在 macOS 27.0.1 上验证安装和升级。 |
-| Intel | 可运行 macOS 26 的 Intel Mac | `x86_64.dmg`。已构建，维护者尚未在 Intel Mac 上运行验收。 |
-
-**首次安装 v0.1.3** 时，打开 DMG，把 Bipara 拖入“应用程序”，推出镜像后启动。使用者无需安装 Python。此版本采用临时签名，未经 Apple 公证。发行页提供校验和。升级方式、首次打开时的系统提示及新版安装程序见[安装与信任说明](docs/releasing.md#install-and-publish)。
+应用已内置 Python。安装、升级及 macOS 安全提示的处理方式见[安装与信任说明](docs/releasing.md#install-and-publish)。
 
 ## 第一次翻译
 
@@ -40,7 +33,7 @@ API 密钥保存在 macOS 钥匙串中。翻译时，Bipara 会把原文片段�
 
 ## 从源码运行
 
-需要兼容的 Mac、完整的 Xcode 26.6 或更高版本、供工具脚本使用的 Python 3.12+ 和 [uv](https://docs.astral.sh/uv/)。首次构建会下载锁定版本的 Swift 和 Python 依赖，并将 Python 3.13 worker 打入应用。
+当前源码以 macOS 14.0 及以上为目标，适用于能运行相应系统的 Apple 芯片和 Intel Mac。构建需要完整的 Xcode 26.6 或更高版本、供工具脚本使用的 Python 3.12+ 和 [uv](https://docs.astral.sh/uv/)。首次构建会下载锁定版本的 Swift 和 Python 依赖，并将 Python 3.13 worker 打入应用。
 
 ```sh
 script/build_and_run.sh
