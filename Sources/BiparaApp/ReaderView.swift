@@ -542,15 +542,15 @@ private struct MarkdownFailureSheet: View {
     private func t(_ key: String) -> String { AppLocalization.text(key, language: language) }
 
     var body: some View {
-        let passages = report.failure.passages
-        let passage = passages.first { $0.id == selectedUnit } ?? passages.first
-        let difference = report.failure.difference
+        let rejection = report.units.first { $0.id == selectedUnit } ?? report.units.first
+        let passage = rejection?.passage
         VStack(alignment: .leading, spacing: 12) {
             Text(t("Markdown validation failed")).font(.headline)
             Text(report.title).lineLimit(1).foregroundStyle(.secondary)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    switch difference {
+                    if let message = report.otherFailureMessage { Text(t(message)) }
+                    switch rejection?.difference {
                     case .inlineStructure(let expected, let received):
                         structure(t("Inline formatting or protected content differs."), expected: expected, received: received)
                     case .blockStructure(let expected, let received):
@@ -563,17 +563,21 @@ private struct MarkdownFailureSheet: View {
                         Text(t("The reply contains an unescaped pipe (|) inside a table cell."))
                     case .blockParse:
                         Text(t("The document could not be parsed after inserting the replies."))
+                    case .fragmentJoin:
+                        Text(t("Joining this reply to the surrounding passages changes their Markdown. Retry this passage."))
                     case .unitOrder:
                         Text(t("The translation units do not match the source order."))
+                    case nil:
+                        EmptyView()
                     }
 
-                    if passages.count > 1 {
+                    if report.units.count > 1 {
                         Picker(t("Submitted unit"), selection: Binding(
                             get: { passage?.id },
                             set: { selectedUnit = $0 }
                         )) {
-                            ForEach(passages) { item in
-                                Text(unitLabel(item)).tag(Optional(item.id))
+                            ForEach(report.units) { item in
+                                Text(unitLabel(item.passage)).tag(Optional(item.id))
                             }
                         }
                     } else if let passage {

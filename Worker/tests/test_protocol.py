@@ -240,6 +240,8 @@ class TestParseTranslateRequest:
         ("translation.markdown.v3", "fragment"),
         ("translation.markdown.v4", "sentence"),
         ("translation.markdown.v4", "fragment"),
+        ("translation.markdown.v5", "sentence"),
+        ("translation.markdown.v5", "fragment"),
     ])
     def test_markdown_prompt_and_kind_mismatch_rejected(self, version, kind):
         env = translate_request_t01()

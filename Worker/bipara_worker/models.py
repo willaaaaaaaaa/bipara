@@ -554,6 +554,7 @@ def make_langchain_operation(
                 data, [unit.unit_id for unit in request.input.units],
                 source_line_feeds=source_line_feeds,
                 single_text=request.recovery is not None,
+                allow_partial=request.prompt_version == "translation.markdown.v5",
             )
         elif isinstance(request.input, AlignInput):
             validated = validate_alignment_output(data, request.input.counterpart_text)

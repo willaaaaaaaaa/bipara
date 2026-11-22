@@ -125,7 +125,7 @@ async def test_complete_reordered_markdown_reply_uses_one_http_call(provider):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("version", [
     "translation.v1", "translation.v2", "translation.v3",
-    "translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3", "translation.markdown.v4",
+    "translation.markdown.v1", "translation.markdown.v2", "translation.markdown.v3", "translation.markdown.v4", "translation.markdown.v5",
 ])
 async def test_single_text_request_uses_recorded_prompt_and_returns_local_id(version):
     env = envelope(outputMode="jsonSchema")

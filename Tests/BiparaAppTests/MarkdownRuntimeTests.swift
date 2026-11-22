@@ -91,43 +91,78 @@ struct MarkdownRuntimeTests {
         #expect(app.markdownFailure == nil)
         #expect(tab.document.translations.map(\.text) == [reply])
         let restored = try DocumentCodec.decode(DocumentCodec.encode(tab.document))
-        #expect(restored.jobSnapshot?.translationPromptVersion == "translation.markdown.v4")
+        #expect(restored.jobSnapshot?.translationPromptVersion == "translation.markdown.v5")
         #expect(restored.markdownExport(bilingual: false, plain: false, allowPartial: false)
             == source.replacingOccurrences(of: cell, with: reply))
     }
 
-    @Test func retainedMarkdownPromptResumesThenRetranslatesOnTheSamePlan() async throws {
+    @Test(arguments: ["translation.markdown.v3", "translation.markdown.v4"])
+    func resumingSavedV4PlanKeepsCompletedTextAndJob(_ retainedPrompt: String) async throws {
         let gateway = ScriptedGateway()
         let app = runtime(gateway)
         app.alertHandler = { _, _, _ in 0 }
-        _ = try app.workspace.newTab(source: "# Setup\n\nOpen the window.", direction: .enToZh)
+        _ = try app.workspace.newTab(source: "# Setup\n\nOpen the **window**.", direction: .enToZh)
         let session = try #require(app.activeSession)
         await app.translate(session)
         var saved = app.workspace.tabs[0].document
-        let finished = try #require(saved.translations.first)
-        saved.translations = [finished]
-        saved.jobSnapshot?.translationPromptVersion = "translation.markdown.v3"
-        let reopened = try DocumentCodec.decode(DocumentCodec.encode(saved))
-        app.workspace.withTab(0) {
-            $0.document = reopened
-            $0.job.snapshot = reopened.jobSnapshot
-            $0.job.completedUnitIDs = [finished.unitID]
-            $0.job.state = .paused
-        }
+        let binding = try #require(app.workspace.tabs[0].runtimeBinding)
+        saved.translations = [try #require(saved.translations.first)]
+        saved.jobSnapshot?.translationPromptVersion = retainedPrompt
+        let data = try DocumentCodec.encode(saved)
+        let legacyData = Data(String(decoding: data, as: UTF8.self).replacingOccurrences(of: MarkdownPlan.version, with: "markdown-plan.v4").utf8)
+        let reopened = try DocumentCodec.decode(legacyData)
+        app.workspace.openDocument(reopened, at: URL(fileURLWithPath: "/tmp/\(UUID()).bipara"))
+        let legacy = try #require(app.activeSession)
+        #expect(app.workspace.tabs[1].document.markdownPlan?.planVersion == "markdown-plan.v4")
 
-        let beforeResume = gateway.requests.count
-        await app.translate(session)
+        let beforeResume = gateway.dispatchCount
+        await app.translate(legacy, overrideBinding: binding)
         let resumed = gateway.requests.dropFirst(beforeResume)
-        #expect(resumed.map(\.promptVersion) == ["translation.markdown.v3"])
+        #expect(resumed.map(\.promptVersion) == [retainedPrompt])
         #expect(resumed.flatMap(\.units).map(\.unitID) == Array(saved.units.dropFirst()).map(\.id))
-        #expect(app.workspace.tabs[0].document.translations.first == reopened.translations.first)
+        let tab = app.workspace.tabs[1]
+        #expect(tab.job.state == .completed)
+        #expect(tab.runtimeBinding == binding)
+        #expect(tab.document.jobSnapshot == reopened.jobSnapshot)
+        #expect(tab.document.sourceRevision == reopened.sourceRevision)
+        #expect(tab.document.units == reopened.units)
+        #expect(tab.document.translations.first == reopened.translations.first)
+        #expect(try DocumentCodec.decode(DocumentCodec.encode(tab.document)).markdownPlan?.planVersion == MarkdownPlan.version)
 
-        let beforeRetranslate = gateway.requests.count
-        await app.translate(session, retranslate: true)
-        let fresh = gateway.requests.dropFirst(beforeRetranslate)
-        #expect(fresh.map(\.promptVersion) == ["translation.markdown.v4"])
-        #expect(fresh.flatMap(\.units).map(\.unitID) == saved.units.map(\.id))
-        #expect(app.workspace.tabs[0].job.state == .completed)
+        let beforeRetranslate = gateway.dispatchCount
+        await app.translate(legacy, retranslate: true)
+        #expect(gateway.requests.dropFirst(beforeRetranslate).map(\.promptVersion) == ["translation.markdown.v5"])
+        #expect(gateway.requests.dropFirst(beforeRetranslate).flatMap(\.units).map(\.unitID) == saved.units.map(\.id))
+    }
+
+    @Test func resumeRetainsV4WhenCompletedCodeFragmentsNeedLegacyJoining() async throws {
+        let source = "`a` " + String(repeating: "word ", count: WorkerContract.maxBatchTextBytes / 5) + "`b` tail\n\nOther block."
+        var saved = try WorkspaceStore.prepareDocument(source: source, direction: .enToZh, format: .markdown).document
+        let legacyPlan = try #require(try MarkdownPlan.prepare(source, format: .markdown, plannerVersion: "markdown-plan.v4"))
+        try #require(legacyPlan.units.count == 3)
+        saved.markdownPlan = legacyPlan
+        saved.paragraphs = legacyPlan.paragraphs
+        saved.units = legacyPlan.units
+        var snapshot = DispatchFixtures.snapshot()
+        snapshot.translationPromptVersion = "translation.markdown.v4"
+        saved.jobSnapshot = snapshot
+        saved.resolvedDirection = .enToZh
+        saved.translations = zip(saved.units, ["`a`", "`b`"]).map {
+            .init(unitID: $0.id, text: $1, completedAt: Date())
+        }
+        let reopened = try DocumentCodec.decode(DocumentCodec.encode(saved))
+        let workspace = WorkspaceStore()
+        workspace.openDocument(reopened, at: URL(fileURLWithPath: "/tmp/\(UUID()).bipara"))
+        let gateway = ScriptedGateway()
+        try await TranslationCoordinator(gateway: gateway).translate(tabIndex: 0, workspace: workspace, snapshot: snapshot,
+            binding: DispatchFixtures.binding(), credential: DispatchFixtures.credential())
+
+        let tab = workspace.tabs[0]
+        #expect(tab.job.state == .completed)
+        #expect(gateway.requests.map { $0.units.map(\.unitID) } == [[saved.units[2].id]])
+        #expect(tab.document.translations.prefix(2).elementsEqual(reopened.translations))
+        #expect(tab.document.jobSnapshot == reopened.jobSnapshot)
+        #expect(try DocumentCodec.decode(DocumentCodec.encode(tab.document)).markdownPlan?.planVersion == "markdown-plan.v4")
     }
 
     @Test func explicitRetranslationUpgradesSupportedLegacyMetadataPlan() async throws {
@@ -191,26 +226,185 @@ struct MarkdownRuntimeTests {
         #expect(gateway.dispatchCount == 1)
     }
 
-    @Test func rejectsStructureChangingResultAndKeepsSource() async throws {
+    @Test func mixedMarkdownRepliesKeepSiblingAndQueuedBatchesAndRetryOnlyRejectedUnits() async throws {
         let gateway = ScriptedGateway()
         let app = runtime(gateway)
-        let source = "# Setup\n\nOpen the **window**."
-        _ = try app.workspace.newTab(source: source, direction: .enToZh)
+        var paragraphs = (0..<132).map { "Sentence \($0)." }
+        paragraphs[0] = "# Guide"
+        paragraphs[1] = "Open the **window**."
+        paragraphs[2] = "Run `check` now."
+        paragraphs[68] = "Open [the guide](https://example.org/guide)."
+        let source = paragraphs.joined(separator: "\n\n")
+        _ = try app.workspace.newTab(source: source, direction: app.settings.record.translationDirection)
         let session = try #require(app.activeSession)
+        let ids = app.workspace.tabs[0].document.units.map(\.id)
+        try #require(ids.count == paragraphs.count)
+        let missingID = ids[3]
+        gateway.transformResult = { request, result in
+            if request.units.count > 1, request.units.contains(where: { $0.unitID == missingID }) {
+                result.translations.removeAll { $0.unitID == missingID }
+                result.incompleteUnitIDs = [missingID]
+            }
+            for row in result.translations.indices {
+                result.translations[row].text = "译文"
+            }
+        }
+
         await app.translate(session)
-        let tab = app.workspace.tabs[0]
+        let partial = app.workspace.tabs[0]
+        #expect(partial.document.source == source)
+        #expect(partial.job.state == .failed)
+        let rejected = [ids[2], ids[68]]
+        #expect(partial.document.translations.map(\.unitID) == ids.filter { !rejected.contains($0) })
+        #expect(partial.document.translations[1].text == "译文")
+        #expect(gateway.dispatchCount == 4)
+        #expect(gateway.requests.filter(\.singleTextRecovery).map { $0.units.map(\.unitID) } == [[missingID]])
+        let report = try #require(app.markdownFailure)
+        #expect(report.units.map(\.id) == rejected)
+        #expect(report.units.map(\.passage.unitNumber) == [3, 69])
+        #expect(report.units.map(\.passage.input) == [paragraphs[2], paragraphs[68]])
+        #expect(report.units.map(\.passage.reply) == ["译文", "译文"])
+        #expect(report.units[0].difference != report.units[1].difference)
+        #expect(try DocumentCodec.decode(DocumentCodec.encode(partial.document)).translations.map(\.text) == partial.document.translations.map(\.text))
+
+        let calls = gateway.dispatchCount
+        gateway.transformResult = { request, result in
+            result.translations = request.units.map { .init(unitID: $0.unitID, text: $0.text) }
+        }
+        await app.translate(session)
+        let complete = app.workspace.tabs[0]
+        #expect(gateway.requests.dropFirst(calls).map { $0.units.map(\.unitID) } == [rejected])
+        #expect(complete.job.state == .completed)
+        #expect(complete.document.translations.filter { !rejected.contains($0.unitID) } == partial.document.translations)
+        #expect(complete.document.jobSnapshot == partial.document.jobSnapshot)
+        #expect(complete.document.markdownExport(bilingual: false, plain: false, allowPartial: false) != nil)
+        #expect(app.markdownFailure == nil)
+    }
+
+    @Test(arguments: [true, false])
+    func markdownDetailsKeepOtherFailuresInTheSameAttempt(fatal: Bool) async throws {
+        let gateway = ScriptedGateway()
+        let barrier = TestBarrier()
+        gateway.barrier = barrier
+        let app = runtime(gateway)
+        var paragraphs = (0..<65).map { "Sentence \($0)." }
+        paragraphs[0] = "# Guide"
+        paragraphs[1] = "Run `check`."
+        _ = try app.workspace.newTab(source: paragraphs.joined(separator: "\n\n"), direction: app.settings.record.translationDirection)
+        let session = try #require(app.activeSession)
+        let ids = app.workspace.tabs[0].document.units.map(\.id)
+        try #require(ids.count == 65)
+        let last = ids[64]
+        gateway.failureForRequest = { request in
+            guard request.units.first?.unitID == last else { return nil }
+            return fatal ? GatewayError(code: .network, httpStatus: 503) : GatewayError(code: .invalidOutput, validationFailure: .invalidTranslationText)
+        }
+        let translation = Task { await app.translate(session) }
+        defer { translation.cancel() }
+        try await appWaitUntil { await barrier.count == 2 }
+        let firstBatch = try #require(gateway.requests.firstIndex { $0.units.count == 64 }) + 1
+        await barrier.release(firstBatch)
+        try await appWaitUntil { app.workspace.tabs[0].document.translations.count == 63 }
+        await barrier.release(firstBatch == 1 ? 2 : 1)
+        if !fatal {
+            try await appWaitUntil { await barrier.count == 3 }
+            await barrier.release(3)
+        }
+        await translation.value
+
+        let report = try #require(app.markdownFailure)
+        #expect(report.units.map(\.id) == [ids[1]])
+        #expect(report.units.first?.passage.reply == "译\(firstBatch)-1")
+        let message = try #require(report.otherFailureMessage)
+        if fatal {
+            #expect(message.contains("HTTP 503"))
+        } else {
+            #expect(message.contains("2, 65"))
+        }
+        #expect(app.workspace.tabs[0].job.state == .failed)
+        #expect(app.workspace.tabs[0].document.translations.map(\.unitID) == ids.filter { $0 != ids[1] && $0 != last })
+    }
+
+    @Test func finalRejectedReplyDrainsAfterAnInFlightNetworkFailure() async throws {
+        let gateway = ScriptedGateway()
+        let barrier = TestBarrier()
+        gateway.barrier = barrier
+        gateway.waitsForReplyAfterCancellation = true
+        gateway.failureForRequest = { $0.units.count > 1 ? GatewayError(code: .network, httpStatus: 503) : nil }
+        let app = runtime(gateway)
+        let paragraphs = ["# Guide"] + (1..<64).map { "Sentence \($0)." } + ["Run `check`."]
+        _ = try app.workspace.newTab(source: paragraphs.joined(separator: "\n\n"))
+        let session = try #require(app.activeSession)
+        let translation = Task { await app.translate(session) }
+        defer { Task { await barrier.release(1); await barrier.release(2) } }
+        try await appWaitUntil { await barrier.count == 2 }
+        let networkCall = try #require(gateway.requests.firstIndex { $0.units.count > 1 }) + 1
+        await barrier.release(networkCall)
+        try await appWaitUntil { app.workspace.tabs[0].job.state == .failed }
+        await barrier.release(networkCall == 1 ? 2 : 1)
+        await translation.value
+
+        let report = try #require(app.markdownFailure)
+        #expect(report.units.map(\.passage.input) == ["Run `check`."])
+        #expect(report.otherFailureMessage?.contains("HTTP 503") == true)
+        #expect(app.workspace.tabs[0].job.activeBatchIDs.isEmpty)
+        #expect(app.workspace.tabs[0].document.translations.isEmpty)
+        #expect(gateway.dispatchCount == 2)
+    }
+
+    @Test func unsalvageableMarkdownWorkerRowDoesNotStopIndependentUnits() async throws {
+        let gateway = ScriptedGateway()
+        let app = runtime(gateway)
+        _ = try app.workspace.newTab(source: "# Guide\n\nFirst line.\n\nSecond line.", direction: app.settings.record.translationDirection)
+        let session = try #require(app.activeSession)
+        let ids = app.workspace.tabs[0].document.units.map(\.id)
+        let bad = ids[1]
+        gateway.failureForRequest = { request in
+            request.units.contains { $0.unitID == bad } ? GatewayError(code: .invalidOutput, validationFailure: .invalidTranslationText) : nil
+        }
+        await app.translate(session)
+        #expect(app.workspace.tabs[0].job.state == .failed)
+        #expect(app.workspace.tabs[0].document.translations.map(\.unitID) == [ids[0], ids[2]])
+        #expect(gateway.requests.filter { $0.singleTextRecovery && $0.units.first?.unitID == bad }.count == 1)
+        let calls = gateway.dispatchCount
+        gateway.failureForRequest = nil
+        await app.translate(session)
+        #expect(app.workspace.tabs[0].job.state == .completed)
+        #expect(gateway.requests.dropFirst(calls).map { $0.units.map(\.unitID) } == [[bad]])
+    }
+
+    @Test(arguments: ["omitted", "overlap", "unknown", "duplicate", "reordered", "empty", "legacy"])
+    func invalidPartialResultCannotCommitOrScheduleRecovery(_ fault: String) async throws {
+        let gateway = ScriptedGateway()
+        gateway.transformResult = { request, result in
+            let missing = request.units[1].unitID
+            result.translations.remove(at: 1)
+            switch fault {
+            case "omitted": break
+            case "overlap": result.incompleteUnitIDs = [request.units[0].unitID, missing]
+            case "unknown": result.incompleteUnitIDs = [missing, UUID()]
+            case "duplicate": result.incompleteUnitIDs = [missing, missing]
+            case "reordered":
+                result.incompleteUnitIDs = [missing]
+                result.translations.reverse()
+            case "empty":
+                result.translations = []
+                result.incompleteUnitIDs = request.units.map(\.unitID)
+            default: result.incompleteUnitIDs = [missing]
+            }
+        }
+        let workspace = WorkspaceStore()
+        let index = try workspace.newTab(source: "# Guide\n\nFirst line.\n\nSecond line.", direction: .enToZh)
+        var snapshot = DispatchFixtures.snapshot()
+        snapshot.translationPromptVersion = fault == "legacy" ? "translation.markdown.v4" : WorkerContract.markdownTranslationPromptVersion
+        let coordinator = TranslationCoordinator(gateway: gateway)
+        await #expect(throws: TranslationCoordinator.CoordinatorError.invalidBatch) {
+            try await coordinator.translate(tabIndex: index, workspace: workspace, snapshot: snapshot,
+                                            binding: DispatchFixtures.binding(), credential: DispatchFixtures.credential())
+        }
+        #expect(workspace.tabs[index].document.translations.isEmpty)
+        #expect(workspace.tabs[index].job.state == .failed)
         #expect(gateway.dispatchCount == 1)
-        #expect(tab.document.source == source)
-        #expect(tab.document.translations.isEmpty)
-        #expect(tab.job.state == .failed)
-        #expect(app.errorMessage == nil)
-        let failure = try #require(app.markdownFailure?.failure)
-        #expect(failure.difference == .inlineStructure(expected: ["strong", "/"], received: []))
-        let passage = try #require(failure.passages.first)
-        #expect(failure.passages.count == 1)
-        #expect(passage.unitNumber == 2)
-        #expect(passage.input == "Open the **window**.")
-        #expect(passage.reply == "译1-1")
     }
 
     @Test func formatReplacementCancelsAnInFlightMarkdownAttempt() async throws {

@@ -332,7 +332,7 @@ struct AcceptanceRepairTests {
         let plainSession = app.workspace.tabs[plain].sessionID
         let plainJob = Task { await app.translate(plainSession) }
         try await appWaitUntil { await barrier.count == 1 }
-        let markdown = try app.workspace.newTab(source: "# Setup\n\nOpen the **window**.", direction: .enToZh)
+        let markdown = try app.workspace.newTab(source: "# Setup\n\nOpen the `window`.", direction: .enToZh)
         let markdownSession = app.workspace.tabs[markdown].sessionID
         let markdownJob = Task { await app.translate(markdownSession) }
         try await appWaitUntil { await barrier.count == 2 }
@@ -351,7 +351,7 @@ struct AcceptanceRepairTests {
         app.showTranslationFailure(for: markdownSession)
         let report = try #require(app.markdownFailure)
         #expect(report.title == app.workspace.tabs[markdown].document.title)
-        #expect(report.failure.passages.first?.input == "Open the **window**.")
+        #expect(report.units.first?.passage.input == "Open the `window`.")
         app.workspace.switchTab(to: plain)
         #expect(app.markdownFailure == nil)
         app.showTranslationFailure(for: plainSession)
@@ -367,7 +367,7 @@ struct AcceptanceRepairTests {
         #expect(!app.hasTranslationFailure(for: plainSession))
         #expect(app.errorMessage == nil)
         #expect(app.hasTranslationFailure(for: markdownSession))
-        app.workspace.withTab(markdown) { $0.draftText = "# New source\n\nOpen the **door**." }
+        app.workspace.withTab(markdown) { $0.draftText = "# New source\n\nOpen the `door`." }
         #expect(try await app.apply(markdownSession))
         #expect(!app.hasTranslationFailure(for: markdownSession))
         await app.translate(markdownSession)

@@ -20,6 +20,7 @@ final class ScriptedGateway: ModelGateway, @unchecked Sendable {
     var waitsForReplyAfterCancellation = false
     var failAtDispatch: Int?
     var failureForRequest: (@Sendable (TranslateBatchRequest) -> GatewayError?)?
+    var transformResult: (@Sendable (TranslateBatchRequest, inout TranslateBatchResult) -> Void)?
     /// Optional text prefix used in replies.
     var replyPrefix = "译"
 
@@ -47,7 +48,7 @@ final class ScriptedGateway: ModelGateway, @unchecked Sendable {
         if delay > 0 {
             try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
         }
-        return TranslateBatchResult(
+        var result = TranslateBatchResult(
             translations: request.units.enumerated().map { index, unit in
                 .init(unitID: unit.unitID, text: "\(prefix)\(count)-\(index)")
             },
@@ -61,6 +62,8 @@ final class ScriptedGateway: ModelGateway, @unchecked Sendable {
                 outputTokens: nil
             )
         )
+        transformResult?(request, &result)
+        return result
     }
 
     func alignSelection(

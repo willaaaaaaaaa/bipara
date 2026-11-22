@@ -6,18 +6,24 @@ struct MarkdownInline {
     var signature: [String] = []
     var runs: [MarkdownReadingRun] = []
     var prose = ""
-    private var source: MarkdownCoordinates
+    private(set) var source: MarkdownCoordinates
+    private(set) var paragraph: Paragraph?
+    private var protectedOffsets = IndexSet()
     private var indivisible: [TextRange] = []
     var hasProse: Bool { prose.unicodeScalars.contains { CharacterSet.letters.contains($0) } }
     var visible: String { runs.map(\.text).joined() }
 
-    init(_ payload: String, references: MarkdownReferences) throws {
+    init(_ raw: String, references: MarkdownReferences, tableCell: Bool = false) throws {
+        // GFM removes one backslash immediately before each pipe when it splits
+        // a table row, before the inline parser interprets code or references.
+        let payload = tableCell ? raw.replacingOccurrences(of: #"\|"#, with: "|") : raw
         source = MarkdownCoordinates("x " + payload)
         guard !payload.isEmpty else { return }
         let document = try MarkdownSource.parse(source.text + "\n\n" + references.definitions(for: payload))
         guard document.childCount == 1, let paragraph = document.child(at: 0) as? Paragraph else {
             throw MarkdownPlan.structureMismatch
         }
+        self.paragraph = paragraph
         for node in paragraph.children {
             if runs.isEmpty, let first = node as? Markdown.Text, first.string.hasPrefix("x ") {
                 let text = String(first.string.dropFirst(2))
@@ -34,6 +40,15 @@ struct MarkdownInline {
     private mutating func append(_ node: any Markup, style: MarkdownReadingRun.Style, destination: String?) {
         var style = style
         var destination = destination
+        if node is InlineCode || node is InlineHTML || node is Link || node is Image,
+           let range = source.range(node.range), let end = range.end {
+            var start = range.location
+            if node is Link || node is Image, let raw = source.text(node.range),
+               let labelEnd = labelEnd(of: node, raw: raw) {
+                start += raw[...labelEnd].utf16.count
+            }
+            if start >= 2 { protectedOffsets.insert(integersIn: (start - 2)..<(end - 2)) }
+        }
         var tag: String
         switch node {
         case let text as Markdown.Text:
@@ -73,6 +88,81 @@ struct MarkdownInline {
         for child in node.children { append(child, style: style, destination: destination) }
         signature.append("/")
     }
+
+    /// Siblings may follow translated word order. Hard breaks and raw HTML retain
+    /// their position, including when nested inside a protected container.
+    private struct ProtectedGroup {
+        var tokens: [String] = []
+        var movable: [[String]] = []
+        var containsBoundary = false
+
+        mutating func flush() {
+            movable.sort { a, b in
+                a.lexicographicallyPrecedes(b) { $0.utf8.lexicographicallyPrecedes($1.utf8) }
+            }
+            tokens.append(contentsOf: movable.joined())
+            movable.removeAll(keepingCapacity: true)
+        }
+
+        mutating func append(_ item: [String], boundary: Bool = false) {
+            if boundary {
+                flush()
+                tokens += item
+                containsBoundary = true
+            } else { movable.append(item) }
+        }
+    }
+
+    var protectedSignature: [String] {
+        var group = ProtectedGroup()
+        if let paragraph {
+            for child in paragraph.children { collectProtection(child, into: &group) }
+        }
+        group.flush()
+        return group.tokens
+    }
+
+    private func collectProtection(_ node: any Markup, into group: inout ProtectedGroup) {
+        let tag: String
+        switch node {
+        case is Markdown.Text, is SoftBreak: return
+        case is Strong, is Emphasis:
+            for child in node.children { collectProtection(child, into: &group) }
+            return
+        case is LineBreak: group.append(["break"], boundary: true); return
+        case let code as InlineCode: group.append(["code:" + (source.text(node.range) ?? code.code)]); return
+        case let html as InlineHTML: group.append(["html:" + html.rawHTML], boundary: true); return
+        case let link as Link: tag = "link:" + (link.destination ?? "")
+        case let image as Image: tag = "image:" + (image.source ?? "")
+        case is Strikethrough: tag = "strike"
+        default: tag = String(describing: type(of: node))
+        }
+        var childGroup = ProtectedGroup()
+        for child in node.children { collectProtection(child, into: &childGroup) }
+        childGroup.flush()
+        var opening = [tag]
+        if node is Link || node is Image, let raw = source.text(node.range),
+           let end = labelEnd(of: node, raw: raw), let start = raw.firstIndex(of: "[") {
+            let suffix = raw[raw.index(after: end)...]
+            if suffix.isEmpty || suffix.first == "[" {
+                opening.append("reference:" + (suffix.isEmpty || suffix == "[]" ? String(raw[start...end]) : String(suffix)))
+            }
+        }
+        group.append(opening + childGroup.tokens + ["/"], boundary: childGroup.containsBoundary)
+    }
+
+    private func labelEnd(of node: any Markup, raw: String) -> String.Index? {
+        guard raw.hasPrefix("[") || raw.hasPrefix("![") else { return nil }
+        // The label may contain a literal closing bracket inside code or HTML.
+        // Start after its parsed children before looking for the closing bracket.
+        if node.childCount > 0, let last = node.child(at: node.childCount - 1),
+           let parent = source.range(node.range), let end = source.range(last.range)?.end,
+           end >= parent.location, let afterChild = raw.utf16Index(at: end - parent.location),
+           let close = raw[afterChild...].firstIndex(of: "]") { return close }
+        return MarkdownSource.labelEnd(raw)
+    }
+
+    func protects(_ utf16Offset: Int) -> Bool { protectedOffsets.contains(utf16Offset) }
 
     func fragments() throws -> [String] {
         let payload = String(source.text.dropFirst(2))

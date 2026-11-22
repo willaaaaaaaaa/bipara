@@ -36,6 +36,10 @@ The arm64 development installer based on `5fc1904` with local installer changes 
 
 ## Markdown validation
 
+On 2026-11-22 (UTC+8), the arm64 development tree based on `c82cd0a` passed 353 Swift tests, 437 offline Python tests, and 55 tooling tests for the v5 Markdown changes. The formal-runtime attribution test was skipped. Both worker bundles built, and the native Debug app passed strict signature and embedded worker asset checks. The 164-file source, prompt, test, and tool input manifest SHA-256 is `598a40b3fee873a6087ee6482f08ef5aa07951235a086eca89e0e177613fcc65`.
+
+An offline replay reproduced the v4 failure for a bold label ending in Chinese punctuation. V5 accepted the same reply and retained its text and formatting through save, reopen, and Markdown export. Regression cases covered escaped pipes in table code and split cells, fragment boundaries that could create links or emphasis, protected-content changes, mixed valid and incomplete batches, and continuation of saved v4 jobs. This run covered offline behavior on the current Mac. Live-provider translation quality, native UI interaction, and installation of this build remain unverified.
+
 On 2026-11-21 (UTC+8), 66 focused Swift tests passed on the tree identified by the 191-input source manifest SHA-256 `6c9f406c774b6ed2e903256af932fc7ffd63e8aa75df02136fbda17c4b45dbda`. The tests covered leading frontmatter with a short body, explicit format overrides, offline Apply, Rendered/Source switching, and legacy migration. Native UI acceptance was outside this run.
 
 On 2026-11-20 (UTC+8), 40 focused Swift and 195 Python tests passed on the arm64 working tree based on `5fc1904` for `markdown-plan.v4`. A packaged offline fixture preserved accepted code-span reordering within its formatting boundaries through save, reopen, and export. The formal-release attribution check was skipped. Live-provider quality and manual UI acceptance remain open.

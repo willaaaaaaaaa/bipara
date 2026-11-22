@@ -34,6 +34,29 @@ struct ValidationTests {
                 configuration: config, promptVersion: "translation.v2")
         }
     }
+    @Test func partialMarkdownResultsRequireTheExactPartition() throws {
+        let missing = TranslateBatchUnit(unitID: UUID(), kind: .markdownInline, text: "Missing")
+        let units = [missing, unit]
+        let id = missing.unitID.uuidString.lowercased()
+        var reply = payload()
+        reply.meta["prompt_version"] = "translation.markdown.v5"
+        reply.data["incomplete_unit_ids"] = [id]
+        let mapped = try PythonModelGateway.mapTranslate(reply, requestedUnits: units, configuration: config, promptVersion: "translation.markdown.v5")
+        #expect(mapped.translations.map(\.unitID) == [unit.unitID])
+        #expect(mapped.incompleteUnitIDs == [missing.unitID])
+        for invalid in [[], [unit.unitID.uuidString.lowercased()], [id, id], [UUID().uuidString.lowercased()]] {
+            reply.data["incomplete_unit_ids"] = invalid
+            #expect(throws: GatewayError.self) {
+                try PythonModelGateway.mapTranslate(reply, requestedUnits: units, configuration: config, promptVersion: "translation.markdown.v5")
+            }
+        }
+        reply.data["incomplete_unit_ids"] = [id]
+        reply.meta["prompt_version"] = "translation.markdown.v4"
+        #expect(throws: GatewayError.self) {
+            try PythonModelGateway.mapTranslate(reply, requestedUnits: units, configuration: config, promptVersion: "translation.markdown.v4")
+        }
+    }
+
     @Test func unsupportedPromptIsRejectedBeforeWorkerLaunch() async throws {
         let gateway = PythonModelGateway(executableURL: URL(fileURLWithPath: "/bipara-nonexistent-test-worker"))
         let request = TranslateBatchRequest(sourceLanguage: .en, targetLanguage: .zh,

@@ -98,6 +98,7 @@ def make_fixture_operation(
                 raw, [unit.unit_id for unit in request.input.units],
                 source_line_feeds=[unit.text.count("\n") for unit in request.input.units] if markdown else None,
                 single_text=request.recovery is not None,
+                allow_partial=request.prompt_version == "translation.markdown.v5",
             )
         elif isinstance(request.input, AlignInput):
             raw = alignments.get(

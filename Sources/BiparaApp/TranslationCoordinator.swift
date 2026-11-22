@@ -172,7 +172,19 @@ public final class TranslationCoordinator: ObservableObject {
               WorkerContract.alignmentPromptVersions.contains(snapshot.alignmentPromptVersion) else {
             throw CoordinatorError.retiredPromptVersion
         }
-        let original = tab.document
+        var original = tab.document
+        if tab.job.snapshot != nil || original.jobSnapshot != nil, let savedPlan = original.markdownPlan {
+            let upgraded = savedPlan.upgradedForRetry()
+            if upgraded.planVersion != savedPlan.planVersion {
+                let saved = original.translations
+                let compatible = saved.isEmpty ? true : await Task.detached {
+                    (try? upgraded.validateTranslations(saved, language: snapshot.targetLanguage)) != nil
+                }.value
+                if compatible { original.markdownPlan = upgraded }
+            }
+        }
+        try Task.checkCancellation()
+        guard let index = attempt.index(in: workspace), workspace.tabs[index].contentGeneration == tab.contentGeneration else { return }
         let direction: (Language, Language)
         switch original.resolvedDirection {
         case .enToZh: direction = (.en, .zh)
@@ -194,6 +206,10 @@ public final class TranslationCoordinator: ObservableObject {
         let initialBatches = try SourcePlanner.formBatches(plan)
         guard !initialBatches.isEmpty else { return }
         workspace.withTab(index) { tab in
+            if original.markdownPlan?.planVersion != tab.document.markdownPlan?.planVersion {
+                tab.document.markdownPlan = original.markdownPlan
+                tab.contentGeneration += 1
+            }
             if tab.job.snapshot != nil || tab.job.state != .idle {
                 tab.job.snapshot = resolved
                 tab.job.completedUnitIDs = finished
@@ -222,6 +238,7 @@ public final class TranslationCoordinator: ObservableObject {
         @MainActor final class BatchSchedule {
             var batches: [TranslationBatch]
             var firstFailure: (any Error)?
+            var rejections: [MarkdownRejection] = []
             let originalCount: Int
 
             init(batches: [TranslationBatch]) {
@@ -265,32 +282,37 @@ public final class TranslationCoordinator: ObservableObject {
                 if schedule.firstFailure == nil { schedule.firstFailure = error }
             }
 
+            @MainActor func queueRecovery(_ ids: [UUID], splitting: Bool) throws -> [Int] {
+                let nextID = schedule.batches.count
+                let remaining = WorkerContract.maxUnitRecoveryRequests - (nextID - schedule.originalCount)
+                guard !ids.isEmpty, remaining > 0, schedule.firstFailure == nil else { return [] }
+                let units = ids.compactMap { byID[$0] }
+                let midpoint = units.count / 2
+                let groups = splitting && midpoint > 0 ? [units[..<midpoint], units[midpoint...]] : [units[...]]
+                guard groups.count <= remaining else { return [] }
+                let batches = try groups.flatMap { group in
+                    try SourcePlanner.formBatches(SourcePlan(source: plan.source, paragraphs: plan.paragraphs,
+                                                            units: Array(group), markdownPlan: plan.markdownPlan))
+                }
+                guard batches.count <= remaining else { return [] }
+                schedule.batches.append(contentsOf: batches)
+                return Array(nextID..<schedule.batches.count)
+            }
+
             @MainActor func handleUnitFailure(_ batchID: Int, _ error: GatewayError) -> Bool {
-                let batch = schedule.batches[batchID]
                 let singleTextRecovery = schedule.usesSingleText(batchID)
-                guard error.code == .invalidOutput, error.validationFailure == .unitMismatch || singleTextRecovery,
+                let invalidMarkdownRows = original.isMarkdown &&
+                    (error.validationFailure == .invalidTranslationText || error.validationFailure == .outputTooLarge)
+                guard error.code == .invalidOutput, error.validationFailure == .unitMismatch || singleTextRecovery || invalidMarkdownRows,
                       schedule.firstFailure == nil, !Task.isCancelled,
                       let i = owner.index(in: workspace),
                       workspace.tabs[i].job.activeBatchIDs.contains(batchID) else { return false }
-                let nextID = schedule.batches.count
-                let remaining = WorkerContract.maxUnitRecoveryRequests - (nextID - schedule.originalCount)
-                if !singleTextRecovery && batch.unitIDs.count == 1 && remaining >= 1 {
-                    schedule.batches.append(batch)
-                } else if batch.unitIDs.count > 1 && remaining >= 2 {
-                    let failedUnits = batch.unitIDs.compactMap { byID[$0] }
-                    let midpoint = failedUnits.count / 2
-                    do {
-                        let replacements = try [failedUnits[..<midpoint], failedUnits[midpoint...]].flatMap { half in
-                            try SourcePlanner.formBatches(SourcePlan(source: plan.source, paragraphs: plan.paragraphs, units: Array(half), markdownPlan: plan.markdownPlan))
-                        }
-                        if replacements.count <= remaining { schedule.batches.append(contentsOf: replacements) }
-                    } catch {
-                        failBatch(batchID, error)
-                        return true
-                    }
+                do {
+                    let replacements = singleTextRecovery ? [] : try queueRecovery(schedule.batches[batchID].unitIDs, splitting: true)
+                    workspace.withTab(i) { _ = $0.job.apply(.batchNeedsRecovery(batchID: batchID, replacementIDs: replacements)) }
+                } catch {
+                    failBatch(batchID, error)
                 }
-                let replacements = Array(nextID..<schedule.batches.count)
-                workspace.withTab(i) { _ = $0.job.apply(.batchNeedsRecovery(batchID: batchID, replacementIDs: replacements)) }
                 return true
             }
 
@@ -363,11 +385,20 @@ public final class TranslationCoordinator: ObservableObject {
                 case let .success(batchID, unitIDs, result):
                     do {
                         try Task.checkCancellation()
-                        try await commitBatch(
-                            result, batchID: batchID, requestedUnitIDs: unitIDs,
-                            owner: owner, original: original,
-                            workspace: workspace, resolved: resolved
-                        )
+                        guard let i = owner.index(in: workspace), workspace.tabs[i].job.activeBatchIDs.contains(batchID) else { return }
+                        let missing = Set(result.incompleteUnitIDs)
+                        guard !result.translations.isEmpty,
+                              missing.isEmpty || (original.isMarkdown && resolved.translationPromptVersion == WorkerContract.markdownTranslationPromptVersion),
+                              result.incompleteUnitIDs == unitIDs.filter({ missing.contains($0) }),
+                              result.translations.map(\.unitID) == unitIDs.filter({ !missing.contains($0) }),
+                              result.meta.provider == resolved.provider, result.meta.requestedModel == resolved.model,
+                              result.meta.requestedEffort == resolved.effort, result.meta.promptVersion == resolved.translationPromptVersion else {
+                            throw CoordinatorError.invalidBatch
+                        }
+                        let replacements = try queueRecovery(result.incompleteUnitIDs, splitting: false)
+                        let rejected = try await commitBatch(result, batchID: batchID, replacements: replacements,
+                                                             owner: owner, workspace: workspace, resolved: resolved)
+                        schedule.rejections.append(contentsOf: rejected)
                     } catch is CancellationError {
                         if !cancelledByUser { markCancelled() }
                     } catch {
@@ -416,54 +447,106 @@ public final class TranslationCoordinator: ObservableObject {
         }
         if cancelledByUser { throw CancellationError() }
         guard let index = owner.index(in: workspace) else { return }
-        if let firstFailure = schedule.firstFailure { throw firstFailure }
-        if workspace.tabs[index].job.state == .failed {
+        if schedule.rejections.isEmpty, let firstFailure = schedule.firstFailure { throw firstFailure }
+        if !schedule.rejections.isEmpty || workspace.tabs[index].job.state == .failed {
             let completed = workspace.tabs[index].job.completedUnitIDs
             let missing = IndexSet(original.units.enumerated().compactMap { completed.contains($0.element.id) ? nil : $0.offset + 1 })
-            throw CoordinatorError.incompleteUnits(missing)
+            guard !schedule.rejections.isEmpty else { throw CoordinatorError.incompleteUnits(missing) }
+            let units = schedule.rejections.sorted { $0.passage.unitNumber < $1.passage.unitNumber }
+            let otherFailure = schedule.firstFailure ?? (missing.count > units.count ? CoordinatorError.incompleteUnits(missing) : nil)
+            throw MarkdownRejections(units: units, otherFailure: otherFailure)
         }
     }
 
-    /// Validates a batch result against its request and commits it
-    /// atomically; throws typed errors without mutating document state.
-    private func commitBatch(
-        _ result: TranslateBatchResult,
-        batchID: Int,
-        requestedUnitIDs: [UUID],
-        owner: AttemptOwner,
-        original: BiparaDocument,
-        workspace: WorkspaceStore,
-        resolved: JobSnapshot
-    ) async throws {
-        guard let i = owner.index(in: workspace) else { return }
-        guard result.translations.map(\.unitID) == requestedUnitIDs,
-              result.meta.provider == resolved.provider, result.meta.requestedModel == resolved.model,
-              result.meta.requestedEffort == resolved.effort,
-              result.meta.promptVersion == resolved.translationPromptVersion else { throw CoordinatorError.invalidBatch }
-        var candidate = workspace.tabs[i].document
-        candidate.translations.append(contentsOf: result.translations.map {
-            .init(unitID: $0.unitID, text: $0.text, returnedModel: result.meta.returnedModel, completedAt: Date())
-        })
-        let order = Dictionary(uniqueKeysWithValues: original.units.enumerated().map { ($0.element.id, $0.offset) })
-        candidate.translations.sort { order[$0.unitID, default: 0] < order[$1.unitID, default: 0] }
-        candidate.jobSnapshot = resolved
-        candidate.resolvedDirection = resolved.sourceLanguage == .en ? .enToZh : .zhToEn
-        let snapshotToValidate = candidate
-        let encodedSize = try await Task.detached {
-            if let plan = snapshotToValidate.markdownPlan {
-                try plan.validateBatch(snapshotToValidate.translations, language: resolved.targetLanguage, newUnitIDs: Set(requestedUnitIDs))
+    struct MarkdownRejection: Identifiable, Sendable {
+        let difference: MarkdownPlan.ValidationFailure.Difference
+        let passage: MarkdownPlan.ValidationFailure.Passage
+        var id: UUID { passage.id }
+    }
+
+    struct MarkdownRejections: Error {
+        let units: [MarkdownRejection]
+        let otherFailure: (any Error)?
+    }
+
+    private struct PreparedBatch: Sendable {
+        var translations: [UnitTranslation]
+        var accepted: [UUID] = []
+        var rejected: [MarkdownRejection] = []
+    }
+
+    private nonisolated static func prepareBatch(
+        _ incoming: [UnitTranslation], document: BiparaDocument, snapshot: JobSnapshot
+    ) throws -> PreparedBatch {
+        let order = Dictionary(uniqueKeysWithValues: document.units.enumerated().map { ($0.element.id, $0.offset) })
+        var prepared = PreparedBatch(translations: document.translations)
+
+        func accept(_ rows: ArraySlice<UnitTranslation>) throws {
+            try Task.checkCancellation()
+            let ids = rows.map(\.unitID)
+            let combined = (prepared.translations + rows).sorted { order[$0.unitID, default: 0] < order[$1.unitID, default: 0] }
+            do {
+                if let plan = document.markdownPlan {
+                    prepared.translations = try plan.preparedBatch(combined, language: snapshot.targetLanguage, newUnitIDs: Set(ids))
+                } else {
+                    prepared.translations = combined
+                }
+                prepared.accepted.append(contentsOf: ids)
+            } catch let failure as MarkdownPlan.ValidationFailure {
+                if rows.count == 1 {
+                    guard let passage = failure.passages.first, passage.id == rows.first?.unitID else { throw failure }
+                    prepared.rejected.append(.init(difference: failure.difference, passage: passage))
+                } else {
+                    let middle = rows.index(rows.startIndex, offsetBy: rows.count / 2)
+                    try accept(rows[..<middle])
+                    try accept(rows[middle...])
+                }
             }
-            return try DocumentCodec.encode(snapshotToValidate).count
-        }.value
-        guard encodedSize <= WorkerContract.documentFileByteLimit else { throw CoordinatorError.documentTooLarge }
-        guard let i = owner.index(in: workspace) else { return }
-        workspace.withTab(i) { tab in
-            tab.document.translations = candidate.translations
-            tab.document.jobSnapshot = candidate.jobSnapshot
-            tab.document.resolvedDirection = candidate.resolvedDirection
-            tab.contentGeneration += 1
-            _ = tab.job.apply(.batchSucceeded(batchID: batchID, unitIDs: result.translations.map(\.unitID)))
         }
+
+        try accept(incoming[...])
+        if !prepared.accepted.isEmpty {
+            var candidate = document
+            candidate.translations = prepared.translations
+            candidate.jobSnapshot = snapshot
+            candidate.resolvedDirection = snapshot.sourceLanguage == .en ? .enToZh : .zhToEn
+            guard try DocumentCodec.encode(candidate).count <= WorkerContract.documentFileByteLimit else {
+                throw CoordinatorError.documentTooLarge
+            }
+        }
+        return prepared
+    }
+
+    private func commitBatch(
+        _ result: TranslateBatchResult, batchID: Int, replacements: [Int], owner: AttemptOwner,
+        workspace: WorkspaceStore, resolved: JobSnapshot
+    ) async throws -> [MarkdownRejection] {
+        let incoming: [UnitTranslation] = result.translations.map {
+            .init(unitID: $0.unitID, text: $0.text, returnedModel: result.meta.returnedModel, completedAt: Date())
+        }
+        while let i = owner.index(in: workspace), workspace.tabs[i].job.activeBatchIDs.contains(batchID) {
+            let document = workspace.tabs[i].document
+            let generation = workspace.tabs[i].contentGeneration
+            let task = Task.detached { try Self.prepareBatch(incoming, document: document, snapshot: resolved) }
+            let outcome = await withTaskCancellationHandler { await task.result } onCancel: { task.cancel() }
+            try Task.checkCancellation()
+            guard let current = owner.index(in: workspace), workspace.tabs[current].job.activeBatchIDs.contains(batchID) else { break }
+            guard workspace.tabs[current].contentGeneration == generation else { continue }
+            let prepared = try outcome.get()
+            workspace.withTab(current) { tab in
+                if prepared.accepted.isEmpty {
+                    _ = tab.job.apply(.batchNeedsRecovery(batchID: batchID, replacementIDs: replacements))
+                } else {
+                    tab.document.translations = prepared.translations
+                    tab.document.jobSnapshot = resolved
+                    tab.document.resolvedDirection = resolved.sourceLanguage == .en ? .enToZh : .zhToEn
+                    tab.contentGeneration += 1
+                    _ = tab.job.apply(.batchSucceeded(batchID: batchID, unitIDs: prepared.accepted, replacementIDs: replacements))
+                }
+            }
+            return prepared.rejected
+        }
+        return []
     }
 
     public func cancel(tabIndex: Int, workspace: WorkspaceStore) {

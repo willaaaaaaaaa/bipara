@@ -3,9 +3,9 @@ import Foundation
 /// The parser and planner are pinned together. Portable files persist source ranges
 /// and identities; rendered text and normalized payloads are rebuilt and verified.
 public struct MarkdownPlan: Equatable, Sendable {
-    public static let version = "markdown-plan.v4"
-    static let supportedVersions = ["markdown-plan.v1", "markdown-plan.v2", "markdown-plan.v3", version]
-    public let planVersion: String
+    public static let version = "markdown-plan.v5"
+    static let supportedVersions = ["markdown-plan.v1", "markdown-plan.v2", "markdown-plan.v3", "markdown-plan.v4", version]
+    public private(set) var planVersion: String
     public static let detectorVersion = "markdown-detection.v2"
 
     struct Block: Equatable, Sendable {
@@ -39,7 +39,22 @@ public struct MarkdownPlan: Equatable, Sendable {
     public private(set) var units: [PlannedUnit]
     public private(set) var prose: String
     private var payloads: [UUID: String]
-    private var signatures: [UUID: [String]]
+    private struct Signature: Equatable, Sendable {
+        let ordered: [String]
+        let protected: [String]
+
+        init(_ inline: MarkdownInline) {
+            ordered = inline.signature
+            protected = inline.protectedSignature
+        }
+    }
+    private var signatures: [UUID: Signature]
+
+    public func upgradedForRetry() -> Self {
+        var copy = self
+        if planVersion == "markdown-plan.v4" { copy.planVersion = Self.version }
+        return copy
+    }
 
     public func requestText(for unit: PlannedUnit) -> String? { requestPayload(unit.id) }
     func requestPayload(_ id: UUID) -> String? { payloads[id] }
@@ -103,7 +118,7 @@ public struct MarkdownPlan: Equatable, Sendable {
         var units: [PlannedUnit] = []
         var prose: [String] = []
         var payloads: [UUID: String] = [:]
-        var signatures: [UUID: [String]] = [:]
+        var signatures: [UUID: Signature] = [:]
         for index in tops.indices {
             for blockIndex in tops[index].blocks.indices {
                 var block = tops[index].blocks[blockIndex]
@@ -119,8 +134,7 @@ public struct MarkdownPlan: Equatable, Sendable {
                             )
                             units.append(unit)
                             payloads[unit.id] = fragment
-                            signatures[unit.id] = fragments.count == 1 ? inline.signature
-                                : try MarkdownInline(fragment, references: references).signature
+                            signatures[unit.id] = Signature(fragments.count == 1 ? inline : try MarkdownInline(fragment, references: references))
                             block.units.append(unit.id)
                         }
                     }
@@ -142,7 +156,7 @@ public struct MarkdownPlan: Equatable, Sendable {
 
     public struct ValidationFailure: Error, Sendable, CustomStringConvertible {
         public enum Difference: Equatable, Sendable {
-            case unitOrder, textShape, inlineParse, tablePipe, blockParse
+            case unitOrder, textShape, inlineParse, tablePipe, blockParse, fragmentJoin
             case inlineStructure(expected: [String], received: [String])
             case blockStructure(expected: [String], received: [String])
         }
@@ -163,19 +177,49 @@ public struct MarkdownPlan: Equatable, Sendable {
         try validate(translations, language: language, newUnitIDs: newUnitIDs, reportDetails: false)
     }
 
+    public func preparedBatch(_ translations: [UnitTranslation], language: Language, newUnitIDs: Set<UUID>) throws -> [UnitTranslation] {
+        guard planVersion == Self.version else {
+            try validateBatch(translations, language: language, newUnitIDs: newUnitIDs)
+            return translations
+        }
+        var prepared = translations
+        let blocks = Dictionary(uniqueKeysWithValues: tops.flatMap(\.blocks).flatMap { block in
+            block.units.map { ($0, block) }
+        })
+        var rawReplies: [UUID: String] = [:]
+        for i in prepared.indices {
+            let id = prepared[i].unitID
+            let raw = prepared[i].text
+            guard newUnitIDs.contains(id), let input = payloads[id], let block = blocks[id],
+                  !TextIdentity.equal(input, raw), MarkdownInline.validShape(raw, source: input) else { continue }
+            var text = literalBlockMarkers(in: raw, unit: id, block: block)
+            if text.contains("*") || text.contains("_"),
+               let expected = signatures[id], expected.ordered.contains("em") || expected.ordered.contains("strong"),
+               let inline = try? MarkdownInline(text, references: references) {
+                text = inline.repairEmphasis(in: text, original: input, references: references)
+            }
+            if !TextIdentity.equal(raw, text) {
+                rawReplies[id] = raw
+                prepared[i].text = text
+            }
+        }
+        try validate(prepared, language: language, newUnitIDs: newUnitIDs, reportDetails: true, rawReplies: rawReplies)
+        return prepared
+    }
+
     public func validateBatch(_ translations: [UnitTranslation], language: Language, newUnitIDs: Set<UUID>) throws {
         try validate(translations, language: language, newUnitIDs: newUnitIDs, reportDetails: true)
     }
 
     private func validate(
-        _ translations: [UnitTranslation], language: Language, newUnitIDs: Set<UUID>?, reportDetails: Bool
+        _ translations: [UnitTranslation], language: Language, newUnitIDs: Set<UUID>?, reportDetails: Bool, rawReplies: [UUID: String] = [:]
     ) throws {
         let order = Dictionary(uniqueKeysWithValues: units.enumerated().map { ($1.id, $0) })
         func failure(_ difference: ValidationFailure.Difference, for rejected: [UnitTranslation]) -> any Error {
             guard reportDetails else { return Self.structureMismatch }
             let passages = rejected.compactMap { translation -> ValidationFailure.Passage? in
                 guard let position = order[translation.unitID], let input = payloads[translation.unitID] else { return nil }
-                return .init(id: translation.unitID, unitNumber: position + 1, input: input, reply: translation.text)
+                return .init(id: translation.unitID, unitNumber: position + 1, input: input, reply: rawReplies[translation.unitID] ?? translation.text)
             }
             return ValidationFailure(difference: difference, passages: passages)
         }
@@ -197,18 +241,41 @@ public struct MarkdownPlan: Equatable, Sendable {
             guard let actual = try? MarkdownInline(translation.text, references: references) else {
                 throw failure(.inlineParse, for: [translation])
             }
-            if let difference = inlineDifference(expected, actual.signature) {
+            let difference: ValidationFailure.Difference?
+            if planVersion == Self.version {
+                difference = Self.signatureChange(expected.protected, actual.protectedSignature).map {
+                    .inlineStructure(expected: $0.expected, received: $0.received)
+                }
+            } else {
+                difference = inlineDifference(expected.ordered, actual.signature)
+            }
+            if let difference {
                 throw failure(difference, for: [translation])
             }
-            if tableUnits.contains(translation.unitID), Self.hasUnescapedPipe(translation.text) {
-                throw failure(.tablePipe, for: [translation])
+            if tableUnits.contains(translation.unitID) {
+                if Self.hasUnescapedPipe(translation.text) { throw failure(.tablePipe, for: [translation]) }
+                // Preserve raw code spelling above, and check links that only
+                // resolve once GFM removes the table delimiter escape.
+                if planVersion == Self.version, original.contains(#"\|"#) || translation.text.contains(#"\|"#) {
+                    guard let sourceCell = try? MarkdownInline(original, references: references, tableCell: true),
+                          let targetCell = try? MarkdownInline(translation.text, references: references, tableCell: true) else {
+                        throw failure(.inlineParse, for: [translation])
+                    }
+                    if let change = Self.signatureChange(sourceCell.protectedSignature, targetCell.protectedSignature) {
+                        throw failure(.inlineStructure(expected: change.expected, received: change.received), for: [translation])
+                    }
+                }
             }
         }
         func batch() -> [UnitTranslation] {
             translations.filter { newUnitIDs?.contains($0.unitID) ?? true }
         }
         let values = Dictionary(uniqueKeysWithValues: translations.map { ($0.unitID, $0.text) })
-        let projected = replacedSource(using: values, language: language)
+        let edits = try replacementEdits(offset: 0, blocks: tops.flatMap(\.blocks), values: values, language: language) { block in
+            let affected = Set(block.units)
+            throw failure(.fragmentJoin, for: batch().filter { affected.contains($0.unitID) })
+        }
+        let projected = replacing(source, with: edits)
         guard let parsed = try? MarkdownSource(projected, translated: true) else {
             throw failure(.blockParse, for: batch())
         }
@@ -219,7 +286,7 @@ public struct MarkdownPlan: Equatable, Sendable {
             var nearby: Set<UUID> = []
             if let range = parsed.syntaxRange(at: change.index), let end = range.end {
                 var delta = 0
-                for edit in replacementEdits(offset: 0, blocks: tops.flatMap(\.blocks), values: values, language: language) {
+                for edit in edits {
                     let start = edit.range.location + delta
                     let length = edit.text.utf16.count
                     if start < end, start + length > range.location {
@@ -295,18 +362,29 @@ public struct MarkdownPlan: Equatable, Sendable {
         return false
     }
 
-    func translatedPayload(_ block: Block, values: [UUID: String], language: Language) -> String? {
+    private func translatedPayload(_ block: Block, values: [UUID: String], language: Language,
+                                   invalidJoin: (Block) throws -> Void) rethrows -> String? {
         guard !block.units.isEmpty else { return block.payload }
         let pieces = block.units.compactMap { values[$0] }
         guard pieces.count == block.units.count else { return nil }
-        return pieces.joined(separator: language == .en ? " " : "")
+        let separator = language == .en ? " " : ""
+        if planVersion == "markdown-plan.v5", pieces.count > 1, block.metadataKey == nil {
+            guard let joined = MarkdownFragmentJoin.payload(pieces, separator: separator, references: references, tableCell: block.kind.isTableCell) else {
+                try invalidJoin(block)
+                return nil
+            }
+            return joined
+        }
+        return pieces.joined(separator: separator)
     }
 
-    private func replacementEdits(offset: Int, blocks: [Block], values: [UUID: String], language: Language)
-        -> [(range: TextRange, text: String, units: [UUID])] {
-        blocks.compactMap { block -> (range: TextRange, text: String, units: [UUID])? in
+    private typealias Replacement = (range: TextRange, text: String, units: [UUID])
+
+    private func replacementEdits(offset: Int, blocks: [Block], values: [UUID: String], language: Language,
+                                  invalidJoin: (Block) throws -> Void) rethrows -> [Replacement] {
+        try blocks.compactMap { block -> (range: TextRange, text: String, units: [UUID])? in
             guard !block.units.isEmpty, let edit = block.edit, let local = edit.offset(by: -offset),
-                  let payload = translatedPayload(block, values: values, language: language) else { return nil }
+                  let payload = try translatedPayload(block, values: values, language: language, invalidJoin: invalidJoin) else { return nil }
             if block.metadataKey != nil {
                 return (local, TextIdentity.equal(payload, block.payload) ? source.substring(utf16: edit)! : MarkdownMetadata.quoted(payload), block.units)
             }
@@ -315,7 +393,11 @@ public struct MarkdownPlan: Equatable, Sendable {
     }
 
     func replacing(_ raw: String, offset: Int, blocks: [Block], values: [UUID: String], language: Language) -> String {
-        let edits = replacementEdits(offset: offset, blocks: blocks, values: values, language: language)
+        let edits = replacementEdits(offset: offset, blocks: blocks, values: values, language: language) { _ in }
+        return replacing(raw, with: edits)
+    }
+
+    private func replacing(_ raw: String, with edits: [Replacement]) -> String {
         var pieces: [String] = []
         var cursor = raw.startIndex
         for (range, value, _) in edits {
